@@ -1,0 +1,84 @@
+# Build output
+build/
+build-*/
+
+# Reference artifacts -- cart dumps, imported memory maps, anything sourced
+# from elsewhere. Never commit game data. Users supply their own ROM.
+reference/
+*.sfc
+*.smc
+
+# ROM-derived game assets, sliced out of the user's own cart by `smw extract`.
+# Copyrighted, and fully regenerable, so they are never committed. The build
+# finds them through asar's include search path, not through the source tree.
+# The directories themselves are part of the layout and survive via .gitkeep.
+# (The directory re-include is required: git cannot un-ignore a file whose
+# parent directory is itself excluded, so `**` alone would drop the .gitkeep.)
+/smw/assets/**
+!/smw/assets/**/
+!/smw/assets/**/.gitkeep
+
+# The pre-swap disassembly, kept only as a local reference while migrating to
+# the new base, and deleted once that is done. Never committed: the complete
+# old tree is already in history at the pre-migration checkpoint, so committing
+# it here would be a second copy with a shorter life than the first.
+/smw/archive/
+
+# Records which cart the current assets came from. Local to a checkout.
+.extraction-state.json
+
+# Intermediate binaries the upstream batch file writes *into* the source tree,
+# and the temp files the asset scripts generate. `uv run smw build` keeps its
+# blobs beside the ROM instead; Assemble_SMW.bat puts them here.
+/smw/src/SMW/SPC700/*.bin
+/smw/src/SMW/Temp.txt
+/smw/src/SMW/AsarScripts/TEMP*
+
+# Scratch space for one-off scripts and diagnostics
+tmp/
+
+# --- Python / uv ---
+# One venv per OS, side by side:
+#   .venv        -> Windows (default name, so PyCharm auto-detects it)
+#   .venv-linux  -> WSL/Linux (selected via UV_PROJECT_ENVIRONMENT=.venv-linux)
+# Never commit either -- recreate with `uv sync`. (uv.lock IS committed.)
+.venv/
+.venv-linux/
+venv/
+.uv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+
+# direnv's local state, not the checked-in .envrc
+.direnv/
+
+# --- Editor release builds ---
+# PyInstaller's output and the spec file it generates. Built in CI from the
+# tagged commit, never committed.
+dist/
+*.spec
+
+# --- Emulator cores ---
+# Locally built MesenCore libraries. These are for development: the runtime
+# prefers them over the packaged ones, so a freshly built core is what a source
+# checkout runs. What ships is vendored under
+# editor/shiny_mushroom/resources/mesen/ from the "Mesen core" workflow, which builds
+# every platform from one pinned revision -- committing a local build instead
+# would put an unidentifiable binary into a release.
+mesen-cores/
+
+# --- Qt ---
+# Generated resource/UI modules, if we ever use pyside6-rcc / pyside6-uic.
+*_rc.py
+ui_*.py
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+node_modules/

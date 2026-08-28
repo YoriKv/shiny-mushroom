@@ -1,0 +1,2003 @@
+{
+  "source": "the object dispatch tables in SMW/Banks/Bank0D.asm",
+  "tileset_groups": {
+    "0": "Grassland",
+    "1": "Castle",
+    "2": "Rope",
+    "3": "Underground",
+    "4": "GhostHouse",
+    "5": "GhostHouse",
+    "6": "Rope",
+    "7": "Grassland",
+    "8": "Rope",
+    "9": "Underground",
+    "A": "Underground",
+    "B": "Underground",
+    "C": "Grassland",
+    "D": "GhostHouse",
+    "E": "Underground"
+  },
+  "extended": {
+    "00": "Screen Exit",
+    "01": "Screen Jump",
+    "02": "Unused",
+    "03": "Unused",
+    "04": "Unused",
+    "05": "Unused",
+    "06": "Unused",
+    "07": "Unused",
+    "08": "Unused",
+    "09": "Unused",
+    "0A": "Unused",
+    "0B": "Unused",
+    "0C": "Unused",
+    "0D": "Unused",
+    "0E": "Unused",
+    "0F": "Unused",
+    "10": "Small Door",
+    "11": "Invisible1up Block",
+    "12": "Invisible Note Block",
+    "13": "Top Left Corner Edge1",
+    "14": "Top Right Corner Edge1",
+    "15": "Small P Switch Door",
+    "16": "Invisible P Switch Block",
+    "17": "Green Star Block",
+    "18": "3up Moon",
+    "19": "1up Checkpoint1",
+    "1A": "1up Checkpoint2",
+    "1B": "1up Checkpoint3",
+    "1C": "1up Checkpoint4",
+    "1D": "Red Berry",
+    "1E": "Pink Berry",
+    "1F": "Green Berry",
+    "20": "Spinning Turn Block",
+    "21": "Bottom Right Midway Gate Tile",
+    "22": "Bottom Right Midway Gate Tile",
+    "23": "Note Block With Power Up",
+    "24": "ONOFF Block",
+    "25": "Directional Coin Block",
+    "26": "Note Block",
+    "27": "4 Way Note Block",
+    "28": "Turn Block With Flower",
+    "29": "Turn Block With Feather",
+    "2A": "Turn Block With Star",
+    "2B": "Turn Block With Coin Star21up Vine",
+    "2C": "Turn Block With Multiple Coins",
+    "2D": "Turn Block With Coin",
+    "2E": "Turn Block With Nothing",
+    "2F": "Turn Block With P Switch",
+    "30": "Question Block With Flower",
+    "31": "Question Block With Feather",
+    "32": "Question Block With Star",
+    "33": "Question Block With Coin Star2",
+    "34": "Question Block With Multiple Coins",
+    "35": "Question Block With Key Wings Balloon Shell",
+    "36": "Question Block With Yoshi",
+    "37": "Question Block With Shell",
+    "38": "Question Block With Shell",
+    "39": "Solid Turn Block With Side Feather",
+    "3A": "Top Left Corner Edge2",
+    "3B": "Top Right Corner Edge2",
+    "3C": "Top Left Corner Edge3",
+    "3D": "Top Right Corner Edge3",
+    "3E": "Top Left Corner Edge4",
+    "3F": "Top Right Corner Edge4",
+    "40": "Glass Block",
+    "41": "Yoshi Coin",
+    "42": "Top Left Slope",
+    "43": "Top Right Slope",
+    "44": "Left Facing Triangle",
+    "45": "Right Facing Triangle",
+    "46": "Midway Bar",
+    "47": "Door",
+    "48": "P Switch Door",
+    "49": "Ghost House Exit",
+    "4A": "Climbing Net Door",
+    "4B": "Conveyor End Tile1",
+    "4C": "Conveyor End Tile2",
+    "4D": "Line Guide Top Left Quarter Large Circle",
+    "4E": "Line Guide Top Right Quarter Large Circle",
+    "4F": "Line Guide Bottom Left Quarter Large Circle",
+    "50": "Line Guide Bottom Right Quarter Large Circle",
+    "51": "Line Guide Top Left Quarter Small Circle",
+    "52": "Line Guide Top Right Quarter Small Circle",
+    "53": "Line Guide Bottom Left Quarter Small Circle",
+    "54": "Line Guide Bottom Right Quarter Small Circle",
+    "55": "Horizontal Line Guide End",
+    "56": "Vertical Line Guide End",
+    "57": "Switch Palace Bottom Right Inner Corner",
+    "58": "Switch Palace Bottom Left Inner Corner",
+    "59": "Switch Palace Top Right Inner Corner",
+    "5A": "Switch Palace Top Left Inner Corner",
+    "5B": "Bit Of Brick Background1",
+    "5C": "Bit Of Brick Background2",
+    "5D": "Bit Of Brick Background3",
+    "5E": "Bit Of Brick Background4",
+    "5F": "Large Background Area",
+    "60": "Cave Lava Inner Corner",
+    "61": "Ghost House Clock",
+    "62": "Ghost House Top Left To Bottom Right Beam1",
+    "63": "Ghost House Top Right To Bottom Left Beam1",
+    "64": "Top Right Cobweb",
+    "65": "Top Left Cobweb",
+    "66": "Ghost House Top Right To Bottom Left Beam2",
+    "67": "Ghost House Top Left To Bottom Right Beam2",
+    "68": "Cloud Fringe Bottom And Right Edge",
+    "69": "Cloud Fringe Bottom And Left Edge",
+    "6A": "Cloud Fringe Bottom Right",
+    "6B": "Cloud Fringe Bottom Left",
+    "6C": "Cloud Fringe On White Bottom And Right Edge",
+    "6D": "Cloud Fringe On White Bottom And Left Edge",
+    "6E": "Cloud Fringe On White Bottom Right",
+    "6F": "Cloud Fringe On White Bottom Left",
+    "70": "Bit Of Canvas1",
+    "71": "Canvas1",
+    "72": "Canvas2",
+    "73": "Canvas3",
+    "74": "Canvas4",
+    "75": "Canvas Tile1",
+    "76": "Canvas Tile2",
+    "77": "Canvas Tile3",
+    "78": "Canvas Tile4",
+    "79": "Canvas Tile5",
+    "7A": "Canvas Tile6",
+    "7B": "Canvas Tile7",
+    "7C": "Bit Of Canvas1",
+    "7D": "Bit Of Canvas2",
+    "7E": "Bit Of Canvas3",
+    "7F": "Torpedo Launcher",
+    "80": "Ghost House Entrance",
+    "81": "Seaweed",
+    "82": "Big Bush1",
+    "83": "Big Bush2",
+    "84": "Castle Entrance",
+    "85": "Yoshis House",
+    "86": "Goal Sign",
+    "87": "Green Switch Block",
+    "88": "Right Tree Branch",
+    "89": "Left Tree Branch",
+    "8A": "Green Switch Palace Switch",
+    "8B": "Yellow Switch Palace Switch",
+    "8C": "Blue Switch Palace Switch",
+    "8D": "Red Switch Palace Switch",
+    "8E": "Yellow Switch Block",
+    "8F": "Ghost House Window",
+    "90": "Large Boss Door",
+    "91": "Vertical Level Steep Left Slope",
+    "92": "Vertical Level Steep Right Slope",
+    "93": "Vertical Level Normal Left Slope",
+    "94": "Vertical Level Normal Right Slope",
+    "95": "Vertical Level Very Steep Left Slope",
+    "96": "Vertical Level Very Steep Right Slope",
+    "97": "Switch Palace Right And Bottom Edge Tile",
+    "98": "Unused",
+    "99": "Unused",
+    "9A": "Unused",
+    "9B": "Unused",
+    "9C": "Unused",
+    "9D": "Unused",
+    "9E": "Unused",
+    "9F": "Unused",
+    "A0": "Unused",
+    "A1": "Unused",
+    "A2": "Unused",
+    "A3": "Unused",
+    "A4": "Unused",
+    "A5": "Unused",
+    "A6": "Unused",
+    "A7": "Unused",
+    "A8": "Unused",
+    "A9": "Unused",
+    "AA": "Unused",
+    "AB": "Unused",
+    "AC": "Unused",
+    "AD": "Unused",
+    "AE": "Unused",
+    "AF": "Unused",
+    "B0": "Unused",
+    "B1": "Unused",
+    "B2": "Unused",
+    "B3": "Unused",
+    "B4": "Unused",
+    "B5": "Unused",
+    "B6": "Unused",
+    "B7": "Unused",
+    "B8": "Unused",
+    "B9": "Unused",
+    "BA": "Unused",
+    "BB": "Unused",
+    "BC": "Unused",
+    "BD": "Unused",
+    "BE": "Unused",
+    "BF": "Unused",
+    "C0": "Unused",
+    "C1": "Unused",
+    "C2": "Unused",
+    "C3": "Unused",
+    "C4": "Unused",
+    "C5": "Unused",
+    "C6": "Unused",
+    "C7": "Unused",
+    "C8": "Unused",
+    "C9": "Unused",
+    "CA": "Unused",
+    "CB": "Unused",
+    "CC": "Unused",
+    "CD": "Unused",
+    "CE": "Unused",
+    "CF": "Unused",
+    "D0": "Unused",
+    "D1": "Unused",
+    "D2": "Unused",
+    "D3": "Unused",
+    "D4": "Unused",
+    "D5": "Unused",
+    "D6": "Unused",
+    "D7": "Unused",
+    "D8": "Unused",
+    "D9": "Unused",
+    "DA": "Unused",
+    "DB": "Unused",
+    "DC": "Unused",
+    "DD": "Unused",
+    "DE": "Unused",
+    "DF": "Unused",
+    "E0": "Unused",
+    "E1": "Unused",
+    "E2": "Unused",
+    "E3": "Unused",
+    "E4": "Unused",
+    "E5": "Unused",
+    "E6": "Unused",
+    "E7": "Unused",
+    "E8": "Unused",
+    "E9": "Unused",
+    "EA": "Unused",
+    "EB": "Unused",
+    "EC": "Unused",
+    "ED": "Unused",
+    "EE": "Unused",
+    "EF": "Unused",
+    "F0": "Unused",
+    "F1": "Unused",
+    "F2": "Unused",
+    "F3": "Unused",
+    "F4": "Unused",
+    "F5": "Unused",
+    "F6": "Unused",
+    "F7": "Unused",
+    "F8": "Unused",
+    "F9": "Unused",
+    "FA": "Unused",
+    "FB": "Unused",
+    "FC": "Unused",
+    "FD": "Unused",
+    "FE": "Unused",
+    "FF": "Unused"
+  },
+  "extended_crashes": [
+    "02",
+    "03",
+    "04",
+    "05",
+    "06",
+    "07",
+    "08",
+    "09",
+    "0A",
+    "0B",
+    "0C",
+    "0D",
+    "0E",
+    "0F"
+  ],
+  "extended_crashes_read_from": "the SetDuplicateOrNullPointer($000000, ...) lines under ExtendedObjectPtrs in SMW/Banks/Bank0D.asm",
+  "standard": {
+    "Grassland": {
+      "01": "Dark Blue Water",
+      "02": "Invisible Coin Blocks",
+      "03": "Invisible Note Blocks",
+      "04": "Invisible P Switch Coins",
+      "05": "Coins",
+      "06": "Walk Through Dirt",
+      "07": "Variable Color Water",
+      "08": "Note Blocks",
+      "09": "Turn Blocks",
+      "0A": "Coin Blocks",
+      "0B": "Throw Blocks",
+      "0C": "Munchers",
+      "0D": "Cement Blocks",
+      "0E": "Used Blocks",
+      "0F": "Vertical Pipes",
+      "10": "Horizontal Pipes",
+      "11": "Bullet Shooter",
+      "12": "Slopes",
+      "13": "Ground Edges And Vine",
+      "14": "Ledge",
+      "15": "Midway And Goal Point",
+      "16": "Purple Coins",
+      "17": "Rope And Cloud Line",
+      "18": "Water With Animated Surface",
+      "19": "Water With Normal Surface",
+      "1A": "Castle Lava With Animated Surface",
+      "1B": "Climbing Net With Top Edge",
+      "1C": "Donut Bridge",
+      "1D": "Climbing Net With Bottom Edge",
+      "1E": "Climbing Net With Side Edge",
+      "1F": "Skinny Vertical Pipe Bone Log",
+      "20": "Skinny Horizontal Pipe Bone Log",
+      "21": "Wide Scale Ground Ledge",
+      "22": "Unused",
+      "23": "Unused",
+      "24": "Unused",
+      "25": "Unused",
+      "26": "Unused",
+      "27": "Unused",
+      "28": "Unused",
+      "29": "Unused",
+      "2A": "Unused",
+      "2B": "Unused",
+      "2C": "Unused",
+      "2D": "Unused",
+      "2E": "Unused",
+      "2F": "Unused",
+      "30": "Icy Vertical Pipe",
+      "31": "Icy Turn Blocks",
+      "32": "Blue Switch Blocks",
+      "33": "Forest Tree Top",
+      "34": "Forest Ground Edges",
+      "35": "Forest Ground",
+      "36": "Large Tree Trunk",
+      "37": "Small Tree Trunk",
+      "38": "Red Switch Blocks",
+      "39": "Right Facing Diagonal Pipe",
+      "3A": "Left Facing Diagonal Ledge",
+      "3B": "Right Facing Diagonal Ledge",
+      "3C": "Arch Ledge",
+      "3D": "Top Cloud Fridge",
+      "3E": "Side Cloud Fridges",
+      "3F": "Small Bushes"
+    },
+    "Castle": {
+      "01": "Dark Blue Water",
+      "02": "Invisible Coin Blocks",
+      "03": "Invisible Note Blocks",
+      "04": "Invisible P Switch Coins",
+      "05": "Coins",
+      "06": "Walk Through Dirt",
+      "07": "Variable Color Water",
+      "08": "Note Blocks",
+      "09": "Turn Blocks",
+      "0A": "Coin Blocks",
+      "0B": "Throw Blocks",
+      "0C": "Munchers",
+      "0D": "Cement Blocks",
+      "0E": "Used Blocks",
+      "0F": "Vertical Pipes",
+      "10": "Horizontal Pipes",
+      "11": "Bullet Shooter",
+      "12": "Slopes",
+      "13": "Ground Edges And Vine",
+      "14": "Ledge",
+      "15": "Midway And Goal Point",
+      "16": "Purple Coins",
+      "17": "Rope And Cloud Line",
+      "18": "Water With Animated Surface",
+      "19": "Water With Normal Surface",
+      "1A": "Castle Lava With Animated Surface",
+      "1B": "Climbing Net With Top Edge",
+      "1C": "Donut Bridge",
+      "1D": "Climbing Net With Bottom Edge",
+      "1E": "Climbing Net With Side Edge",
+      "1F": "Skinny Vertical Pipe Bone Log",
+      "20": "Skinny Horizontal Pipe Bone Log",
+      "21": "Wide Scale Ground Ledge",
+      "22": "Unused",
+      "23": "Unused",
+      "24": "Unused",
+      "25": "Unused",
+      "26": "Unused",
+      "27": "Unused",
+      "28": "Unused",
+      "29": "Unused",
+      "2A": "Unused",
+      "2B": "Unused",
+      "2C": "Unused",
+      "2D": "Unused",
+      "2E": "Unused",
+      "2F": "Unused",
+      "30": "Unused",
+      "31": "Unused",
+      "32": "Unused",
+      "33": "Unused",
+      "34": "Vertical Double Ended Pipe",
+      "35": "Rock Wall Background",
+      "36": "Large Spiked Pillar",
+      "37": "Horizontal Line Guide",
+      "38": "Vertical Line Guide",
+      "39": "Blue Switch Blocks",
+      "3A": "Red Switch Blocks",
+      "3B": "Grass Ledge",
+      "3C": "Stone Block",
+      "3D": "Escalator",
+      "3E": "Horizontal Line Of Spikes",
+      "3F": "Vertical Line Of Spikes"
+    },
+    "Rope": {
+      "01": "Dark Blue Water",
+      "02": "Invisible Coin Blocks",
+      "03": "Invisible Note Blocks",
+      "04": "Invisible P Switch Coins",
+      "05": "Coins",
+      "06": "Walk Through Dirt",
+      "07": "Variable Color Water",
+      "08": "Note Blocks",
+      "09": "Turn Blocks",
+      "0A": "Coin Blocks",
+      "0B": "Throw Blocks",
+      "0C": "Munchers",
+      "0D": "Cement Blocks",
+      "0E": "Used Blocks",
+      "0F": "Vertical Pipes",
+      "10": "Horizontal Pipes",
+      "11": "Bullet Shooter",
+      "12": "Slopes",
+      "13": "Ground Edges And Vine",
+      "14": "Ledge",
+      "15": "Midway And Goal Point",
+      "16": "Purple Coins",
+      "17": "Rope And Cloud Line",
+      "18": "Water With Animated Surface",
+      "19": "Water With Normal Surface",
+      "1A": "Castle Lava With Animated Surface",
+      "1B": "Climbing Net With Top Edge",
+      "1C": "Donut Bridge",
+      "1D": "Climbing Net With Bottom Edge",
+      "1E": "Climbing Net With Side Edge",
+      "1F": "Skinny Vertical Pipe Bone Log",
+      "20": "Skinny Horizontal Pipe Bone Log",
+      "21": "Wide Scale Ground Ledge",
+      "22": "Unused",
+      "23": "Unused",
+      "24": "Unused",
+      "25": "Unused",
+      "26": "Unused",
+      "27": "Unused",
+      "28": "Unused",
+      "29": "Unused",
+      "2A": "Unused",
+      "2B": "Unused",
+      "2C": "Unused",
+      "2D": "Unused",
+      "2E": "Unused",
+      "2F": "Unused",
+      "30": "Unused",
+      "31": "Unused",
+      "32": "Log Bridge",
+      "33": "Blue Switch Blocks",
+      "34": "Red Switch Blocks",
+      "35": "Column With Plant On Top",
+      "36": "Horizontal Conveyor Rope",
+      "37": "Sloped Conveyor Rope",
+      "38": "Horizontal Line Guide",
+      "39": "Vertical Line Guide And Mushroom Stalk",
+      "3A": "Sloped Line Guide",
+      "3B": "Very Steep Sloped Line Guide",
+      "3C": "Mushroom Top",
+      "3D": "Mushroom Column",
+      "3E": "Horizontal Log",
+      "3F": "Vertical Log"
+    },
+    "Underground": {
+      "01": "Dark Blue Water",
+      "02": "Invisible Coin Blocks",
+      "03": "Invisible Note Blocks",
+      "04": "Invisible P Switch Coins",
+      "05": "Coins",
+      "06": "Walk Through Dirt",
+      "07": "Variable Color Water",
+      "08": "Note Blocks",
+      "09": "Turn Blocks",
+      "0A": "Coin Blocks",
+      "0B": "Throw Blocks",
+      "0C": "Munchers",
+      "0D": "Cement Blocks",
+      "0E": "Used Blocks",
+      "0F": "Vertical Pipes",
+      "10": "Horizontal Pipes",
+      "11": "Bullet Shooter",
+      "12": "Slopes",
+      "13": "Ground Edges And Vine",
+      "14": "Ledge",
+      "15": "Midway And Goal Point",
+      "16": "Purple Coins",
+      "17": "Rope And Cloud Line",
+      "18": "Water With Animated Surface",
+      "19": "Water With Normal Surface",
+      "1A": "Castle Lava With Animated Surface",
+      "1B": "Climbing Net With Top Edge",
+      "1C": "Donut Bridge",
+      "1D": "Climbing Net With Bottom Edge",
+      "1E": "Climbing Net With Side Edge",
+      "1F": "Skinny Vertical Pipe Bone Log",
+      "20": "Skinny Horizontal Pipe Bone Log",
+      "21": "Wide Scale Ground Ledge",
+      "22": "Unused",
+      "23": "Unused",
+      "24": "Unused",
+      "25": "Unused",
+      "26": "Unused",
+      "27": "Unused",
+      "28": "Unused",
+      "29": "Unused",
+      "2A": "Unused",
+      "2B": "Unused",
+      "2C": "Unused",
+      "2D": "Unused",
+      "2E": "Unused",
+      "2F": "Unused",
+      "30": "Unused",
+      "31": "Unused",
+      "32": "Unused",
+      "33": "Unused",
+      "34": "Blue Switch Blocks",
+      "35": "Red Switch Blocks",
+      "36": "4 Sided Ground",
+      "37": "Large Canvas",
+      "38": "Right Lava Edge",
+      "39": "Sloped Cave Lava",
+      "3A": "Cave Lava With Top",
+      "3B": "Cave Lava",
+      "3C": "Very Steep Slope",
+      "3D": "Ceiling Ledge",
+      "3E": "Ceiling Edges",
+      "3F": "Solid Dirt"
+    },
+    "GhostHouse": {
+      "01": "Dark Blue Water",
+      "02": "Invisible Coin Blocks",
+      "03": "Invisible Note Blocks",
+      "04": "Invisible P Switch Coins",
+      "05": "Coins",
+      "06": "Walk Through Dirt",
+      "07": "Variable Color Water",
+      "08": "Note Blocks",
+      "09": "Turn Blocks",
+      "0A": "Coin Blocks",
+      "0B": "Throw Blocks",
+      "0C": "Munchers",
+      "0D": "Cement Blocks",
+      "0E": "Used Blocks",
+      "0F": "Vertical Pipes",
+      "10": "Horizontal Pipes",
+      "11": "Bullet Shooter",
+      "12": "Slopes",
+      "13": "Ground Edges And Vine",
+      "14": "Ledge",
+      "15": "Midway And Goal Point",
+      "16": "Purple Coins",
+      "17": "Rope And Cloud Line",
+      "18": "Water With Animated Surface",
+      "19": "Water With Normal Surface",
+      "1A": "Castle Lava With Animated Surface",
+      "1B": "Climbing Net With Top Edge",
+      "1C": "Donut Bridge",
+      "1D": "Climbing Net With Bottom Edge",
+      "1E": "Climbing Net With Side Edge",
+      "1F": "Skinny Vertical Pipe Bone Log",
+      "20": "Skinny Horizontal Pipe Bone Log",
+      "21": "Wide Scale Ground Ledge",
+      "22": "Unused",
+      "23": "Unused",
+      "24": "Unused",
+      "25": "Unused",
+      "26": "Unused",
+      "27": "Unused",
+      "28": "Unused",
+      "29": "Unused",
+      "2A": "Unused",
+      "2B": "Unused",
+      "2C": "Unused",
+      "2D": "Unused",
+      "2E": "Horizontal Line Of Spikes",
+      "2F": "Log Background",
+      "30": "Grass Ledge1",
+      "31": "Wood Crate",
+      "32": "Grass Ledge2",
+      "33": "Cloud",
+      "34": "Wood Ledge On Column",
+      "35": "Brick Background",
+      "36": "Wooden Blocks",
+      "37": "Horizontal Background Log And Railing",
+      "38": "Wooden Ledge",
+      "39": "Vertical Background Log",
+      "3A": "Solid Brick Wall And Vertical Line Of Spikes",
+      "3B": "Bonus Game Ledge",
+      "3C": "Switch Palace Ceiling",
+      "3D": "Switch Palace Ledge",
+      "3E": "Switch Palace Right Facing Wall",
+      "3F": "Switch Palace Left Facing Wall"
+    }
+  },
+  "sizes": {
+    "Grassland": {
+      "01": {
+        "low": "width",
+        "high": "height"
+      },
+      "02": {
+        "low": "width",
+        "high": "height"
+      },
+      "03": {
+        "low": "width",
+        "high": "height"
+      },
+      "04": {
+        "low": "width",
+        "high": "height"
+      },
+      "05": {
+        "low": "width",
+        "high": "height"
+      },
+      "06": {
+        "low": "width",
+        "high": "height"
+      },
+      "07": {
+        "low": "width",
+        "high": "height"
+      },
+      "08": {
+        "low": "width",
+        "high": "height"
+      },
+      "09": {
+        "low": "width",
+        "high": "height"
+      },
+      "0A": {
+        "low": "width",
+        "high": "height"
+      },
+      "0B": {
+        "low": "width",
+        "high": "height"
+      },
+      "0C": {
+        "low": "width",
+        "high": "height"
+      },
+      "0D": {
+        "low": "width",
+        "high": "height"
+      },
+      "0E": {
+        "low": "width",
+        "high": "height"
+      },
+      "0F": {
+        "low": "variant",
+        "high": "height"
+      },
+      "10": {
+        "low": "width",
+        "high": "variant"
+      },
+      "11": {
+        "low": "variant",
+        "high": "height"
+      },
+      "12": {
+        "low": "variant",
+        "high": "length"
+      },
+      "13": {
+        "low": "variant",
+        "high": "height"
+      },
+      "14": {
+        "low": "width",
+        "high": "height"
+      },
+      "15": {
+        "low": "variant",
+        "high": "height",
+        "runaway": [
+          "high"
+        ]
+      },
+      "16": {
+        "low": "width",
+        "high": "height"
+      },
+      "17": {
+        "low": "width",
+        "high": "variant"
+      },
+      "18": {
+        "low": "width",
+        "high": "height"
+      },
+      "19": {
+        "low": "width",
+        "high": "height"
+      },
+      "1A": {
+        "low": "width",
+        "high": "height"
+      },
+      "1B": {
+        "low": "width",
+        "high": "height"
+      },
+      "1C": {
+        "low": "width",
+        "high": "variant"
+      },
+      "1D": {
+        "low": "width",
+        "high": "height"
+      },
+      "1E": {
+        "low": "variant",
+        "high": "height",
+        "runaway": [
+          "high"
+        ]
+      },
+      "1F": {
+        "low": "variant",
+        "high": "height",
+        "runaway": [
+          "high"
+        ]
+      },
+      "20": {
+        "low": "width",
+        "high": "variant",
+        "runaway": [
+          "low"
+        ]
+      },
+      "21": {
+        "byte": "width"
+      },
+      "22": {
+        "low": "width",
+        "high": "height"
+      },
+      "23": {
+        "low": "width",
+        "high": "height"
+      },
+      "24": {
+        "low": "width",
+        "high": "height"
+      },
+      "25": {
+        "low": "width",
+        "high": "height"
+      },
+      "26": {
+        "low": "width",
+        "high": "height"
+      },
+      "27": {
+        "low": "width",
+        "high": "height"
+      },
+      "28": {
+        "low": "width",
+        "high": "height"
+      },
+      "29": {
+        "low": "width",
+        "high": "height"
+      },
+      "2A": {
+        "low": "width",
+        "high": "height"
+      },
+      "2B": {
+        "low": "width",
+        "high": "height"
+      },
+      "2C": {
+        "low": "width",
+        "high": "height"
+      },
+      "2D": {
+        "low": "width",
+        "high": "height"
+      },
+      "2E": {
+        "low": "width",
+        "high": "height"
+      },
+      "2F": {
+        "low": "width",
+        "high": "height"
+      },
+      "30": {
+        "low": "variant",
+        "high": "height"
+      },
+      "31": {
+        "low": "width",
+        "high": "height"
+      },
+      "32": {
+        "low": "width",
+        "high": "height"
+      },
+      "33": {
+        "low": "variant",
+        "high": "unknown"
+      },
+      "34": {
+        "low": "variant",
+        "high": "height"
+      },
+      "35": {
+        "low": "width",
+        "high": "height"
+      },
+      "36": {
+        "low": "variant",
+        "high": "height"
+      },
+      "37": {
+        "low": "variant",
+        "high": "height"
+      },
+      "38": {
+        "low": "width",
+        "high": "height"
+      },
+      "39": {
+        "low": "variant",
+        "high": "length"
+      },
+      "3A": {
+        "low": "length",
+        "high": "length"
+      },
+      "3B": {
+        "low": "length",
+        "high": "length"
+      },
+      "3C": {
+        "low": "length",
+        "high": "variant",
+        "runaway": [
+          "low"
+        ]
+      },
+      "3D": {
+        "low": "width",
+        "high": "variant"
+      },
+      "3E": {
+        "low": "variant",
+        "high": "height"
+      },
+      "3F": {
+        "low": "width",
+        "high": "variant",
+        "runaway": [
+          "low"
+        ]
+      }
+    },
+    "Castle": {
+      "01": {
+        "low": "width",
+        "high": "height"
+      },
+      "02": {
+        "low": "width",
+        "high": "height"
+      },
+      "03": {
+        "low": "width",
+        "high": "height"
+      },
+      "04": {
+        "low": "width",
+        "high": "height"
+      },
+      "05": {
+        "low": "width",
+        "high": "height"
+      },
+      "06": {
+        "low": "width",
+        "high": "height"
+      },
+      "07": {
+        "low": "width",
+        "high": "height"
+      },
+      "08": {
+        "low": "width",
+        "high": "height"
+      },
+      "09": {
+        "low": "width",
+        "high": "height"
+      },
+      "0A": {
+        "low": "width",
+        "high": "height"
+      },
+      "0B": {
+        "low": "width",
+        "high": "height"
+      },
+      "0C": {
+        "low": "width",
+        "high": "height"
+      },
+      "0D": {
+        "low": "width",
+        "high": "height"
+      },
+      "0E": {
+        "low": "width",
+        "high": "height"
+      },
+      "0F": {
+        "low": "variant",
+        "high": "height"
+      },
+      "10": {
+        "low": "width",
+        "high": "variant"
+      },
+      "11": {
+        "low": "variant",
+        "high": "height"
+      },
+      "12": {
+        "low": "variant",
+        "high": "length"
+      },
+      "13": {
+        "low": "variant",
+        "high": "height"
+      },
+      "14": {
+        "low": "width",
+        "high": "height"
+      },
+      "15": {
+        "low": "variant",
+        "high": "height",
+        "runaway": [
+          "high"
+        ]
+      },
+      "16": {
+        "low": "width",
+        "high": "height"
+      },
+      "17": {
+        "low": "width",
+        "high": "variant"
+      },
+      "18": {
+        "low": "width",
+        "high": "height"
+      },
+      "19": {
+        "low": "width",
+        "high": "height"
+      },
+      "1A": {
+        "low": "width",
+        "high": "height"
+      },
+      "1B": {
+        "low": "width",
+        "high": "height"
+      },
+      "1C": {
+        "low": "width",
+        "high": "variant"
+      },
+      "1D": {
+        "low": "width",
+        "high": "height"
+      },
+      "1E": {
+        "low": "variant",
+        "high": "height",
+        "runaway": [
+          "high"
+        ]
+      },
+      "1F": {
+        "low": "variant",
+        "high": "height",
+        "runaway": [
+          "high"
+        ]
+      },
+      "20": {
+        "low": "width",
+        "high": "variant",
+        "runaway": [
+          "low"
+        ]
+      },
+      "21": {
+        "byte": "width"
+      },
+      "22": {
+        "low": "width",
+        "high": "height"
+      },
+      "23": {
+        "low": "width",
+        "high": "height"
+      },
+      "24": {
+        "low": "width",
+        "high": "height"
+      },
+      "25": {
+        "low": "width",
+        "high": "height"
+      },
+      "26": {
+        "low": "width",
+        "high": "height"
+      },
+      "27": {
+        "low": "width",
+        "high": "height"
+      },
+      "28": {
+        "low": "width",
+        "high": "height"
+      },
+      "29": {
+        "low": "width",
+        "high": "height"
+      },
+      "2A": {
+        "low": "width",
+        "high": "height"
+      },
+      "2B": {
+        "low": "width",
+        "high": "height"
+      },
+      "2C": {
+        "low": "width",
+        "high": "height"
+      },
+      "2D": {
+        "low": "width",
+        "high": "height"
+      },
+      "2E": {
+        "low": "width",
+        "high": "height"
+      },
+      "2F": {
+        "low": "width",
+        "high": "height"
+      },
+      "30": {
+        "low": "width",
+        "high": "height"
+      },
+      "31": {
+        "low": "width",
+        "high": "height"
+      },
+      "32": {
+        "low": "width",
+        "high": "height"
+      },
+      "33": {
+        "low": "width",
+        "high": "height"
+      },
+      "34": {
+        "low": "variant",
+        "high": "height",
+        "runaway": [
+          "high"
+        ]
+      },
+      "35": {
+        "low": "length",
+        "high": "length"
+      },
+      "36": {
+        "low": "variant",
+        "high": "height"
+      },
+      "37": {
+        "low": "width",
+        "high": "variant"
+      },
+      "38": {
+        "low": "variant",
+        "high": "height"
+      },
+      "39": {
+        "low": "width",
+        "high": "height"
+      },
+      "3A": {
+        "low": "width",
+        "high": "height"
+      },
+      "3B": {
+        "low": "width",
+        "high": "variant"
+      },
+      "3C": {
+        "low": "width",
+        "high": "height",
+        "runaway": [
+          "low",
+          "high"
+        ]
+      },
+      "3D": {
+        "low": "variant",
+        "high": "length"
+      },
+      "3E": {
+        "low": "width",
+        "high": "variant"
+      },
+      "3F": {
+        "low": "variant",
+        "high": "height"
+      }
+    },
+    "Rope": {
+      "01": {
+        "low": "width",
+        "high": "height"
+      },
+      "02": {
+        "low": "width",
+        "high": "height"
+      },
+      "03": {
+        "low": "width",
+        "high": "height"
+      },
+      "04": {
+        "low": "width",
+        "high": "height"
+      },
+      "05": {
+        "low": "width",
+        "high": "height"
+      },
+      "06": {
+        "low": "width",
+        "high": "height"
+      },
+      "07": {
+        "low": "width",
+        "high": "height"
+      },
+      "08": {
+        "low": "width",
+        "high": "height"
+      },
+      "09": {
+        "low": "width",
+        "high": "height"
+      },
+      "0A": {
+        "low": "width",
+        "high": "height"
+      },
+      "0B": {
+        "low": "width",
+        "high": "height"
+      },
+      "0C": {
+        "low": "width",
+        "high": "height"
+      },
+      "0D": {
+        "low": "width",
+        "high": "height"
+      },
+      "0E": {
+        "low": "width",
+        "high": "height"
+      },
+      "0F": {
+        "low": "variant",
+        "high": "height"
+      },
+      "10": {
+        "low": "width",
+        "high": "variant"
+      },
+      "11": {
+        "low": "variant",
+        "high": "height"
+      },
+      "12": {
+        "low": "variant",
+        "high": "length"
+      },
+      "13": {
+        "low": "variant",
+        "high": "height"
+      },
+      "14": {
+        "low": "width",
+        "high": "height"
+      },
+      "15": {
+        "low": "variant",
+        "high": "height",
+        "runaway": [
+          "high"
+        ]
+      },
+      "16": {
+        "low": "width",
+        "high": "height"
+      },
+      "17": {
+        "low": "width",
+        "high": "variant"
+      },
+      "18": {
+        "low": "width",
+        "high": "height"
+      },
+      "19": {
+        "low": "width",
+        "high": "height"
+      },
+      "1A": {
+        "low": "width",
+        "high": "height"
+      },
+      "1B": {
+        "low": "width",
+        "high": "height"
+      },
+      "1C": {
+        "low": "width",
+        "high": "variant"
+      },
+      "1D": {
+        "low": "width",
+        "high": "height"
+      },
+      "1E": {
+        "low": "variant",
+        "high": "height",
+        "runaway": [
+          "high"
+        ]
+      },
+      "1F": {
+        "low": "variant",
+        "high": "height",
+        "runaway": [
+          "high"
+        ]
+      },
+      "20": {
+        "low": "width",
+        "high": "variant",
+        "runaway": [
+          "low"
+        ]
+      },
+      "21": {
+        "byte": "width"
+      },
+      "22": {
+        "low": "width",
+        "high": "height"
+      },
+      "23": {
+        "low": "width",
+        "high": "height"
+      },
+      "24": {
+        "low": "width",
+        "high": "height"
+      },
+      "25": {
+        "low": "width",
+        "high": "height"
+      },
+      "26": {
+        "low": "width",
+        "high": "height"
+      },
+      "27": {
+        "low": "width",
+        "high": "height"
+      },
+      "28": {
+        "low": "width",
+        "high": "height"
+      },
+      "29": {
+        "low": "width",
+        "high": "height"
+      },
+      "2A": {
+        "low": "width",
+        "high": "height"
+      },
+      "2B": {
+        "low": "width",
+        "high": "height"
+      },
+      "2C": {
+        "low": "width",
+        "high": "height"
+      },
+      "2D": {
+        "low": "width",
+        "high": "height"
+      },
+      "2E": {
+        "low": "width",
+        "high": "height"
+      },
+      "2F": {
+        "low": "width",
+        "high": "height"
+      },
+      "30": {
+        "low": "width",
+        "high": "height"
+      },
+      "31": {
+        "low": "width",
+        "high": "height"
+      },
+      "32": {
+        "low": "width",
+        "high": "variant"
+      },
+      "33": {
+        "low": "width",
+        "high": "height"
+      },
+      "34": {
+        "low": "width",
+        "high": "height"
+      },
+      "35": {
+        "low": "variant",
+        "high": "height"
+      },
+      "36": {
+        "low": "width",
+        "high": "variant"
+      },
+      "37": {
+        "low": "variant",
+        "high": "length"
+      },
+      "38": {
+        "low": "width",
+        "high": "variant"
+      },
+      "39": {
+        "low": "variant",
+        "high": "height"
+      },
+      "3A": {
+        "low": "variant",
+        "high": "length"
+      },
+      "3B": {
+        "low": "length",
+        "high": "unknown"
+      },
+      "3C": {
+        "low": "width",
+        "high": "variant",
+        "runaway": [
+          "low"
+        ]
+      },
+      "3D": {
+        "low": "width",
+        "high": "height",
+        "runaway": [
+          "low",
+          "high"
+        ]
+      },
+      "3E": {
+        "low": "width",
+        "high": "variant",
+        "runaway": [
+          "low"
+        ]
+      },
+      "3F": {
+        "low": "variant",
+        "high": "height",
+        "runaway": [
+          "high"
+        ]
+      }
+    },
+    "Underground": {
+      "01": {
+        "low": "width",
+        "high": "height"
+      },
+      "02": {
+        "low": "width",
+        "high": "height"
+      },
+      "03": {
+        "low": "width",
+        "high": "height"
+      },
+      "04": {
+        "low": "width",
+        "high": "height"
+      },
+      "05": {
+        "low": "width",
+        "high": "height"
+      },
+      "06": {
+        "low": "width",
+        "high": "height"
+      },
+      "07": {
+        "low": "width",
+        "high": "height"
+      },
+      "08": {
+        "low": "width",
+        "high": "height"
+      },
+      "09": {
+        "low": "width",
+        "high": "height"
+      },
+      "0A": {
+        "low": "width",
+        "high": "height"
+      },
+      "0B": {
+        "low": "width",
+        "high": "height"
+      },
+      "0C": {
+        "low": "width",
+        "high": "height"
+      },
+      "0D": {
+        "low": "width",
+        "high": "height"
+      },
+      "0E": {
+        "low": "width",
+        "high": "height"
+      },
+      "0F": {
+        "low": "variant",
+        "high": "height"
+      },
+      "10": {
+        "low": "width",
+        "high": "variant"
+      },
+      "11": {
+        "low": "variant",
+        "high": "height"
+      },
+      "12": {
+        "low": "variant",
+        "high": "length"
+      },
+      "13": {
+        "low": "variant",
+        "high": "height"
+      },
+      "14": {
+        "low": "width",
+        "high": "height"
+      },
+      "15": {
+        "low": "variant",
+        "high": "height",
+        "runaway": [
+          "high"
+        ]
+      },
+      "16": {
+        "low": "width",
+        "high": "height"
+      },
+      "17": {
+        "low": "width",
+        "high": "variant"
+      },
+      "18": {
+        "low": "width",
+        "high": "height"
+      },
+      "19": {
+        "low": "width",
+        "high": "height"
+      },
+      "1A": {
+        "low": "width",
+        "high": "height"
+      },
+      "1B": {
+        "low": "width",
+        "high": "height"
+      },
+      "1C": {
+        "low": "width",
+        "high": "variant"
+      },
+      "1D": {
+        "low": "width",
+        "high": "height"
+      },
+      "1E": {
+        "low": "variant",
+        "high": "height",
+        "runaway": [
+          "high"
+        ]
+      },
+      "1F": {
+        "low": "variant",
+        "high": "height",
+        "runaway": [
+          "high"
+        ]
+      },
+      "20": {
+        "low": "width",
+        "high": "variant",
+        "runaway": [
+          "low"
+        ]
+      },
+      "21": {
+        "byte": "width"
+      },
+      "22": {
+        "low": "width",
+        "high": "height"
+      },
+      "23": {
+        "low": "width",
+        "high": "height"
+      },
+      "24": {
+        "low": "width",
+        "high": "height"
+      },
+      "25": {
+        "low": "width",
+        "high": "height"
+      },
+      "26": {
+        "low": "width",
+        "high": "height"
+      },
+      "27": {
+        "low": "width",
+        "high": "height"
+      },
+      "28": {
+        "low": "width",
+        "high": "height"
+      },
+      "29": {
+        "low": "width",
+        "high": "height"
+      },
+      "2A": {
+        "low": "width",
+        "high": "height"
+      },
+      "2B": {
+        "low": "width",
+        "high": "height"
+      },
+      "2C": {
+        "low": "width",
+        "high": "height"
+      },
+      "2D": {
+        "low": "width",
+        "high": "height"
+      },
+      "2E": {
+        "low": "width",
+        "high": "height"
+      },
+      "2F": {
+        "low": "width",
+        "high": "height"
+      },
+      "30": {
+        "low": "width",
+        "high": "height"
+      },
+      "31": {
+        "low": "width",
+        "high": "height"
+      },
+      "32": {
+        "low": "width",
+        "high": "height"
+      },
+      "33": {
+        "low": "width",
+        "high": "height"
+      },
+      "34": {
+        "low": "width",
+        "high": "height"
+      },
+      "35": {
+        "low": "width",
+        "high": "height"
+      },
+      "36": {
+        "low": "width",
+        "high": "height",
+        "runaway": [
+          "low",
+          "high"
+        ]
+      },
+      "37": {
+        "low": "length",
+        "high": "variant",
+        "runaway": [
+          "low"
+        ]
+      },
+      "38": {
+        "low": "variant",
+        "high": "height"
+      },
+      "39": {
+        "low": "variant",
+        "high": "length"
+      },
+      "3A": {
+        "low": "width",
+        "high": "height"
+      },
+      "3B": {
+        "low": "width",
+        "high": "height"
+      },
+      "3C": {
+        "low": "length",
+        "high": "variant"
+      },
+      "3D": {
+        "low": "width",
+        "high": "height"
+      },
+      "3E": {
+        "low": "variant",
+        "high": "height"
+      },
+      "3F": {
+        "low": "width",
+        "high": "height"
+      }
+    },
+    "GhostHouse": {
+      "01": {
+        "low": "width",
+        "high": "height"
+      },
+      "02": {
+        "low": "width",
+        "high": "height"
+      },
+      "03": {
+        "low": "width",
+        "high": "height"
+      },
+      "04": {
+        "low": "width",
+        "high": "height"
+      },
+      "05": {
+        "low": "width",
+        "high": "height"
+      },
+      "06": {
+        "low": "width",
+        "high": "height"
+      },
+      "07": {
+        "low": "width",
+        "high": "height"
+      },
+      "08": {
+        "low": "width",
+        "high": "height"
+      },
+      "09": {
+        "low": "width",
+        "high": "height"
+      },
+      "0A": {
+        "low": "width",
+        "high": "height"
+      },
+      "0B": {
+        "low": "width",
+        "high": "height"
+      },
+      "0C": {
+        "low": "width",
+        "high": "height"
+      },
+      "0D": {
+        "low": "width",
+        "high": "height"
+      },
+      "0E": {
+        "low": "width",
+        "high": "height"
+      },
+      "0F": {
+        "low": "variant",
+        "high": "height"
+      },
+      "10": {
+        "low": "width",
+        "high": "variant"
+      },
+      "11": {
+        "low": "variant",
+        "high": "height"
+      },
+      "12": {
+        "low": "variant",
+        "high": "length"
+      },
+      "13": {
+        "low": "variant",
+        "high": "height"
+      },
+      "14": {
+        "low": "width",
+        "high": "height"
+      },
+      "15": {
+        "low": "variant",
+        "high": "height",
+        "runaway": [
+          "high"
+        ]
+      },
+      "16": {
+        "low": "width",
+        "high": "height"
+      },
+      "17": {
+        "low": "width",
+        "high": "variant"
+      },
+      "18": {
+        "low": "width",
+        "high": "height"
+      },
+      "19": {
+        "low": "width",
+        "high": "height"
+      },
+      "1A": {
+        "low": "width",
+        "high": "height"
+      },
+      "1B": {
+        "low": "width",
+        "high": "height"
+      },
+      "1C": {
+        "low": "width",
+        "high": "variant"
+      },
+      "1D": {
+        "low": "width",
+        "high": "height"
+      },
+      "1E": {
+        "low": "variant",
+        "high": "height",
+        "runaway": [
+          "high"
+        ]
+      },
+      "1F": {
+        "low": "variant",
+        "high": "height",
+        "runaway": [
+          "high"
+        ]
+      },
+      "20": {
+        "low": "width",
+        "high": "variant",
+        "runaway": [
+          "low"
+        ]
+      },
+      "21": {
+        "byte": "width"
+      },
+      "22": {
+        "low": "width",
+        "high": "height"
+      },
+      "23": {
+        "low": "width",
+        "high": "height"
+      },
+      "24": {
+        "low": "width",
+        "high": "height"
+      },
+      "25": {
+        "low": "width",
+        "high": "height"
+      },
+      "26": {
+        "low": "width",
+        "high": "height"
+      },
+      "27": {
+        "low": "width",
+        "high": "height"
+      },
+      "28": {
+        "low": "width",
+        "high": "height"
+      },
+      "29": {
+        "low": "width",
+        "high": "height"
+      },
+      "2A": {
+        "low": "width",
+        "high": "height"
+      },
+      "2B": {
+        "low": "width",
+        "high": "height"
+      },
+      "2C": {
+        "low": "width",
+        "high": "height"
+      },
+      "2D": {
+        "low": "width",
+        "high": "height"
+      },
+      "2E": {
+        "low": "width",
+        "high": "variant"
+      },
+      "2F": {
+        "low": "width",
+        "high": "height"
+      },
+      "30": {
+        "low": "width",
+        "high": "height"
+      },
+      "31": {
+        "low": "width",
+        "high": "height",
+        "runaway": [
+          "low",
+          "high"
+        ]
+      },
+      "32": {
+        "low": "width",
+        "high": "height"
+      },
+      "33": {
+        "low": "width",
+        "high": "variant",
+        "runaway": [
+          "low"
+        ]
+      },
+      "34": {
+        "low": "length",
+        "high": "height",
+        "runaway": [
+          "low",
+          "high"
+        ]
+      },
+      "35": {
+        "low": "width",
+        "high": "height"
+      },
+      "36": {
+        "low": "width",
+        "high": "height"
+      },
+      "37": {
+        "low": "width",
+        "high": "variant",
+        "runaway": [
+          "low"
+        ]
+      },
+      "38": {
+        "low": "width",
+        "high": "variant",
+        "runaway": [
+          "low"
+        ]
+      },
+      "39": {
+        "low": "variant",
+        "high": "height"
+      },
+      "3A": {
+        "low": "variant",
+        "high": "height"
+      },
+      "3B": {
+        "low": "width",
+        "high": "variant",
+        "runaway": [
+          "low"
+        ]
+      },
+      "3C": {
+        "low": "width",
+        "high": "height"
+      },
+      "3D": {
+        "low": "width",
+        "high": "height"
+      },
+      "3E": {
+        "low": "width",
+        "high": "height"
+      },
+      "3F": {
+        "low": "width",
+        "high": "height"
+      }
+    }
+  },
+  "sizes_measured_by": "editor/tools/measure_object_sizes.py, over 1,890 level loads through the emulator"
+}

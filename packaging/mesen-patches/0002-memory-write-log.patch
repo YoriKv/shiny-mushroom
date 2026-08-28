@@ -1,0 +1,163 @@
+Keep a write history for one registered memory range.
+
+The access counters keep one write stamp per address, so a cell written by one
+piece of code and written over by a later one remembers only the later writer.
+For Shiny Mushroom that is the one observation the counters cannot make: which
+level-object drew a tilemap cell that a later object then drew over. The trace
+logger can answer it, but costs ~2x a whole tilemap rebuild, because it
+disassembles every executed instruction while it is on.
+
+So the counter machinery learns to keep history for exactly one caller-chosen
+range: `SetWriteLogRange(memoryType, offset, length, capacity)` points it at a
+range of one (absolute) memory, and every write into that range appends
+`(masterClock, address)` to a preallocated buffer that `GetWriteLog` copies
+out. The hot-path cost is one enum compare per write outside the range, two
+bounds checks inside it. A run that outgrows `capacity` sets an overflow flag
+-- reported by `GetWriteLog` -- rather than wrapping, so a truncated answer
+can never pass as a whole one. The entries clear wherever the counters clear
+(`ResetCounts`, which a savestate load reaches); the registration survives, so
+a caller arms once and reads per run.
+
+Range registration is deliberately singular: one range, one consumer, no
+locking beyond what the counters themselves have. Reads are meant to happen
+while the machine is stopped, exactly like `GetMemoryAccessCounts`.
+
+diff --git a/Core/Debugger/MemoryAccessCounter.cpp b/Core/Debugger/MemoryAccessCounter.cpp
+index d48ac66..eb9fd61 100644
+--- a/Core/Debugger/MemoryAccessCounter.cpp
++++ b/Core/Debugger/MemoryAccessCounter.cpp
+@@ -51,7 +51,52 @@ void MemoryAccessCounter::ProcessMemoryWrite(AddressInfo& addressInfo, uint64_t
+ 		AddressCounters& counts = _counters[(int)addressInfo.Type][addressInfo.Address + i];
+ 		counts.WriteStamp = masterClock;
+ 		counts.WriteCounter++;
++		if(addressInfo.Type == _writeLogType) {
++			LogWrite((uint32_t)(addressInfo.Address + i), masterClock);
++		}
++	}
++}
++
++void MemoryAccessCounter::LogWrite(uint32_t address, uint64_t masterClock)
++{
++	if(address < _writeLogStart || address >= _writeLogEnd) {
++		return;
++	}
++	if(_writeLogCount >= _writeLog.size()) {
++		_writeLogOverflow = true;
++		return;
++	}
++	_writeLog[_writeLogCount].MasterClock = masterClock;
++	_writeLog[_writeLogCount].Address = address;
++	_writeLog[_writeLogCount].Padding = 0;
++	_writeLogCount++;
++}
++
++void MemoryAccessCounter::SetWriteLogRange(MemoryType memoryType, uint32_t offset, uint32_t length, uint32_t capacity)
++{
++	DebugBreakHelper helper(_debugger);
++	if(length == 0 || capacity == 0) {
++		_writeLogType = MemoryType::None;
++		_writeLogStart = 0;
++		_writeLogEnd = 0;
++		_writeLog.clear();
++	} else {
++		_writeLogType = memoryType;
++		_writeLogStart = offset;
++		_writeLogEnd = offset + length;
++		_writeLog.resize(capacity);
++	}
++	_writeLogCount = 0;
++	_writeLogOverflow = false;
++}
++
++uint32_t MemoryAccessCounter::GetWriteLog(WriteLogEntry entries[], uint32_t& overflow)
++{
++	overflow = _writeLogOverflow ? 1 : 0;
++	if(entries != nullptr && _writeLogCount > 0) {
++		memcpy(entries, _writeLog.data(), _writeLogCount * sizeof(WriteLogEntry));
+ 	}
++	return _writeLogCount;
+ }
+ 
+ template<uint8_t accessWidth>
+@@ -74,6 +119,10 @@ void MemoryAccessCounter::ResetCounts()
+ 	for(int i = 0; i < DebugUtilities::GetMemoryTypeCount(); i++) {
+ 		memset(_counters[i].data(), 0, _counters[i].size() * sizeof(AddressCounters));
+ 	}
++	//The write log clears with the counters: both describe one run, and a
++	//savestate restore is what ends one.
++	_writeLogCount = 0;
++	_writeLogOverflow = false;
+ 	_enableBreakOnUninitRead = _debugger->GetConsole()->GetMasterClock() < 1000;
+ }
+ 
+diff --git a/Core/Debugger/MemoryAccessCounter.h b/Core/Debugger/MemoryAccessCounter.h
+index 7ee4e44..e7c4988 100644
+--- a/Core/Debugger/MemoryAccessCounter.h
++++ b/Core/Debugger/MemoryAccessCounter.h
+@@ -23,6 +23,13 @@ struct AddressCounters
+ 	uint32_t ExecCounter;
+ };
+ 
++struct WriteLogEntry
++{
++	uint64_t MasterClock;
++	uint32_t Address;
++	uint32_t Padding;
++};
++
+ enum class ReadResult
+ {
+ 	Normal,
+@@ -38,6 +45,17 @@ private:
+ 	Debugger* _debugger = nullptr;
+ 	bool _enableBreakOnUninitRead = false;
+ 
++	//Every write into one registered range, in order, with its master clock --
++	//what the per-address counters cannot keep. See SetWriteLogRange.
++	vector<WriteLogEntry> _writeLog;
++	MemoryType _writeLogType = MemoryType::None;
++	uint32_t _writeLogStart = 0;
++	uint32_t _writeLogEnd = 0;
++	uint32_t _writeLogCount = 0;
++	bool _writeLogOverflow = false;
++
++	void LogWrite(uint32_t address, uint64_t masterClock);
++
+ public:
+ 	MemoryAccessCounter(Debugger* debugger);
+ 
+@@ -48,4 +66,7 @@ public:
+ 	void ResetCounts();
+ 
+ 	void GetAccessCounts(uint32_t offset, uint32_t length, MemoryType memoryType, AddressCounters counts[]);
++
++	void SetWriteLogRange(MemoryType memoryType, uint32_t offset, uint32_t length, uint32_t capacity);
++	uint32_t GetWriteLog(WriteLogEntry entries[], uint32_t& overflow);
+ };
+\ No newline at end of file
+diff --git a/InteropDLL/DebugApiWrapper.cpp b/InteropDLL/DebugApiWrapper.cpp
+index 17f7319..59094ad 100644
+--- a/InteropDLL/DebugApiWrapper.cpp
++++ b/InteropDLL/DebugApiWrapper.cpp
+@@ -309,6 +309,21 @@ extern "C"
+ 		WithDebugger(void, GetMemoryAccessCounter()->GetAccessCounts(offset, length, memoryType, counts));
+ 	}
+ 
++	DllExport void __stdcall SetWriteLogRange(MemoryType memoryType, uint32_t offset, uint32_t length, uint32_t capacity)
++	{
++		WithDebugger(void, GetMemoryAccessCounter()->SetWriteLogRange(memoryType, offset, length, capacity));
++	}
++
++	DllExport uint32_t __stdcall GetWriteLog(WriteLogEntry* entries, uint32_t* overflow)
++	{
++		uint32_t overflowed = 0;
++		uint32_t count = WithDebugger(uint32_t, GetMemoryAccessCounter()->GetWriteLog(entries, overflowed));
++		if(overflow != nullptr) {
++			*overflow = overflowed;
++		}
++		return count;
++	}
++
+ 	DllExport CdlStatistics __stdcall GetCdlStatistics(MemoryType memoryType)
+ 	{
+ 		return WithDebugger(CdlStatistics, GetCdlManager()->GetCdlStatistics(memoryType));

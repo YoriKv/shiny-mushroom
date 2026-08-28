@@ -1,0 +1,110 @@
+[project]
+name = "shiny-mushroom"
+# Single-sourced from editor/shiny_mushroom/__init__.py (__version__), so release.sh
+# bumps exactly one file. The editor is the only artifact this repository
+# publishes — the disassembly and its tooling are not distributed — so the
+# project version is the editor's version. See [tool.hatch.version] below.
+dynamic = ["version"]
+description = "Super Mario World disassembly, its tooling, and the Shiny Mushroom editor"
+requires-python = ">=3.12"
+# GPL-3.0-only, not "or later": the version is pinned deliberately, so a future
+# GPL revision cannot change this project's terms without a decision here. The
+# SPDX-expression form of `license` plus `license-files` is PEP 639, which needs
+# hatchling >= 1.27 — the unpinned build requirement below resolves to a newer
+# one than that.
+license = "GPL-3.0-only"
+license-files = ["LICENSE"]
+dependencies = [
+    # The editor's UI toolkit. Qt 6 via PySide6 for its LGPLv3 license, and it
+    # ships wheels for Windows, macOS and Linux — the three platforms the
+    # release workflow builds for.
+    #
+    # This is a dependency of the *editor* only. `smw_tools` (the disassembly
+    # tooling) stays standard-library-only and must never import Qt: it runs in
+    # build scripts and CI where a GUI stack has no business being.
+    "PySide6>=6.8",
+]
+
+[project.scripts]
+# uv's equivalent of an npm script: `uv run smw <command>` from anywhere in the
+# repository. One console entry point with subcommands, rather than a list of
+# ad-hoc task names.
+smw = "smw_tools.cli:main"
+# The editor, launchable as `uv run shiny-mushroom` as well as
+# `python -m shiny_mushroom`.
+shiny-mushroom = "shiny_mushroom.app:main"
+# The screenshot harness: boots the real editor offscreen, drives it through
+# an ordered list of steps and grabs PNGs. A development tool, not a shipped
+# feature -- `uv run sm-shot --help` for the step list.
+sm-shot = "shiny_mushroom.ui.screenshot:main"
+
+[dependency-groups]
+# uv-native dev dependencies (PEP 735). Not shipped in the built wheel.
+dev = [
+    "pytest>=8",
+    "pytest-qt>=4.4",
+    # Runs the suite across processes. Both suites together are a couple of
+    # thousand tests, nearly all of them cheap, so the run is bound by the sheer
+    # number of them rather than by any one -- exactly the shape that divides.
+    # See the `-n` in [tool.pytest.ini_options] below for why it is capped.
+    "pytest-xdist>=3.6",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+# Read __version__ straight from the package so pyproject and the runtime agree.
+path = "editor/shiny_mushroom/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+# Two packages, each beside what it operates on: the tooling next to the
+# assembly, the editor in its own tree.
+packages = ["smw/smw_tools", "editor/shiny_mushroom"]
+
+[tool.uv]
+# Hardlinking fails when uv's cache (WSL/ext4) and the project's venv (on a
+# mounted Windows drive under /mnt) sit on different filesystems — the normal
+# setup here — so uv warns and falls back to copying. Ask for copy up front to
+# silence that; the cost is a one-time per-install copy.
+link-mode = "copy"
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+# The two package roots. Without them ruff's import sorter cannot tell
+# `smw_tools`/`shiny_mushroom` from a third-party package, and sorts them into
+# the wrong block.
+src = ["smw", "editor"]
+# One line per finding, no echoed source. The full form re-prints whole import
+# blocks for a single sorting complaint, which is noise in a terminal and costly
+# to read back through tooling.
+output-format = "concise"
+
+[tool.ruff.lint]
+# A pragmatic modern default: pyflakes/pycodestyle errors, import sorting,
+# pyupgrade, and bugbear. Expand as the codebase grows.
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["smw/tests", "editor/tests"]
+# Qt tests must never try to open a real window: `offscreen` is forced in
+# editor/tests/conftest.py before Qt is imported.
+#
+# `-n` runs the suite in parallel, which is what keeps `uv run pytest` a thing
+# you do before every change rather than at the end. Capped at 8 because each
+# worker is a process and the expensive fixtures below it boot real cartridges.
+#
+# `--dist loadgroup` is what keeps those cartridges sane: every test that boots
+# a real core carries an `xdist_group` mark (see `needs_core` in the emulator
+# test files), so each expensive module-scoped fixture boots once, on one
+# worker, instead of once per worker that happened to draw one of its tests --
+# a run used to start a dozen cores at once, and the contention made the
+# emulator's pause/step choreography flaky. Ungrouped tests distribute exactly
+# as before.
+#
+# `-n0` runs everything in this process again -- which is what `-s`, a `pdb`
+# breakpoint and a readable traceback all need.
+addopts = "-ra -n auto --maxprocesses=8 --dist loadgroup"

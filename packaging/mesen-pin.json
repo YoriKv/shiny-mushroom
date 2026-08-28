@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/nesdev-org/MesenCE",
+  "ref": "2.2.1",
+  "commit": "20ba206cef5ba207c21203176d02cb9f43dda9fb",
+  "licence": "GPL-3.0-or-later",
+  "why_pinned": "The editor calls MesenCore through its internal C++/C# boundary, not a public API. Layouts and MemoryType numbering are free to move between revisions -- MesenCE 2.2.1 adds two Game Boy entries to MemoryType, which happens to leave the SNES ordinals alone but would not have to. Every vendored core must therefore come from one known commit and be rebuilt deliberately. Changing this file is what triggers a rebuild of all platforms.",
+  "why_this_fork": "MesenCE is the community-maintained continuation of SourMesen/Mesen2, which is where releases now come from.",
+  "patches": "packaging/mesen-patches/ -- applied on top of this commit, in name order. Adding, changing or removing one changes what every bundled library is and must rebuild all platforms, exactly as moving the pin does."
+}

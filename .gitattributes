@@ -1,0 +1,46 @@
+# Enforce LF everywhere. This repository is edited from both Windows and WSL;
+# without this, Windows tooling can rewrite files to CRLF and produce noisy,
+# cross-platform diffs.
+* text=auto eol=lf
+
+# Game data is byte-exact input to the assembler. `text=auto` would normally
+# detect these as binary anyway, but a mis-detection here would silently change
+# the assembled ROM, so mark them explicitly rather than relying on the guess.
+*.bin  -text
+*.brr  -text
+*.pal  -text
+*.sfc  -text
+*.smc  -text
+*.sym  -text
+*.exe  -text
+
+# Formats the imported base ships. These carry no NUL bytes in their first few
+# KB, so `text=auto` guesses TEXT and would strip the CR from any `0D 0A` pair
+# occurring as data. That is not hypothetical: 11 of the 245 .mwl levels contain
+# such a pair, and normalising them would corrupt the level and move ROM bytes.
+*.mwl    -text
+*.tpl    -text
+*.map16  -text
+*.lz1    -text
+*.lz2    -text
+
+# Editor assets. Same reasoning as the game data above: marked explicitly rather
+# than left to `text=auto` to guess, since a mis-detection would corrupt them.
+*.png   -text
+*.ico   -text
+*.icns  -text
+
+# Assembler binaries committed at smw/ root (the Linux ELF has no extension).
+smw/asar      -text
+smw/asar.exe  -text
+
+# The vendored Mesen core, one shared library per platform. `.dll` is covered
+# by *.exe's reasoning but not its pattern, and `.so`/`.dylib` are extensions
+# `text=auto` has no special knowledge of -- a mis-detection would rewrite line
+# endings inside a native binary and produce a library that will not load.
+*.dll     -text
+*.so      -text
+*.dylib   -text
+
+# Lockfile is managed by uv; keep it as-is.
+uv.lock linguist-generated=true

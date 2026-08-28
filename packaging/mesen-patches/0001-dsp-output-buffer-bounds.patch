@@ -1,0 +1,83 @@
+Bound the DSP's output buffer.
+
+`Dsp::_dspOutput` is a fixed `int16_t[0x2000]` that `Dsp::Exec` appends two
+samples to per output cycle, advancing `_outSampleCount` with no bound check.
+The only thing that empties it is `Spc::ProcessEndFrame`, which runs at the end
+of a frame.
+
+Every debugger break tops the audio up on the way in --
+`SnesDebugger::OnBeforeBreak` calls `SnesConsole::RunAudio()` -- so a debugger
+that breaks repeatedly without letting a frame finish keeps filling a buffer
+nothing drains. After about eight frames' worth, `Dsp::Exec` writes past the end
+of its own heap object. AddressSanitizer reports a two-byte
+heap-buffer-overflow at `Dsp.cpp:320`; glibc reports it later and elsewhere as a
+corrupt heap, so the fault lands on whatever allocation comes next rather than
+on the guilty one.
+
+Neither `_outSampleCount` nor `_dspOutput` is serialized, so restoring a
+savestate does not reset the count. That is what makes it reachable from a host
+which drives cartridge routines out of band and rewinds the clock between them,
+as this editor's sprite capture does: the console is walked back from the frame
+boundary it would have drained at, repeatedly, while the buffer keeps filling.
+
+Dropping samples once the buffer is full is the conservative fix. It can only be
+reached when a frame has not ended for eight frames' worth of emulated audio,
+which no unattended emulation does.
+
+--- a/Core/SNES/DSP/Dsp.cpp
++++ b/Core/SNES/DSP/Dsp.cpp
+@@ -311,19 +311,25 @@
+ 			//"Output the right sample to the DAC."
+ 			EchoStep27();
+ 
+-			if(ReadReg(DspGlobalRegs::Flags) & 0x40) {
+-				//Global mute/silence flag
+-				_dspOutput[_outSampleCount] = 0;
+-				_dspOutput[_outSampleCount + 1] = 0;
+-			} else {
+-				_dspOutput[_outSampleCount] = (int16_t)_state.OutSamples[0];
+-				_dspOutput[_outSampleCount + 1] = (int16_t)_state.OutSamples[1];
++			//Only ProcessEndFrame empties this buffer, and a debugger that
++			//breaks without letting a frame finish keeps filling it, because
++			//OnBeforeBreak catches audio up on every break. Drop samples
++			//rather than write past the end.
++			if(_outSampleCount + 1 < DspOutputSize) {
++				if(ReadReg(DspGlobalRegs::Flags) & 0x40) {
++					//Global mute/silence flag
++					_dspOutput[_outSampleCount] = 0;
++					_dspOutput[_outSampleCount + 1] = 0;
++				} else {
++					_dspOutput[_outSampleCount] = (int16_t)_state.OutSamples[0];
++					_dspOutput[_outSampleCount + 1] = (int16_t)_state.OutSamples[1];
++				}
++
++				_outSampleCount += 2;
+ 			}
+ 
+ 			_state.OutSamples[0] = 0;
+ 			_state.OutSamples[1] = 0;
+-
+-			_outSampleCount += 2;
+ 			break;
+ 
+ 		case 28:
+--- a/Core/SNES/DSP/Dsp.h
++++ b/Core/SNES/DSP/Dsp.h
+@@ -11,6 +11,8 @@
+ class Dsp final : public ISerializable
+ {
+ private:
++	static constexpr uint32_t DspOutputSize = 0x2000;
++
+ 	DspState _state = {};
+ 	DspVoice _voices[8] = {};
+ 	Emulator* _emu = nullptr;
+@@ -18,7 +20,7 @@
+ 
+ 	//Output buffer
+ 	uint16_t _outSampleCount = 0;
+-	int16_t _dspOutput[0x2000] = {};
++	int16_t _dspOutput[DspOutputSize] = {};
+ 
+ 	void UpdateCounter();
+ 

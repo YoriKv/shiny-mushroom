@@ -1,0 +1,612 @@
+{
+  "tables": [
+    {
+      "role": "global_palettes",
+      "label": "SMW_GlobalPalettes_Main",
+      "prefix": "SMW_GlobalPalettes_",
+      "file": "Banks/Bank00.asm",
+      "macro": "DATATABLE_SMW_GlobalPalettes",
+      "size": "7E2"
+    },
+    {
+      "role": "magikoopa_fade_palettes",
+      "label": "SMW_NorSpr01F_MagiKoopa_Status08_MagiKoopaFadePalettes",
+      "prefix": "SMW_NorSpr01F_MagiKoopa_Status08_",
+      "file": "Banks/Bank03.asm",
+      "macro": "ROUTINE_RT02_SMW_NorSpr01F_Magikoopa_Status08",
+      "size": "80"
+    },
+    {
+      "role": "boo_fade_palettes",
+      "label": "SMW_BooFadePalettes_Main",
+      "prefix": "SMW_BooFadePalettes_",
+      "file": "Banks/Bank03.asm",
+      "macro": "DATATABLE_SMW_BooFadePalettes",
+      "size": "80"
+    }
+  ],
+  "blob_size": "8E2",
+  "sources": [
+    { "file": "palettes/Sky.tpl", "start": "6", "end": "8" },
+    { "file": "palettes/Sky.tpl", "start": "8", "end": "A" },
+    { "file": "palettes/Sky.tpl", "start": "A", "end": "C" },
+    { "file": "palettes/Sky.tpl", "start": "C", "end": "E" },
+    { "file": "palettes/Sky.tpl", "start": "E", "end": "10" },
+    { "file": "palettes/Sky.tpl", "start": "10", "end": "12" },
+    { "file": "palettes/Sky.tpl", "start": "12", "end": "14" },
+    { "file": "palettes/Sky.tpl", "start": "14", "end": "16" },
+    { "file": "palettes/Background.tpl", "start": "8", "end": "14" },
+    { "file": "palettes/Background.tpl", "start": "28", "end": "34" },
+    { "file": "palettes/Background.tpl", "start": "48", "end": "54" },
+    { "file": "palettes/Background.tpl", "start": "68", "end": "74" },
+    { "file": "palettes/Background.tpl", "start": "88", "end": "94" },
+    { "file": "palettes/Background.tpl", "start": "A8", "end": "B4" },
+    { "file": "palettes/Background.tpl", "start": "C8", "end": "D4" },
+    { "file": "palettes/Background.tpl", "start": "E8", "end": "F4" },
+    { "file": "palettes/Background.tpl", "start": "108", "end": "114" },
+    { "file": "palettes/Background.tpl", "start": "128", "end": "134" },
+    { "file": "palettes/Background.tpl", "start": "148", "end": "154" },
+    { "file": "palettes/Background.tpl", "start": "168", "end": "174" },
+    { "file": "palettes/Background.tpl", "start": "188", "end": "194" },
+    { "file": "palettes/Background.tpl", "start": "1A8", "end": "1B4" },
+    { "file": "palettes/Background.tpl", "start": "1C8", "end": "1D4" },
+    { "file": "palettes/Background.tpl", "start": "1E8", "end": "1F4" },
+    { "file": "palettes/smw.pal", "start": "D0", "end": "F0" },
+    { "file": "palettes/smw.pal", "start": "F0", "end": "1B0" },
+    { "file": "palettes/smw.pal", "start": "1B0", "end": "1F8" },
+    { "file": "palettes/smw.pal", "start": "1F8", "end": "204" },
+    { "file": "palettes/smw.pal", "start": "204", "end": "21C" },
+    { "file": "palettes/smw.pal", "start": "21C", "end": "228" },
+    { "file": "palettes/smw.pal", "start": "228", "end": "23C" },
+    { "file": "palettes/smw.pal", "start": "23C", "end": "250" },
+    { "file": "palettes/smw.pal", "start": "250", "end": "264" },
+    { "file": "palettes/smw.pal", "start": "264", "end": "278" },
+    { "file": "palettes/smw.pal", "start": "278", "end": "2CC" },
+    { "file": "palettes/Mode7.tpl", "start": "6", "end": "12" },
+    { "file": "palettes/Mode7.tpl", "start": "26", "end": "6E" },
+    { "file": "palettes/smw.pal", "start": "320", "end": "338" },
+    { "file": "palettes/smw.pal", "start": "338", "end": "488" },
+    { "file": "palettes/smw.pal", "start": "488", "end": "4DC" },
+    { "file": "palettes/smw.pal", "start": "4DC", "end": "53E" },
+    { "file": "palettes/Bowser.tpl", "start": "106", "end": "114" },
+    { "file": "palettes/smw.pal", "start": "54C", "end": "554" },
+    { "file": "palettes/smw.pal", "start": "554", "end": "56C" },
+    { "file": "palettes/smw.pal", "start": "56C", "end": "57C" },
+    { "file": "palettes/smw.pal", "start": "57C", "end": "58C" },
+    { "file": "palettes/smw.pal", "start": "58C", "end": "59C" },
+    { "file": "palettes/smw.pal", "start": "59C", "end": "5AC" },
+    { "file": "palettes/smw.pal", "start": "5AC", "end": "5BC" },
+    { "file": "palettes/IggyLarryPlatform.tpl", "start": "6", "end": "16" },
+    { "file": "palettes/smw.pal", "start": "5CC", "end": "5D4" },
+    { "file": "palettes/smw.pal", "start": "5D4", "end": "5E2" },
+    { "file": "palettes/smw.pal", "start": "5E2", "end": "5F0" },
+    { "file": "palettes/smw.pal", "start": "5F0", "end": "5FE" },
+    { "file": "palettes/Bowser.tpl", "start": "6", "end": "14" },
+    { "file": "palettes/Bowser.tpl", "start": "26", "end": "34" },
+    { "file": "palettes/Bowser.tpl", "start": "46", "end": "54" },
+    { "file": "palettes/Bowser.tpl", "start": "66", "end": "74" },
+    { "file": "palettes/Bowser.tpl", "start": "86", "end": "94" },
+    { "file": "palettes/Bowser.tpl", "start": "A6", "end": "B4" },
+    { "file": "palettes/Bowser.tpl", "start": "C6", "end": "D4" },
+    { "file": "palettes/Bowser.tpl", "start": "E6", "end": "F4" },
+    { "file": "palettes/smw.pal", "start": "66E", "end": "67A" },
+    { "file": "palettes/smw.pal", "start": "67A", "end": "686" },
+    { "file": "palettes/smw.pal", "start": "686", "end": "692" },
+    { "file": "palettes/smw.pal", "start": "692", "end": "7E2" },
+    { "file": "palettes/MagiKoopa.tpl", "start": "6", "end": "16" },
+    { "file": "palettes/MagiKoopa.tpl", "start": "26", "end": "36" },
+    { "file": "palettes/MagiKoopa.tpl", "start": "46", "end": "56" },
+    { "file": "palettes/MagiKoopa.tpl", "start": "66", "end": "76" },
+    { "file": "palettes/MagiKoopa.tpl", "start": "86", "end": "96" },
+    { "file": "palettes/MagiKoopa.tpl", "start": "A6", "end": "B6" },
+    { "file": "palettes/MagiKoopa.tpl", "start": "C6", "end": "D6" },
+    { "file": "palettes/MagiKoopa.tpl", "start": "E6", "end": "F6" },
+    { "file": "palettes/FadingBoo.tpl", "start": "6", "end": "16" },
+    { "file": "palettes/FadingBoo.tpl", "start": "26", "end": "36" },
+    { "file": "palettes/FadingBoo.tpl", "start": "46", "end": "56" },
+    { "file": "palettes/FadingBoo.tpl", "start": "66", "end": "76" },
+    { "file": "palettes/FadingBoo.tpl", "start": "86", "end": "96" },
+    { "file": "palettes/FadingBoo.tpl", "start": "A6", "end": "B6" },
+    { "file": "palettes/FadingBoo.tpl", "start": "C6", "end": "D6" },
+    { "file": "palettes/FadingBoo.tpl", "start": "E6", "end": "F6" }
+  ],
+  "regions": {
+    "SMW_GlobalPalettes_Sky": {
+      "start": "0",
+      "end": "10",
+      "title": "Back area colour",
+      "leaf": false
+    },
+    "SMW_GlobalPalettes_Sky_Setting00": {
+      "start": "0",
+      "end": "2",
+      "title": "Back area colour, setting 0",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_Sky_Setting01": {
+      "start": "2",
+      "end": "4",
+      "title": "Back area colour, setting 1",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_Sky_Setting02": {
+      "start": "4",
+      "end": "6",
+      "title": "Back area colour, setting 2",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_Sky_Setting03": {
+      "start": "6",
+      "end": "8",
+      "title": "Back area colour, setting 3",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_Sky_Setting04": {
+      "start": "8",
+      "end": "A",
+      "title": "Back area colour, setting 4",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_Sky_Setting05": {
+      "start": "A",
+      "end": "C",
+      "title": "Back area colour, setting 5",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_Sky_Setting06": {
+      "start": "C",
+      "end": "E",
+      "title": "Back area colour, setting 6",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_Sky_Setting07": {
+      "start": "E",
+      "end": "10",
+      "title": "Back area colour, setting 7",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_Background": {
+      "start": "10",
+      "end": "D0",
+      "title": "Background",
+      "leaf": false
+    },
+    "SMW_GlobalPalettes_Background_Setting00": {
+      "start": "10",
+      "end": "28",
+      "title": "Background, setting 0",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_Background_Setting01": {
+      "start": "28",
+      "end": "40",
+      "title": "Background, setting 1",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_Background_Setting02": {
+      "start": "40",
+      "end": "58",
+      "title": "Background, setting 2",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_Background_Setting03": {
+      "start": "58",
+      "end": "70",
+      "title": "Background, setting 3",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_Background_Setting04": {
+      "start": "70",
+      "end": "88",
+      "title": "Background, setting 4",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_Background_Setting05": {
+      "start": "88",
+      "end": "A0",
+      "title": "Background, setting 5",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_Background_Setting06": {
+      "start": "A0",
+      "end": "B8",
+      "title": "Background, setting 6",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_Background_Setting07": {
+      "start": "B8",
+      "end": "D0",
+      "title": "Background, setting 7",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_Layer3": {
+      "start": "D0",
+      "end": "F0",
+      "title": "Layer 3",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_Foreground": {
+      "start": "F0",
+      "end": "1B0",
+      "title": "Foreground",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_Objects": {
+      "start": "1B0",
+      "end": "1F8",
+      "title": "Objects",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_InitBossFightLudwig": {
+      "start": "1F8",
+      "end": "204",
+      "title": "Ludwig's room",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_InitBossFighRoy": {
+      "start": "204",
+      "end": "21C",
+      "title": "Roy's room",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_InitBossFightMorton": {
+      "start": "21C",
+      "end": "228",
+      "title": "Morton's room",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_Mario": {
+      "start": "228",
+      "end": "23C",
+      "title": "Mario",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_Luigi": {
+      "start": "23C",
+      "end": "250",
+      "title": "Luigi",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_MarioFire": {
+      "start": "250",
+      "end": "264",
+      "title": "Fire Mario",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_LuigiFire": {
+      "start": "264",
+      "end": "278",
+      "title": "Fire Luigi",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_Sprites": {
+      "start": "278",
+      "end": "2CC",
+      "title": "Sprites",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_InitBossFightReznor": {
+      "start": "2CC",
+      "end": "2D8",
+      "title": "Reznor's room",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_InitBossFightBowser": {
+      "start": "2D8",
+      "end": "320",
+      "title": "Bowser's room",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_BowserEnd": {
+      "start": "320",
+      "end": "338",
+      "title": "Bowser, final phase",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_OW_Areas": {
+      "start": "338",
+      "end": "488",
+      "title": "Overworld areas",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_OW_Objects": {
+      "start": "488",
+      "end": "4DC",
+      "title": "Overworld objects",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_OW_Sprites": {
+      "start": "4DC",
+      "end": "53E",
+      "title": "Overworld sprites",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_BowserLightningFlash": {
+      "start": "53E",
+      "end": "54C",
+      "title": "Valley of Bowser lightning",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_OW_Layer3": {
+      "start": "54C",
+      "end": "554",
+      "title": "Overworld Layer 3",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_DATA_00B5F4": {
+      "start": "554",
+      "end": "56C",
+      "title": "Mode 7 boss room, row 0",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_Flashing": {
+      "start": "56C",
+      "end": "58C",
+      "title": "Flashing colours",
+      "leaf": false
+    },
+    "SMW_GlobalPalettes_Flashing_Yellow": {
+      "start": "56C",
+      "end": "57C",
+      "title": "Flashing colours, yellow",
+      "leaf": true,
+      "note": "Animates the Yoshi coin and the yellow map spot."
+    },
+    "SMW_GlobalPalettes_Flashing_Red": {
+      "start": "57C",
+      "end": "58C",
+      "title": "Flashing colours, red",
+      "leaf": true,
+      "note": "Animates the red map spot."
+    },
+    "SMW_GlobalPalettes_TS_Layer3": {
+      "start": "58C",
+      "end": "59C",
+      "title": "Title screen, Layer 3",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_DATA_00B63C": {
+      "start": "59C",
+      "end": "5AC",
+      "title": "Title screen, row 0",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_UnknownBlueGradient": {
+      "start": "5AC",
+      "end": "5BC",
+      "title": "Unused blue gradient",
+      "leaf": true,
+      "note": "Recorded in the table as a beta Iggy and Larry platform, with a question mark: nothing in the game reads it."
+    },
+    "SMW_GlobalPalettes_IggyLarryPlatform": {
+      "start": "5BC",
+      "end": "5CC",
+      "title": "Iggy and Larry's platform",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_Layer3Smasher": {
+      "start": "5CC",
+      "end": "5D4",
+      "title": "Castle smashers",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_YoshiBerry": {
+      "start": "5D4",
+      "end": "5FE",
+      "title": "Yoshi's berries",
+      "leaf": false
+    },
+    "SMW_GlobalPalettes_YoshiBerry_Red": {
+      "start": "5D4",
+      "end": "5E2",
+      "title": "Yoshi's berries, red",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_YoshiBerry_Pink": {
+      "start": "5E2",
+      "end": "5F0",
+      "title": "Yoshi's berries, pink",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_YoshiBerry_Green": {
+      "start": "5F0",
+      "end": "5FE",
+      "title": "Yoshi's berries, green",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_Bowser": {
+      "start": "5FE",
+      "end": "66E",
+      "title": "Bowser",
+      "leaf": false
+    },
+    "SMW_GlobalPalettes_Bowser_Normal": {
+      "start": "5FE",
+      "end": "60C",
+      "title": "Bowser, normal",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_Bowser_Fade01": {
+      "start": "60C",
+      "end": "61A",
+      "title": "Bowser, fade 1",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_Bowser_Fade02": {
+      "start": "61A",
+      "end": "628",
+      "title": "Bowser, fade 2",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_Bowser_Fade03": {
+      "start": "628",
+      "end": "636",
+      "title": "Bowser, fade 3",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_Bowser_Fade04": {
+      "start": "636",
+      "end": "644",
+      "title": "Bowser, fade 4",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_Bowser_Fade05": {
+      "start": "644",
+      "end": "652",
+      "title": "Bowser, fade 5",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_Bowser_Fade06": {
+      "start": "652",
+      "end": "660",
+      "title": "Bowser, fade 6",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_Bowser_Fade07": {
+      "start": "660",
+      "end": "66E",
+      "title": "Bowser, fade 7",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_EndingLuigi": {
+      "start": "66E",
+      "end": "67A",
+      "title": "Ending, Luigi",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_EndingMario": {
+      "start": "67A",
+      "end": "686",
+      "title": "Ending, Mario",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_EndingToadstool": {
+      "start": "686",
+      "end": "692",
+      "title": "Ending, Princess Toadstool",
+      "leaf": true
+    },
+    "SMW_GlobalPalettes_OW_AreasPassed": {
+      "start": "692",
+      "end": "7E2",
+      "title": "Overworld areas, cleared",
+      "leaf": true
+    },
+    "SMW_NorSpr01F_MagiKoopa_Status08_MagiKoopaFadePalettes": {
+      "start": "7E2",
+      "end": "862",
+      "title": "Magikoopa",
+      "leaf": false
+    },
+    "SMW_NorSpr01F_MagiKoopa_Status08_MagiKoopaFadePalettes_Fade07": {
+      "start": "7E2",
+      "end": "7F2",
+      "title": "Magikoopa, fade 7",
+      "leaf": true,
+      "note": "In every row the lightest blue is inverted from what it should be."
+    },
+    "SMW_NorSpr01F_MagiKoopa_Status08_MagiKoopaFadePalettes_Fade06": {
+      "start": "7F2",
+      "end": "802",
+      "title": "Magikoopa, fade 6",
+      "leaf": true,
+      "note": "In every row the lightest blue is inverted from what it should be."
+    },
+    "SMW_NorSpr01F_MagiKoopa_Status08_MagiKoopaFadePalettes_Fade05": {
+      "start": "802",
+      "end": "812",
+      "title": "Magikoopa, fade 5",
+      "leaf": true,
+      "note": "In every row the lightest blue is inverted from what it should be."
+    },
+    "SMW_NorSpr01F_MagiKoopa_Status08_MagiKoopaFadePalettes_Fade04": {
+      "start": "812",
+      "end": "822",
+      "title": "Magikoopa, fade 4",
+      "leaf": true,
+      "note": "In every row the lightest blue is inverted from what it should be."
+    },
+    "SMW_NorSpr01F_MagiKoopa_Status08_MagiKoopaFadePalettes_Fade03": {
+      "start": "822",
+      "end": "832",
+      "title": "Magikoopa, fade 3",
+      "leaf": true,
+      "note": "In every row the lightest blue is inverted from what it should be."
+    },
+    "SMW_NorSpr01F_MagiKoopa_Status08_MagiKoopaFadePalettes_Fade02": {
+      "start": "832",
+      "end": "842",
+      "title": "Magikoopa, fade 2",
+      "leaf": true,
+      "note": "In every row the lightest blue is inverted from what it should be."
+    },
+    "SMW_NorSpr01F_MagiKoopa_Status08_MagiKoopaFadePalettes_Fade01": {
+      "start": "842",
+      "end": "852",
+      "title": "Magikoopa, fade 1",
+      "leaf": true,
+      "note": "In every row the lightest blue is inverted from what it should be."
+    },
+    "SMW_NorSpr01F_MagiKoopa_Status08_MagiKoopaFadePalettes_Normal": {
+      "start": "852",
+      "end": "862",
+      "title": "Magikoopa, normal",
+      "leaf": true,
+      "note": "In every row the lightest blue is inverted from what it should be."
+    },
+    "SMW_BooFadePalettes_Main": {
+      "start": "862",
+      "end": "8E2",
+      "title": "Big Boo Boss",
+      "leaf": false
+    },
+    "SMW_BooFadePalettes_Fade07": {
+      "start": "862",
+      "end": "872",
+      "title": "Big Boo Boss, fade 7",
+      "leaf": true
+    },
+    "SMW_BooFadePalettes_Fade06": {
+      "start": "872",
+      "end": "882",
+      "title": "Big Boo Boss, fade 6",
+      "leaf": true
+    },
+    "SMW_BooFadePalettes_Fade05": {
+      "start": "882",
+      "end": "892",
+      "title": "Big Boo Boss, fade 5",
+      "leaf": true
+    },
+    "SMW_BooFadePalettes_Fade04": {
+      "start": "892",
+      "end": "8A2",
+      "title": "Big Boo Boss, fade 4",
+      "leaf": true
+    },
+    "SMW_BooFadePalettes_Fade03": {
+      "start": "8A2",
+      "end": "8B2",
+      "title": "Big Boo Boss, fade 3",
+      "leaf": true
+    },
+    "SMW_BooFadePalettes_Fade02": {
+      "start": "8B2",
+      "end": "8C2",
+      "title": "Big Boo Boss, fade 2",
+      "leaf": true
+    },
+    "SMW_BooFadePalettes_Fade01": {
+      "start": "8C2",
+      "end": "8D2",
+      "title": "Big Boo Boss, fade 1",
+      "leaf": true
+    },
+    "SMW_BooFadePalettes_Normal": {
+      "start": "8D2",
+      "end": "8E2",
+      "title": "Big Boo Boss, normal",
+      "leaf": true
+    }
+  }
+}
