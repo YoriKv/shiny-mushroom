@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.3 - 2026-08-28
+
+- asar.exe window no longer flashes on screen as a console window
+
 ## v0.1.2 - 2026-08-28
 
 - Fixed release bundling

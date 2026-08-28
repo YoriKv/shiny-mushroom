@@ -8,6 +8,7 @@ ROM.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -21,6 +22,17 @@ from pathlib import Path
 #: that must not alter a single ROM byte, so it is deliberately kept separate;
 #: until then the noise would bury real diagnostics.
 SILENCED_WARNINGS = ["feature_deprecated"]
+
+#: Keep the assembler off the screen on Windows.
+#:
+#: ``asar.exe`` is a console program, so Windows hands it a console of its own
+#: whenever the parent has none -- a black window flashing over the editor once
+#: per assembler run, and an extraction or a build makes dozens. Its output is
+#: captured here in every case, so that console never shows anything: the flash
+#: is the whole of it.
+_NO_WINDOW: dict[str, int] = (
+    {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+)
 
 _ERROR_LINE = re.compile(r"(^|\s)error:")
 _WARNING_LINE = re.compile(r"(^|\s)warning:")
@@ -54,6 +66,7 @@ def run_asar(
             capture_output=True,
             text=True,
             errors="replace",
+            **_NO_WINDOW,
         )
     except OSError as exc:
         raise AsarError(f"failed to launch asar ({asar_bin}): {exc}") from exc
