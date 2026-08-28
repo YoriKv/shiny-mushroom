@@ -59,6 +59,7 @@ jobs:
             core: windows-x64
             lib: MesenCore.dll
             sep: ';'
+            asar: --add-binary "smw/asar.exe;."
           - os: ubuntu-latest
             asset: shiny-mushroom-linux
             package: tar -czf dist/shiny-mushroom-linux.tar.gz -C dist shiny-mushroom
@@ -68,6 +69,7 @@ jobs:
             core: linux-x64
             lib: MesenCore.so
             sep: ':'
+            asar: --add-binary "smw/asar:."
           # Two native macOS builds. uv's Python is single-arch, so PyInstaller
           # cannot emit a universal2 app - instead each architecture builds on
           # its own runner. macos-latest is Apple Silicon; macos-15-intel is
@@ -82,6 +84,7 @@ jobs:
             core: macos-arm64
             lib: MesenCore.dylib
             sep: ':'
+            asar: --add-binary "smw/asar-macos:."
           - os: macos-15-intel
             asset: shiny-mushroom-mac-intel
             package: ditto -c -k --keepParent dist/shiny-mushroom.app dist/shiny-mushroom-mac-intel.zip
@@ -90,6 +93,7 @@ jobs:
             core: macos-x64
             lib: MesenCore.dylib
             sep: ':'
+            asar: --add-binary "smw/asar-macos:."
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -148,12 +152,35 @@ jobs:
       # app starts without its icon. The core is added separately above.
       # pyinstaller is pulled in ephemerally with --with so it need not live in
       # the dev dependency group / uv.lock.
+      #
+      # **The disassembly ships with the app, and so does the assembler.** The
+      # editor does not open a ROM: it assembles one, out of `smw/src` and the
+      # assets extracted from the person's own cartridge, every time a project
+      # is built. So `asar`, `src/` and `vendor/` are runtime inputs and not
+      # build-time ones, and without them a frozen app installs, starts, and
+      # fails at the first thing it is for.
+      #
+      # They land at the bundle root because that is where `smw_tools` looks:
+      # `paths.WORK_ROOT` is `Path(__file__).parent.parent`, which in a frozen
+      # app resolves to sys._MEIPASS -- so `src`, `vendor` and the assembler go
+      # in beside the collected packages, exactly as they sit beside `smw_tools`
+      # in a checkout, and every path derived from WORK_ROOT resolves unchanged.
+      # asar comes in with --add-binary rather than --add-data for the execute
+      # bit, which a data file does not keep.
+      #
+      # One assembler per leg, named in the matrix: the Windows PE, the Linux
+      # ELF, and for both Mac runners the universal Mach-O, which carries
+      # x86_64 and arm64 in the one file.
       - name: Build app
         run: >
           uv run --with pyinstaller pyinstaller
           --name shiny-mushroom --windowed --noconfirm
           --add-binary "corestage/${{ matrix.lib }}${{ matrix.sep }}shiny_mushroom/resources/mesen/${{ matrix.core }}"
           --add-data "corestage/provenance.json${{ matrix.sep }}shiny_mushroom/resources/mesen/${{ matrix.core }}"
+          ${{ matrix.asar }}
+          --add-data "smw/src${{ matrix.sep }}src"
+          --add-data "smw/vendor${{ matrix.sep }}vendor"
+          --add-data "smw/asar-licenses${{ matrix.sep }}asar-licenses"
           --collect-data shiny_mushroom
           ${{ matrix.icon }}
           editor/shiny_mushroom/__main__.py

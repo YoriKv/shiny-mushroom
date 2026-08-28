@@ -74,6 +74,7 @@ case "$TARGET" in
     # with Windows wheels. Unset, uv.exe takes its default — .venv.
     UV_BIN=uv.exe
     UV=(env -u UV_PROJECT_ENVIRONMENT uv.exe)
+    ASAR=(--add-binary "smw/asar.exe;.")
     ;;
   linux)
     CORE_DIR=linux-x64
@@ -85,6 +86,7 @@ case "$TARGET" in
     # target .venv and overwrite the Windows environment.
     UV_BIN=uv
     UV=(env UV_PROJECT_ENVIRONMENT=.venv-linux uv)
+    ASAR=(--add-binary "smw/asar:.")
     ;;
 esac
 
@@ -127,11 +129,21 @@ mv "$CORE" "$HELD"
 # starts without its icon or its metadata.
 # pyinstaller comes in ephemerally with --with, so it need not sit in the dev
 # dependency group and uv.lock.
+#
+# The disassembly and the assembler go in at the bundle root, because the editor
+# assembles a cartridge rather than opening one: `smw_tools.paths.WORK_ROOT` is
+# this file's package parent, which in a frozen app is sys._MEIPASS, so `src`,
+# `vendor` and `asar` sit beside the collected packages exactly as they sit
+# beside `smw_tools` in a checkout. asar is --add-binary for the execute bit.
 echo "==> freezing for $TARGET with $UV_BIN"
 "${UV[@]}" run --with pyinstaller pyinstaller \
   --name shiny-mushroom --windowed --noconfirm \
   --add-binary "$STAGE/$LIB$SEP$DEST" \
   --add-data "$STAGE/provenance.json$SEP$DEST" \
+  "${ASAR[@]}" \
+  --add-data "smw/src${SEP}src" \
+  --add-data "smw/vendor${SEP}vendor" \
+  --add-data "smw/asar-licenses${SEP}asar-licenses" \
   --collect-data shiny_mushroom \
   ${ICON[@]+"${ICON[@]}"} \
   editor/shiny_mushroom/__main__.py

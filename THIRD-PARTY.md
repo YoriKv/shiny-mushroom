@@ -8,9 +8,11 @@ This file is the "clear directions" GPLv3 section 6d asks for: it says, next to
 the object code, where the corresponding source for each bundled component is.
 It ships inside the released application alongside `LICENSE`.
 
-It covers the **editor release** only. The disassembly under `smw/` is source and
-is never released as binaries, so the tools it uses (asar, and the emulator
-`smw play` launches) are not distributed by us and are not listed here.
+It covers the **editor release** only. The disassembly under `smw/` is source
+and is never released as a binary -- the editor assembles a cartridge from it,
+on the machine it runs on, out of assets the person extracted from a cartridge
+they own. The *assembler* that does it is bundled, and is listed below; the
+emulator `smw play` launches on a developer's machine is not, and is not.
 
 *This is a record of what we ship and where its source is, written by the
 maintainers. It is not legal advice.*
@@ -52,6 +54,29 @@ To reproduce a bundled library exactly:
 ```bash
 uv run python packaging/build_mesen_core.py --vendor
 ```
+
+## asar
+
+The 65816 assembler the editor runs to build a project's cartridge. Bundled at
+the root of the application's bundled data, one binary for the platform the
+release is for: `asar.exe` (Windows PE), `asar` (Linux ELF), `asar-macos`
+(universal Mach-O, x86_64 and arm64 in one file).
+
+| | |
+|---|---|
+| Upstream | [RPGHacker/asar](https://github.com/RPGHacker/asar) |
+| Licence | LGPL-3.0-or-later, with a permissive summary in `asar-licenses/LICENSE` |
+| Version | 1.91 |
+| Modified | no |
+
+Unmodified: the binaries are asar 1.91 as it assembles from that tag's source,
+and nothing in this repository patches it. Its licence texts travel with it in
+`asar-licenses/`, which the release bundles beside the binary, as the LGPL asks.
+
+**The macOS binary is ours to explain.** Upstream publishes Windows and Linux
+builds and no macOS one, so `asar-macos` was built by the maintainers from the
+1.91 source rather than downloaded. It is the same version as the other two and
+carries no changes.
 
 ## Qt, via PySide6
 

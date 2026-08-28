@@ -170,6 +170,22 @@ def readiness() -> Readiness:
     )
 
 
+def carries_copier_header(cart: Path) -> bool:
+    """Whether ``cart`` is a headered dump -- an ``.smc`` with 512 bytes in
+    front of the cartridge.
+
+    Only so the dialog can *say* it took one off: nothing downstream needs
+    asking, because :func:`~smw_tools.rom_image.read_rom` normalises the header
+    away and everything here works on the bytes it returns. Unreadable answers
+    ``False``; whether the file can be read at all is :func:`inspect`'s to say,
+    with the error message.
+    """
+    try:
+        return read_rom(cart).had_copier_header
+    except OSError:
+        return False
+
+
 def inspect(cart: Path, wanted: str | None = None) -> str:
     """Which release ``cart`` is, or raise saying why it is no use.
 
@@ -180,6 +196,13 @@ def inspect(cart: Path, wanted: str | None = None) -> str:
 
     Identified by hash, because the five releases are not distinguishable from
     their headers in any way that survives a hack.
+
+    **A headered dump is one of the five.** The 512-byte copier header is not
+    cartridge data -- it is a floppy copier's note about the dump -- so it is
+    taken off before the hash is taken and before a byte is sliced, and an
+    ``.smc`` is accepted exactly where the ``.sfc`` of the same cartridge is.
+    Hashing the file as it lies would refuse every headered dump as "not one of
+    the five", which is a file-format detail wearing the words for a hack.
 
     Any of the five is accepted unless ``wanted`` names one, in which case the
     others are refused **and named**: that is the dialog asked on behalf of a

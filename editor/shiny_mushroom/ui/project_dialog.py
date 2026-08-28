@@ -50,6 +50,7 @@ from shiny_mushroom.project import NAME_PATTERN, Project, projects_root, valid_n
 from shiny_mushroom.setup import (
     SetupError,
     available_targets,
+    carries_copier_header,
     inspect,
     prepare,
     ready_versions,
@@ -307,6 +308,10 @@ class CartridgeDialog(_Threaded):
     there, so extracting a second is a visible addition and not a mystery.
     ``wanted`` narrows it to one release -- for a project that needs that
     release's assets -- and every other is refused by name.
+
+    A headered ``.smc`` dump is one of the five: the copier header is taken off
+    before the hash is taken, so it is recognised exactly as the ``.sfc`` of the
+    same cartridge is, and the label says the header was ignored.
     """
 
     def __init__(
@@ -329,7 +334,9 @@ class CartridgeDialog(_Threaded):
             f"{APP_NAME} runs the game's own code, so it needs the graphics, "
             f"music and samples from a real cartridge. They are not "
             f"distributed with the editor.\n\n"
-            f"Choose an unmodified ROM of {which}. It is read, never written."
+            f"Choose an unmodified ROM of {which}. Headered dumps (.smc) are "
+            f"fine -- the header is taken off as the file is read. It is read, "
+            f"never written."
         )
         self._explanation.setWordWrap(True)
 
@@ -399,6 +406,7 @@ class CartridgeDialog(_Threaded):
         Qt's offscreen platform is the only way to drive it at all.
         """
         self._path_box.setText(str(cart))
+        headered = carries_copier_header(cart)
         try:
             version = inspect(cart, self._wanted)
         except SetupError as error:
@@ -407,8 +415,13 @@ class CartridgeDialog(_Threaded):
             self._ok().setEnabled(False)
             return
         self._cart = cart
+        # The header is said out loud because it is the one thing about the
+        # file the person can see that the editor deliberately ignored: a
+        # 524,800-byte dump recognised as a 512 KiB release otherwise looks
+        # like the wrong file being accepted.
+        header = " Its 512-byte copier header was ignored." if headered else ""
         self._status.setText(
-            f"Recognised as {ROM_VERSIONS[version].label} ({version}). "
+            f"Recognised as {ROM_VERSIONS[version].label} ({version}).{header} "
             f"Ready to extract."
         )
         self._ok().setEnabled(True)

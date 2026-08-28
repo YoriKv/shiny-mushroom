@@ -10,6 +10,6 @@
     "0002-memory-write-log.patch"
   ],
   "described": "2.2.1",
-  "built_on": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+  "built_on": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
   "platform": "linux-x64"
 }

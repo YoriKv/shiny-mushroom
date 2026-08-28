@@ -30,9 +30,11 @@
 *.ico   -text
 *.icns  -text
 
-# Assembler binaries committed at smw/ root (the Linux ELF has no extension).
-smw/asar      -text
-smw/asar.exe  -text
+# Assembler binaries committed at smw/ root (neither the Linux ELF nor the
+# macOS universal binary has an extension).
+smw/asar        -text
+smw/asar-macos  -text
+smw/asar.exe    -text
 
 # The vendored Mesen core, one shared library per platform. `.dll` is covered
 # by *.exe's reasoning but not its pattern, and `.so`/`.dylib` are extensions

@@ -47,15 +47,13 @@ plumbing. A name of that module nothing outside it asks for is not.
 from __future__ import annotations
 
 import json
-import os
 import re
 import shutil
-import sys
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from shiny_mushroom import APP_ID, level_graphics, level_palettes, map16, palettes
+from shiny_mushroom import level_graphics, level_palettes, map16, palettes
 
 # Every `x as x` from `project_files` is published from here on purpose, and
 # the redundant alias is what says so -- see the module docstring. The plain
@@ -84,7 +82,7 @@ from smw_tools.bases import (
 )
 from smw_tools.bases import base as rom_base
 from smw_tools.features import applied
-from smw_tools.paths import ASSETS_DIR, GAME_DIR
+from smw_tools.paths import ASSETS_DIR, GAME_DIR, data_dir
 from smw_tools.rom_sizes import ROM_SIZES, STOCK, RomSize
 
 #: The project's own metadata file, and the directory the overlay lives in.
@@ -256,14 +254,14 @@ def cache_root() -> Path:
 
 
 def _data_dir() -> Path:
-    """This application's data directory, by each platform's own convention."""
-    if sys.platform == "win32":
-        base = Path(os.environ.get("APPDATA") or Path.home() / "AppData/Roaming")
-    elif sys.platform == "darwin":
-        base = Path.home() / "Library/Application Support"
-    else:
-        base = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")
-    return base / APP_ID
+    """This application's data directory, by each platform's own convention.
+
+    One rule, in `smw_tools.paths`, because a frozen build extracts cart assets
+    into this same directory and that has to be the same directory: projects,
+    the cache and the assets are one application's state and are found together
+    or not at all.
+    """
+    return data_dir()
 
 
 @dataclass(frozen=True)

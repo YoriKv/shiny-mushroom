@@ -273,6 +273,10 @@ def record_extraction(*, version: str, rom: Path, count: int) -> None:
     # samples are shared, so several carts legitimately contribute.
     versions = prior.get("versions", {}) if isinstance(prior, dict) else {}
     versions[version] = state
+    # The directory is `smw/` in a checkout and the platform's data directory in
+    # a frozen app, where nothing need have created it yet: extraction is the
+    # first stage of first run, ahead of the project that would have made it.
+    EXTRACTION_STATE.parent.mkdir(parents=True, exist_ok=True)
     EXTRACTION_STATE.write_text(
         json.dumps({"pipelineVersion": 1, "versions": versions}, indent=2) + "\n"
     )

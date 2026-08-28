@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import sys
 from pathlib import Path
 
 #: The `smw/` package directory, derived from this file's location rather than cwd.
@@ -30,13 +31,53 @@ GLOBAL_DIR = SRC_DIR / "Global"
 #: Kept relative because the framework resolves sibling paths from it.
 FRAMEWORK_ENTRY = Path("..") / "Global" / "AssembleFile.asm"
 
+#: The directory name the editor files user data under, and the one thing about
+#: the application this module knows. Kept here rather than imported because the
+#: dependency arrow points one way -- the editor may import ``smw_tools``, never
+#: the reverse -- and ``shiny_mushroom.APP_ID`` is read *from* here so the two
+#: cannot drift into two different folders.
+APP_ID = "shiny-mushroom"
+
+
+def data_dir() -> Path:
+    """This application's data directory, by each platform's own convention."""
+    if sys.platform == "win32":
+        base = Path(os.environ.get("APPDATA") or Path.home() / "AppData/Roaming")
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library/Application Support"
+    else:
+        base = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")
+    return base / APP_ID
+
+
+def _assets_root() -> Path:
+    """Where extracted cart assets live, which depends on what is running them.
+
+    **A frozen application must not write into itself.** ``WORK_ROOT`` is the
+    checkout in a source tree and PyInstaller's bundle directory in a release,
+    so extracting there would mean writing a person's cartridge data inside the
+    installed application -- refused outright under ``Program Files``, and
+    inside a signed ``.app`` on macOS it invalidates the signature of the thing
+    doing the writing. The platform's data directory is where user data goes,
+    and it is what :func:`data_dir` answers.
+
+    A source checkout keeps extracting into ``smw/assets`` as it always has, so
+    ``uv run smw check --all``, the test suites and the editor go on sharing one
+    extraction rather than each keeping a copy of the same 20 MB.
+    """
+    if getattr(sys, "frozen", False):
+        return data_dir() / "assets"
+    return WORK_ROOT / "assets"
+
+
 #: ROM-derived assets, kept out of the source tree (and out of git) because they
 #: are copyrighted cart data. The build reaches them through asar's include
 #: search path instead -- see ``asset_include_args``.
-ASSETS_DIR = WORK_ROOT / "assets"
+ASSETS_DIR = _assets_root()
 
-#: Written beside the assets to record which cart produced them.
-EXTRACTION_STATE = WORK_ROOT / ".extraction-state.json"
+#: Written beside the assets to record which cart produced them -- beside them
+#: wherever they are, so a release's record travels with the release's assets.
+EXTRACTION_STATE = ASSETS_DIR.parent / ".extraction-state.json"
 
 
 def asset_include_args(cwd: Path = GAME_DIR, assets: Path | None = None) -> list[str]:
@@ -81,16 +122,29 @@ def relative_path(path: Path | str, start: Path | str | None = None) -> str:
 def asar_binary() -> Path:
     """Pick the asar build committed at the package root.
 
-    Both are checked in so the project builds from Windows and from WSL/Linux
-    without a setup step; under WSL we prefer the Linux ELF because launching
+    All three are checked in so the project builds from Windows, from macOS and
+    from WSL/Linux without a setup step: ``asar.exe`` is the PE, ``asar`` the
+    Linux ELF, and ``asar-macos`` a universal Mach-O carrying both x86_64 and
+    arm64, since upstream ships no macOS binary at all.
+
+    **macOS is asked for by name, not left to the fallback.** A Mach-O and an
+    ELF are both "the one without an extension" to a rule written as *not
+    Windows*, and Darwin reaching ``asar`` would get a Linux binary it cannot
+    exec -- a failure at the first build rather than at the lookup that chose
+    wrongly. Under WSL the Linux ELF is preferred over the PE because launching
     the PE through interop is markedly slower.
     """
     elf = WORK_ROOT / "asar"
     exe = WORK_ROOT / "asar.exe"
+    mac = WORK_ROOT / "asar-macos"
     if os.name == "nt":
         if exe.exists():
             return exe
         raise FileNotFoundError(f"asar.exe not found at {exe}")
+    if sys.platform == "darwin":
+        if mac.exists():
+            return mac
+        raise FileNotFoundError(f"asar-macos not found at {mac}")
     if elf.exists():
         return elf
     if exe.exists():

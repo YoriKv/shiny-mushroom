@@ -15,7 +15,9 @@ this one: the editor may import it to read the disassembly, but nothing in
 ``smw_tools`` may import the editor or Qt.
 """
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
+
+from smw_tools.paths import APP_ID as _APP_ID
 
 # The name shown to a person: window titles, dialogs, the About box, and
 # QApplication.applicationName.
@@ -31,7 +33,12 @@ APP_NAME = "Shiny Mushroom"
 # Both live here rather than in the Qt bootstrap because the bootstrap (data
 # location) and the preference store (:func:`shiny_mushroom.ui.settings.settings`)
 # must agree on them.
-APP_ID = "shiny-mushroom"
+#
+# Re-exported from `smw_tools.paths` rather than written twice: a frozen build
+# extracts cart assets into the same data directory, and that decision is made
+# down there -- where the dependency arrow lets it be made -- so two spellings
+# of this string would be two folders with one of them holding half the state.
+APP_ID = _APP_ID
 
 #: Turns on the package's own logging, which is otherwise silent: set it to a
 #: level name (``DEBUG``, ``INFO``) or to ``1`` for ``DEBUG``.
