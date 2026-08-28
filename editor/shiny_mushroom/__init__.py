@@ -15,7 +15,7 @@ this one: the editor may import it to read the disassembly, but nothing in
 ``smw_tools`` may import the editor or Qt.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 # The name shown to a person: window titles, dialogs, the About box, and
 # QApplication.applicationName.

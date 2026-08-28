@@ -55,10 +55,11 @@ Help -> Shortcuts (`F1`) to view a list of keyboard shortcuts.
 Thanks to the following projects and people, for what this editor is built on
 and for the accumulated community knowledge it represents.
 
-- **[SMWDisX](https://github.com/IsoFrieze/SMWDisX)** by IsoFrieze and
-  contributors - the community disassembly this tree derives from
+
 - **[Yoshifanatic's SNES framework](https://github.com/Yoshifanatic1/SNES-ROM-Framework)** - the
-  layout the assembly is arranged in
+  disassembly this tool is based on
+- **[SMWDisX](https://github.com/IsoFrieze/SMWDisX)** by IsoFrieze and
+  contributors - additional disassembly used for reference
 - **[asar](https://github.com/RPGHacker/asar)** by Alcaro and the asar
   developers - the assembler every build runs
 - **[SA-1 Pack](https://github.com/VitorVilela7/SMW-SA1-Pack)** by Vitor Vilela
