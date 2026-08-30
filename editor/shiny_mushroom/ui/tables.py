@@ -33,17 +33,23 @@ out, and nothing in it changes colour to say so.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QObject, Qt
+from collections.abc import Callable
+
+from PySide6.QtCore import QEvent, QModelIndex, QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QComboBox,
     QLabel,
+    QLineEdit,
     QStyledItemDelegate,
     QStyleOptionViewItem,
     QTableView,
     QWidget,
 )
+
+from shiny_mushroom.ui.theme import blended
 
 #: How far a cell's contents sit from the column boundary, which is what keeps
 #: a value off its neighbour and two neighbouring controls off each other's
@@ -62,29 +68,10 @@ SELECTION_WASH = 0.26
 NOTE_GREY = 0.38
 
 
-def _blended(over: QColor, under: QColor, amount: float) -> QColor:
-    """``over`` mixed ``amount`` of the way onto ``under``, opaque.
-
-    Opaque rather than an alpha brush: an item view's selection is painted by
-    the style, and not every style composites a translucent ``Highlight`` the
-    same way -- while every one of them fills with a solid colour identically.
-    """
-    return QColor(
-        *(
-            round(below + (above - below) * amount)
-            for above, below in (
-                (over.red(), under.red()),
-                (over.green(), under.green()),
-                (over.blue(), under.blue()),
-            )
-        )
-    )
-
-
 def selection_wash(palette: QPalette | None = None) -> QColor:
     """The colour a selected row is filled with -- see the module docstring."""
     palette = palette or QApplication.palette()
-    return _blended(
+    return blended(
         palette.color(QPalette.ColorRole.Highlight),
         palette.color(QPalette.ColorRole.Base),
         SELECTION_WASH,
@@ -94,7 +81,7 @@ def selection_wash(palette: QPalette | None = None) -> QColor:
 def note_ink(palette: QPalette | None = None) -> QColor:
     """The colour a table's explanatory note is written in."""
     palette = palette or QApplication.palette()
-    return _blended(
+    return blended(
         palette.color(QPalette.ColorRole.Window),
         palette.color(QPalette.ColorRole.WindowText),
         NOTE_GREY,
@@ -184,6 +171,93 @@ class PaddedCells(QStyledItemDelegate):
         self, editor: QWidget, option: QStyleOptionViewItem, index: object
     ) -> None:
         editor.setGeometry(option.rect.adjusted(CELL_PADDING, 0, -CELL_PADDING, 0))
+
+
+#: Where a cell keeps the value behind its text, for a delegate that edits the
+#: value rather than the words shown for it.
+VALUE_ROLE = Qt.ItemDataRole.UserRole
+
+
+class PickedCells(PaddedCells):
+    """Cells whose value is picked from a list, or typed, and handed on.
+
+    The delegate never writes the model. What a committed value *means* is a
+    project edit the window makes and the table is then refilled from, so the
+    cell shows the old value until the edit has landed, and still shows it
+    when the window declines -- an unsaved-work question answered no. The
+    commit is handed on after the editor has closed, because the window's
+    answer may be a modal question or a refill, neither of which belongs
+    inside a delegate's ``setModelData``.
+
+    ``choices(row, column)`` answers ``(text, value)`` pairs for a cell picked
+    from a list, or ``None`` for one typed into a line; ``current(row,
+    column)`` the index of the pair the cell holds today, or ``-1``.
+
+    ``typed`` is the pair that makes the line-edit path work at all -- how to
+    show the held value and how to read a typed one back, ``None`` for anything
+    it is not -- and leaving it out is what makes a table pick-only. Only one
+    table types into a cell (a level number, in hex), so the parsing is that
+    table's rather than every table's.
+    """
+
+    committed = Signal(int, int, object)
+
+    def __init__(
+        self,
+        parent: QWidget,
+        choices: Callable[[int, int], list[tuple[str, object]] | None],
+        current: Callable[[int, int], int],
+        typed: tuple[Callable[[object], str], Callable[[str], object | None]]
+        | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._choices = choices
+        self._current = current
+        self._typed = typed
+
+    def createEditor(  # noqa: N802 - Qt override
+        self, parent: QWidget, option: QStyleOptionViewItem, index: QModelIndex
+    ) -> QWidget:
+        offered = self._choices(index.row(), index.column())
+        if offered is None:
+            return QLineEdit(parent) if self._typed is not None else None
+        box = QComboBox(parent)
+        for text, value in offered:
+            box.addItem(text, value)
+        # A pick is a commit: nobody wants to click away from a combo to
+        # make it take.
+        box.activated.connect(lambda _index, box=box: self._took(box))
+        return box
+
+    def _took(self, box: QComboBox) -> None:
+        self.commitData.emit(box)
+        self.closeEditor.emit(box)
+
+    def setEditorData(  # noqa: N802 - Qt override
+        self, editor: QWidget, index: QModelIndex
+    ) -> None:
+        if isinstance(editor, QComboBox):
+            editor.setCurrentIndex(self._current(index.row(), index.column()))
+            return
+        if isinstance(editor, QLineEdit) and self._typed is not None:
+            shown, _ = self._typed
+            editor.setText(shown(index.data(VALUE_ROLE)))
+            editor.selectAll()
+
+    def setModelData(  # noqa: N802 - Qt override
+        self, editor: QWidget, model: object, index: QModelIndex
+    ) -> None:
+        if isinstance(editor, QComboBox):
+            value = editor.currentData()
+        elif isinstance(editor, QLineEdit) and self._typed is not None:
+            _, read = self._typed
+            value = read(editor.text())
+            if value is None or value == index.data(VALUE_ROLE):
+                return
+        else:
+            return
+        row, column = index.row(), index.column()
+        QTimer.singleShot(0, lambda: self.committed.emit(row, column, value))
 
 
 def style_table(view: QTableView) -> None:

@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import graphics
+from .asm_defines import block
 from .bases import RomBase
 
 #: The feature under which the rows exist, by id -- the same string
@@ -92,23 +93,26 @@ def is_inherit(row: bytes) -> bool:
     return not row or bytes(row) == INHERIT_ROW
 
 
-#: The rows' offset from the level bank's base -- the run's start, past the
-#: RATS tag -- the animated files' behind them, and the block's whole size:
-#: the two tables, then the stubs, the level number stash among them.
-#: Exactly as ``Config/LevelGraphics.asm`` states them; a test holds the file
-#: to these, and another holds :data:`BLOCK_BYTES` equal to the feature's own
-#: :attr:`~smw_tools.features.Feature.block_bytes`, which is the same block
-#: declared where the run's order is known.
-ROWS_OFFSET = 0x8008
+#: The rows' offset from the level bank's base -- the packed head, which is
+#: the run's start past the RATS tag and the level number stash the bank lays
+#: down in front of every occupant -- and the animated files' behind them.
+#: Exactly as ``Config/LevelBank.asm`` and ``Config/LevelGraphics.asm`` state
+#: them, which a test holds the files to.
+ROWS_OFFSET = 0x8011
 ANIMATED_OFFSET = ROWS_OFFSET + ROWS_BYTES
-STUB_BYTES = 0xDC
-BLOCK_BYTES = ROWS_BYTES + ANIMATED_BYTES + STUB_BYTES
 
-#: The level number stash's stub (``Config/LevelNumberStash.asm``), part of
-#: :data:`STUB_BYTES` here. It is the custom level palettes' when they lead
-#: the bank, so with this feature on their stubs are that much shorter than
-#: their own budget states, and the blobs start that much earlier.
-STASH_STUB_BYTES = 0x09
+#: The block's whole size: the two tables, then the read stubs. From
+#: ``Config/PackedRuns.asm``, where every packed run's blocks are declared
+#: and the placement asserts them (:mod:`smw_tools.asm_defines`), so this
+#: module reads the figure the build checks rather than composing a second
+#: one. One size on every cartridge -- the level number stash the rows are
+#: indexed by is the bank's, in front of every occupant.
+BLOCK_BYTES = block("LevelGraphics")
+
+#: What the block holds beyond its two tables: the read stubs with their
+#: shared tail and the animated tiles' stub. A difference rather than a
+#: figure, since the block is the declaration and the tables are fixed.
+STUB_BYTES = BLOCK_BYTES - ROWS_BYTES - ANIMATED_BYTES
 
 #: The role the rows are declared under, and the fragment the build derives
 #: from the containers, relative to the game folder.

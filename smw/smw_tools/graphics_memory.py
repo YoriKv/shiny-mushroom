@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import graphics
+from .asm_defines import define
 from .bases import RomBase
 from .packing import lay_out
 from .rom_image import pc_to_snes, snes_to_pc
@@ -117,12 +118,17 @@ FIRST_STAGED_FORMAT = FORMAT_ANIMATED
 #: state them -- a test holds the files to these. The run starts past the
 #: RATS tag; the pointer table is ``$100`` long pointers, the format table
 #: ``$100`` bytes, then the two stubs, then the streams.
+#:
+#: The two stubs' own sizes are read from the file that emits them and
+#: asserts them (:mod:`smw_tools.asm_defines`), rather than restated here:
+#: where the streams start follows from them, so a second copy is a head
+#: this side would place a file at and the assembler would not.
 BANK_RUN = 0x8008
 POINTERS_OFFSET = BANK_RUN
 FORMATS_OFFSET = POINTERS_OFFSET + 3 * FILE_ROWS
 STUBS_OFFSET = FORMATS_OFFSET + FILE_ROWS
-POINTER_STUB_BYTES = 0x38
-UPLOAD_STUB_BYTES = 0x26
+POINTER_STUB_BYTES = define("Define_SMW_ManagedGraphicsPointerStubBytes")
+UPLOAD_STUB_BYTES = define("Define_SMW_ManagedGraphicsUploadStubBytes")
 STUB_BYTES = POINTER_STUB_BYTES + UPLOAD_STUB_BYTES
 HEAD_BYTES = STUBS_OFFSET + STUB_BYTES - BANK_RUN
 STREAMS_OFFSET = BANK_RUN + HEAD_BYTES

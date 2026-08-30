@@ -44,7 +44,7 @@ from pathlib import Path
 from shiny_mushroom import palette_map, palettes
 from shiny_mushroom.hexnum import hexnum
 from shiny_mushroom.palettes import Palette, PaletteError, pack, unpack
-from smw_tools.features import LEVEL_CUSTOM_PALETTES, LEVEL_GRAPHICS
+from smw_tools.features import LEVEL_CUSTOM_PALETTES
 from smw_tools.levels import LEVEL_BANK_END, LEVEL_BANK_RUN
 
 #: How many levels the game has -- the pointer table's height, and the bound
@@ -68,15 +68,16 @@ DATA_LABEL_PREFIX = "SMW_LevelCustomPalettes_Data_"
 POINTERS_FRAGMENT = Path("palettes/levels/level-palettes.asm")
 DATA_FRAGMENT = Path("palettes/levels/level-palette-data.asm")
 
-#: What the feature puts at the level bank's head before any blob: the
+#: What the feature puts at its head in the level bank before any blob: the
 #: pointer table -- three bytes a level -- and the stubs. The head is the
-#: feature's declared block (:meth:`smw_tools.features.Feature.block`), so
-#: the size is stated once, where the run that holds it is; the stubs are
-#: whatever the block is not the table, and are shorter behind the per-level
-#: graphics, which emit the level number stash among them --
-#: :func:`stub_bytes`. :func:`bytes_for` is the whole of what the palettes
-#: occupy; the bank's other occupant, the level streams the managed level
-#: banks pack, opens behind that.
+#: feature's declared block
+#: (:attr:`smw_tools.features.Feature.block_bytes`), so the size is stated
+#: once, where the run that holds it is; the stubs are whatever the block is
+#: not the table. One size on every cartridge: the level number stash the
+#: copy reads sits at the bank's own head, in front of every occupant.
+#: :func:`bytes_for` is the whole of what the palettes occupy; the bank's
+#: other occupant, the level streams the managed level banks pack, opens
+#: behind that.
 TABLE_BYTES = 3 * LEVELS
 HEAD_BYTES = LEVEL_CUSTOM_PALETTES.block_bytes
 STUB_BYTES = HEAD_BYTES - TABLE_BYTES
@@ -90,33 +91,23 @@ STUB_BYTES = HEAD_BYTES - TABLE_BYTES
 CAPACITY = (LEVEL_BANK_END - LEVEL_BANK_RUN - HEAD_BYTES) // SIZE
 
 
-def stub_bytes(level_graphics: bool = False) -> int:
-    """How many bytes the palettes' stubs take: :data:`STUB_BYTES` leading
-    the bank, and that less the level number stash behind the per-level
-    graphics, whose block carries the stash instead."""
-    return head_bytes(level_graphics) - TABLE_BYTES
-
-
-def head_bytes(level_graphics: bool = False) -> int:
+def head_bytes() -> int:
     """The fixed head: the pointer table and the stubs, which is the
-    feature's block on a cartridge whose per-level graphics lead the bank or
-    do not -- :attr:`smw_tools.features.Feature.shares_block_with` is what
-    the stash costs the one that is second."""
-    return LEVEL_CUSTOM_PALETTES.block((LEVEL_GRAPHICS.id,) if level_graphics else ())
+    feature's declared block."""
+    return LEVEL_CUSTOM_PALETTES.block_bytes
 
 
-def bytes_for(count: int, *, level_graphics: bool = False) -> int:
+def bytes_for(count: int) -> int:
     """How many bytes of the level bank ``count`` dressed levels take: the
-    fixed head, and a blob each. ``level_graphics`` is whether the per-level
-    graphics lead the bank, which shortens the head by the stash."""
-    return head_bytes(level_graphics) + count * SIZE
+    fixed head, and a blob each."""
+    return head_bytes() + count * SIZE
 
 
-def capacity(room: int, *, level_graphics: bool = False) -> int:
+def capacity(room: int) -> int:
     """How many levels can wear one in ``room`` bytes of the level bank:
     whole blobs after the head, and none at all where the head itself does
     not fit."""
-    return max(0, (room - head_bytes(level_graphics)) // SIZE)
+    return max(0, (room - head_bytes()) // SIZE)
 
 
 #: Where the virtual offsets start. The real document -- the global palette

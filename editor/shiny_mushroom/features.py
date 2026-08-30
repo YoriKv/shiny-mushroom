@@ -60,7 +60,7 @@ from smw_tools.features import (
     build_defines,
     feature,
 )
-from smw_tools.levels import managed_regions
+from smw_tools.levels import has_level_bank, managed_regions
 from smw_tools.rom_sizes import ROM_SIZES
 from smw_tools.symbols import SymbolTable
 
@@ -418,11 +418,7 @@ class FeatureLifecycle:
         (:meth:`kept_room`), which is nothing for most features and the whole
         block for one whose data the overlay keeps either way.
         """
-        try:
-            held = project.next_base.features
-        except (ProjectError, OSError):
-            held = ()
-        return max(0, self.feature.block(held) - self.kept_room(project))
+        return max(0, self.feature.block_bytes - self.kept_room(project))
 
     def _declaration_limits(self, project: Project, adding: str) -> tuple[Limit, ...]:
         """What :mod:`smw_tools.features` refuses about the set this would
@@ -432,7 +428,7 @@ class FeatureLifecycle:
         wanted = (*project_build.features_wanted(project), adding)
         limits: list[Limit] = []
         try:
-            applied(base, wanted)
+            applied(base, wanted, project.rom_size_id)
         except FeatureError as error:
             limits.append(Limit(f"{error}."))
         try:
@@ -564,7 +560,7 @@ class FeatureLifecycle:
         wanted = dict.fromkeys(
             (*project_build.features_wanted(project), self.feature_id)
         )
-        return applied(rom_base(project.base_id), wanted)
+        return applied(rom_base(project.base_id), wanted, project.rom_size_id)
 
     def _base_without(self, project: Project) -> RomBase:
         """The same cartridge with this feature taken back off."""
@@ -573,7 +569,7 @@ class FeatureLifecycle:
             for held in project_build.features_wanted(project)
             if held != self.feature_id
         ]
-        return applied(rom_base(project.base_id), wanted)
+        return applied(rom_base(project.base_id), wanted, project.rom_size_id)
 
 
 class _LevelPalettesLifecycle(FeatureLifecycle):
@@ -598,7 +594,7 @@ class _LevelPalettesLifecycle(FeatureLifecycle):
         try:
             if not project.level_palette_bytes():
                 return 0
-            return self.feature.block(project.next_base.features)
+            return self.feature.block_bytes
         except (ProjectError, OSError):
             return 0
 
@@ -665,6 +661,15 @@ class _ManagedLevelMemoryLifecycle(FeatureLifecycle):
     the packer for the way on, the stock runs' difference for the way back.
     And the level files the project adds are what the feature packs, so the
     switch stays down while there are any.
+
+    **The cartridge is not a requirement here**, which is what separates this
+    from the level bank's other two occupants: the packing uses that bank
+    where the project builds one and packs into what banks ``$06`` and
+    ``$07`` leave where it does not, so the switch moves at 512 KB and the
+    size stays the project's own decision (:meth:`Project.rom_size_id`,
+    ``Level > ...`` and the ROM size menu). What the size *does* decide is
+    how much room the switch buys, which is why both halves price against
+    the project's own runs rather than a fixed set.
     """
 
     def enable_limits(self, project: Project) -> tuple[Limit, ...]:
@@ -679,8 +684,9 @@ class _ManagedLevelMemoryLifecycle(FeatureLifecycle):
             held += (
                 Limit(
                     f"The saved levels need {packing.over:,} bytes more than "
-                    f"banks $06 and $07 and the level bank hold end to end.",
-                    "Take that much back out of the levels first.",
+                    f"{_runs_named(project)} hold end to end.",
+                    "Take that much back out of the levels first, or build a "
+                    "larger cartridge for them to overflow into.",
                 ),
             )
         return held
@@ -912,6 +918,16 @@ def disable(project: Project, feature_id: str) -> Switched:
 # -- small shared readings -----------------------------------------------------
 
 
+def _runs_named(project: Project) -> str:
+    """What the packer had to fit this project's levels into, in words: the
+    game's own level banks, and the expansion bank behind them where the
+    cartridge has one."""
+    stock = "banks $06 and $07"
+    if not has_level_bank(project.next_base):
+        return stock
+    return f"{stock} and the level bank"
+
+
 def _fits(rom_size_id: str, wanted: str) -> bool:
     """Whether a cartridge of ``rom_size_id`` is at least ``wanted``."""
     return ROM_SIZES[rom_size_id].size >= ROM_SIZES[wanted].size
@@ -1019,7 +1035,7 @@ def _reserved_run_spare(project: Project, found: Feature) -> int | None:
             return None
     wanted = project_build.features_wanted(project)
     coming = sum(
-        feature(one).block(wanted)
+        feature(one).block_bytes
         for one in RESERVED_RUN
         if one in wanted and one not in project.features
     )

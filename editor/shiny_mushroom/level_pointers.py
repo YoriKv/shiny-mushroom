@@ -5,18 +5,16 @@ walk :mod:`smw_tools.levels` describes: one directive per level number in
 order, each naming the label above a container's insertion. Unlike the Layer 2
 table (:mod:`shiny_mushroom.layer2_table`) they speak a single grammar --
 ``dl SMW_LEVEL_L1_105`` down one file, ``dw SMW_LEVEL_SP_105`` down the other
--- so a remap does not need a donor line to borrow a spelling from: the one
-line that changes keeps its own directive, its whitespace and its trailing
-comment, and only the label token moves. That also lets a level be pointed at
-a label **no line currently names**, which the shipped tree makes ordinary:
-thirty-odd containers are reached by address rather than by number, and
-pointing a level at one is precisely what a remap is for.
+-- so a remap does not need a donor line to borrow a spelling from, and both
+are :class:`~shiny_mushroom.token_table.TokenTable`\ s: one label token moves
+and the file is otherwise byte for byte what it was. That type carries what
+that guarantees, including that a level may be pointed at a label **no line
+currently names** -- which the shipped tree makes ordinary, since thirty-odd
+containers are reached by address rather than by number.
 
-Like its sibling, this module only ever moves labels inside a fixed-size
-table: no stream is created or destroyed, no region is priced, and every
-untouched line comes through byte for byte. What a label *means* -- which
-container it makes a level read -- is :func:`smw_tools.levels.definitions`'
-business, and validating a remap against it is the caller's
+What a label *means* -- which container it makes a level read -- is
+:func:`smw_tools.levels.definitions`' business, and validating a remap against
+it is the caller's
 (:meth:`shiny_mushroom.project.Project.save_level_pointers`).
 """
 
@@ -27,6 +25,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from shiny_mushroom.hexnum import hexnum
+from shiny_mushroom.token_table import TokenTable, TokenTableError
 from smw_tools.levels import (
     ADDED_FRAGMENT,
     DELETED_FRAGMENT,
@@ -36,10 +35,6 @@ from smw_tools.levels import (
     Insertion,
     sprite_bank_rows,
 )
-
-#: One pointer-table entry: the directive with its leading whitespace, the
-#: label, and everything after it (the tabs and the level-number comment).
-_ENTRY = re.compile(r"^(\s*d[lw]\s+)(\S+)(.*)$")
 
 #: What the labels of a container the *project* adds start with -- defined by
 #: the streams fragment below rather than by the banks, and spelled in the
@@ -127,7 +122,7 @@ def deleted_fragment(labels: Iterable[str]) -> str:
     return "".join(parts)
 
 
-class LevelPointersError(ValueError):
+class LevelPointersError(TokenTableError):
     """A table that could not be read, or an entry it does not have."""
 
 
@@ -141,74 +136,38 @@ class StreamTarget:
 
 
 @dataclass(frozen=True)
-class PointerTable:
-    """One of the two tables as its lines and as its labels, kept together so
-    a rewrite can replace one line without re-deriving the rest.
+class PointerTable(TokenTable):
+    """One of the two tables, in the level tables' own vocabulary.
 
-    ``preamble`` is the header comment above the first entry -- both shipped
-    files carry one line of it -- preserved verbatim. From the first entry on,
-    every line must *be* an entry: a line that is neither would renumber every
-    level below it, because the level number is the entry's position.
+    A :class:`~shiny_mushroom.token_table.TokenTable` whose rows are level
+    numbers. The parsing, the rewrite and the guarantee that only the label
+    token moves are all that type's; what is here is the naming -- a row is an
+    *entry*, its index is a *level*, and a refusal says which level in hex.
     """
 
-    preamble: tuple[str, ...]
-    lines: tuple[str, ...]
-    labels: tuple[str, ...]
+    noun = "pointer entry"
+    plural = "entries"
 
     @classmethod
-    def read(cls, text: str) -> PointerTable:
-        """Parse a table, refusing any line past the preamble that is not an
-        entry."""
-        preamble: list[str] = []
-        lines: list[str] = []
-        labels: list[str] = []
-        for number, line in enumerate(text.splitlines()):
-            found = _ENTRY.match(line)
-            if found is None:
-                if lines:
-                    raise LevelPointersError(
-                        f"line {number + 1} of the pointer table is not a "
-                        f"pointer entry: {line.strip()!r}"
-                    )
-                preamble.append(line)
-                continue
-            lines.append(line)
-            labels.append(found.group(2))
-        if not lines:
-            raise LevelPointersError("the pointer table has no entries at all")
-        return cls(preamble=tuple(preamble), lines=tuple(lines), labels=tuple(labels))
+    def _error(cls, message: str) -> LevelPointersError:
+        return LevelPointersError(message)
 
-    def text(self) -> str:
-        return "\n".join(self.preamble + self.lines) + "\n"
+    @property
+    def labels(self) -> tuple[str, ...]:
+        """These tables speak of labels rather than of tokens."""
+        return self.tokens
+
+    def token(self, row: int) -> str:
+        if not 0 <= row < len(self.tokens):
+            raise self._error(
+                f"the pointer table has no entry for level {hexnum(row, 3)}"
+            )
+        return self.tokens[row]
 
     def label(self, level: int) -> str:
         """What ``level``'s entry names."""
-        if not 0 <= level < len(self.labels):
-            raise LevelPointersError(
-                f"the pointer table has no entry for level {hexnum(level, 3)}"
-            )
-        return self.labels[level]
+        return self.token(level)
 
     def levels_pointing(self, label: str) -> tuple[int, ...]:
         """Every level number whose entry names ``label``, in order."""
-        return tuple(level for level, held in enumerate(self.labels) if held == label)
-
-    def repointed(self, level: int, label: str) -> PointerTable:
-        """This table with ``level``'s entry naming ``label``.
-
-        Only the label token moves: the directive is the *table's* -- ``dl``
-        down one file and ``dw`` down the other -- and the line keeps its own
-        spacing and trailing comment, so the rewritten file differs from the
-        original in exactly the label that changed.
-        """
-        if self.label(level) == label:
-            return self
-        found = _ENTRY.match(self.lines[level])
-        assert found is not None  # every held line parsed on the way in
-        lines = list(self.lines)
-        lines[level] = f"{found.group(1)}{label}{found.group(3)}"
-        labels = list(self.labels)
-        labels[level] = label
-        return PointerTable(
-            preamble=self.preamble, lines=tuple(lines), labels=tuple(labels)
-        )
+        return self.rows_naming(label)

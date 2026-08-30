@@ -68,12 +68,18 @@ the macro**, against the gap to whatever the map places next. See
 
 **Unless the level banks are managed**, which is the ``managed-level-memory``
 feature (``Config/ManagedLevelMemory.asm``): then the seven level macros of
-banks ``$06`` and ``$07`` emit their streams end to end into four runs --
-:data:`MANAGED_RUNS`, and the level bank behind them (:func:`runs_for`) -- a
-stream that would run past the end of one moving to the next, and what bounds
-an edit is the whole of them. :func:`pack` is that packer's arithmetic, run
-over the same insertions in the same order, so a save can be priced exactly
-where a build would refuse it.
+banks ``$06`` and ``$07`` emit their streams end to end into runs --
+:data:`PACKING_RUNS`, and the level bank behind them on a cartridge that has
+one (:func:`runs_for`) -- a stream that would run past the end of one moving
+to the next, and what bounds an edit is the whole of them. :func:`pack` is
+that packer's arithmetic, run over the same insertions in the same order, so
+a save can be priced exactly where a build would refuse it.
+
+**How many runs there are is the cartridge's answer, not the feature's.** The
+expansion bank is room the packing overflows into where the cartridge is
+1 MB or larger and does without where it is not (:func:`has_level_bank`), so
+everything here takes the base and reads the size off it rather than being
+handed one and not the other.
 """
 
 # Nine of the 437 insertions name a target other than ``SMW_U`` and so resolve to
@@ -91,6 +97,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from . import rom_map
+from .asm_defines import define
 from .bases import DEFAULT_TARGET, VANILLA, BuildTarget, RomBase
 from .packing import lay_out
 from .paths import GAME_DIR
@@ -651,6 +658,11 @@ class LevelRun:
 #: exactly as ``Config/ManagedLevelMemory.asm`` states them; a test holds the
 #: two against each other and against every ROM map. The level bank is the
 #: fourth and is the cartridge's rather than a literal -- :func:`runs_for`.
+#:
+#: **As the ROM map places them**, which is the last of them whole. What the
+#: packing fills of it stops at the sprite-bank tail below the end of bank
+#: ``$07`` -- :data:`PACKING_RUNS`, and every caller pricing a save wants
+#: that one.
 MANAGED_RUNS = (
     LevelRun(0x068000, 0x070000),
     LevelRun(0x078000, 0x07F000),
@@ -664,17 +676,38 @@ MANAGED_RUNS = (
 LEVEL_BANK_OFFSET = 1
 
 #: The level bank's layout, as offsets from its base, exactly as
-#: ``Config/LevelBank.asm`` and ``Config/ManagedLevelMemory.asm`` state
-#: them -- a test holds the files to these. The run starts past the RATS tag
-#: and the end label is the bank's last byte; the managed level banks' tail
-#: is the sprite-bank table -- one byte per level, the :data:`LEVEL_COUNT`
-#: bytes below the end label -- with its stub directly before, and the
-#: packed streams stop where that tail starts.
+#: ``Config/LevelBank.asm`` states them -- a test holds the file to these.
+#: The run starts past the RATS tag and the end label is the bank's last
+#: byte, and nothing is held back from it: what packs there has the whole
+#: run.
 LEVEL_BANK_RUN = 0x8008
 LEVEL_BANK_END = 0xFFFF
-SPRITE_BANKS_OFFSET = LEVEL_BANK_END - LEVEL_COUNT
-TAIL_STUB_BYTES = 0x11
+
+#: The managed level banks' **tail**: the sprite-bank stub and the table
+#: after it -- one byte per level -- at the top of bank ``$07``, exactly as
+#: ``Config/ManagedLevelMemory.asm`` places them. The last of
+#: :data:`MANAGED_RUNS` ends where the stub starts, which is what
+#: :data:`PACKING_RUNS` says.
+#:
+#: In one of the game's own banks and not in the level bank, because the
+#: level bank is room this feature may not have: SA-1 Pack's patch pass and
+#: the editor both name the table by address, and an address that exists
+#: only on a 1 MB cartridge is no address at all on a 512 KB one.
+#: The stub's own size is read from the file that emits it and asserts it
+#: (:mod:`smw_tools.asm_defines`): where the last run ends follows from it.
+TAIL_STUB_BYTES = define("Define_SMW_ManagedLevelStubBytes")
 TAIL_BYTES = LEVEL_COUNT + TAIL_STUB_BYTES
+SPRITE_BANKS_AT = MANAGED_RUNS[-1].end - LEVEL_COUNT
+
+#: The runs the packing actually fills in the game's own banks:
+#: :data:`MANAGED_RUNS` with the tail taken off the last of them. One triple
+#: rather than the cartridge's, since the tail is at the top of bank ``$07``
+#: whatever the cartridge is; what the cartridge decides is only whether
+#: there is a fourth run behind these -- :func:`runs_for`.
+PACKING_RUNS = (
+    *MANAGED_RUNS[:-1],
+    LevelRun(MANAGED_RUNS[-1].start, MANAGED_RUNS[-1].end - TAIL_BYTES),
+)
 
 #: The fragment that table incsrc's: one ``db <label>>>$10`` per level in
 #: level order, naming the label the sprite pointer table names in the same
@@ -723,12 +756,28 @@ def level_bank(base: RomBase) -> int:
     return base.reservation_bank + LEVEL_BANK_OFFSET
 
 
+def has_level_bank(base: RomBase) -> bool:
+    """Whether ``base``'s cartridge is long enough to hold :func:`level_bank`.
+
+    The same arithmetic ``%SMW_ExpansionBankExists`` makes with
+    ``!MaxROMSize``, and it is a question at all because the packing does
+    without that bank rather than requiring it: the feature is built at any
+    size and the bank is a fourth run where the cartridge has one. Which
+    size the cartridge is comes off the base
+    (:attr:`~smw_tools.bases.RomBase.size_id`), so nobody has to be handed
+    the two separately.
+    """
+    return base.size_bytes >= (level_bank(base) + 1) * 0x8000
+
+
 def level_bank_run(base: RomBase, ahead: int = 0) -> LevelRun:
     """What the level bank has behind its first ``ahead`` bytes on ``base``.
 
     From the run's head to whatever ends it -- the bank's end label, or the
     managed level banks' fixed tail where ``base`` packs its levels -- less
-    what the level graphics take at the front where ``base`` carries them
+    the level number stash the bank lays at that head for whichever of its
+    three readers it has, less what the level graphics and the per-level code
+    take at the front where ``base`` carries them
     (their block is one fixed size, :data:`level_graphics.BLOCK_BYTES`), and
     less ``ahead`` bytes behind that: what the custom level palettes put
     there -- their pointer table, their stubs and every blob a dressed level
@@ -738,22 +787,35 @@ def level_bank_run(base: RomBase, ahead: int = 0) -> LevelRun:
     against the same run with the streams in it.
     """
     from . import level_graphics
+    from .asm_defines import block
+    from .features import LEVEL_CODE, LEVEL_CUSTOM_PALETTES, LEVEL_GRAPHICS
 
+    held = set(base.features)
+    readers = {LEVEL_GRAPHICS.id, LEVEL_CODE.id, LEVEL_CUSTOM_PALETTES.id}
     base_address = level_bank(base) << 16
     end = base_address | LEVEL_BANK_END
-    if is_managed(base):
-        end -= TAIL_BYTES
     start = base_address | LEVEL_BANK_RUN
+    if readers & held:
+        start += block("LevelNumberStash")
     if level_graphics.is_enabled(base):
         start += level_graphics.BLOCK_BYTES
+    if LEVEL_CODE.id in held:
+        start += LEVEL_CODE.block_bytes
     return LevelRun(start=start + ahead, end=end)
 
 
 def runs_for(base: RomBase, ahead: int = 0) -> tuple[LevelRun, ...]:
-    """The runs ``base``'s packer fills, in order: the three stock ones, and
-    the level bank behind them -- :func:`level_bank_run`, with ``ahead``
-    bytes of palettes in front."""
-    return (*MANAGED_RUNS, level_bank_run(base, ahead))
+    """The runs ``base``'s packer fills, in order: the stock ones
+    (:data:`PACKING_RUNS`), and the level bank behind them where the cartridge
+    has one -- :func:`level_bank_run`, with ``ahead`` bytes of palettes in
+    front.
+
+    Three runs or four, and which is the cartridge's answer rather than the
+    feature's: the bank is room the packing uses where it is there.
+    """
+    if not has_level_bank(base):
+        return PACKING_RUNS
+    return (*PACKING_RUNS, level_bank_run(base, ahead))
 
 
 def sprite_bank_rows(sprite_labels: Iterable[str]) -> list[str]:
@@ -847,7 +909,7 @@ class Packing:
 def pack(
     regions: Iterable[LevelRegion],
     size_of: Callable[[Insertion], int],
-    runs: Sequence[LevelRun] = MANAGED_RUNS,
+    runs: Sequence[LevelRun] = PACKING_RUNS,
     head: int = MANAGED_HEAD_BYTES,
 ) -> Packing:
     """Lay ``regions``' streams into ``runs`` the way the managed banks do.
@@ -861,7 +923,7 @@ def pack(
     sprite list is a stream like any other: the loader reads each list's
     bank off the table at the level bank's tail, so none has a bank to keep.
 
-    ``runs`` is the cartridge's -- :func:`runs_for`, the three stock runs and
+    ``runs`` is the cartridge's -- :func:`runs_for`, the stock runs and
     the level bank behind whatever the palettes put there; the default is
     the stock runs alone, for a caller asking what the two banks hold.
 

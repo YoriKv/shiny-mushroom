@@ -570,8 +570,17 @@ BonusStarCounterNumberTiles:
 ; there is a Yoshi coin in that spot. Change to [FC] to visually disable
 ; collected Yoshi Coins.
 Main:
+if !Define_SMW_GlobalCodeStatusWanted == !TRUE
+	; The same five bytes as the read and the OR below. The project's own
+	; status bar code runs first, and the stub repeats the pair so the
+	; branch sees the flags it expects. See Config/GlobalCode.asm.
+	JML.l SMW_GlobalCode_StatusStub
+	NOP
+else
 	LDA.w !RAM_SMW_Timer_EndLevel	;\
 	ORA.b !RAM_SMW_Flag_SpritesLocked	;| Don't decrement the timer if:
+endif
+GlobalCodeReturn:
 	BNE.b CODE_008E6F		;|  - Ending a level
 	LDA.w !RAM_SMW_Misc_NMIToUseFlag	;|  - Game frozen
 	CMP.b #$C1			;|  - In Bowser
@@ -1727,8 +1736,17 @@ endif
 	JSR.w SMW_InitializeFirst8KBOfRAM_Main	; Clear out $0000-$1FFF and $7F837B/D.
 	JSR.w SMW_HandleSPCUploads_UploadSamples			; Optimization: Why isn't this part of UploadSPCEngine? UploadSamples is only referenced by the upcoming JSR.w.
 	JSR.w SMW_SetupHDMAWindowingEffects_Main	; Set up DMA for window settings.
+if !Define_SMW_GlobalCodeInitWanted == !TRUE
+	; The same five bytes as the OAM pair below. The project's own boot
+	; code runs once here, with the RAM cleared and the SPC engine up, and
+	; the stub repeats the pair. See Config/GlobalCode.asm.
+	JML.l SMW_GlobalCode_InitStub
+	NOP
+else
 	LDA.b #!Define_SMW_GlobalSpriteSizeAndVRAMLocation
 	STA.w !REGISTER_OAMSizeAndDataAreaDesignation	; Set OAM character sizes to be 8x8 and 16x16.
+endif
+GlobalCodeInitReturn:
 	INC.b !RAM_SMW_Flag_Lagging	; Bypass the loop the first time
 ; This is the main game loop of SMW. It is used to wait for V-blank to
 ; complete before executing the code of the next frame. One of the frame
@@ -1770,8 +1788,19 @@ CODE_3080B2:
 CODE_3080D6:
 endif
 	INC.b !RAM_SMW_Counter_GlobalFrames	; Increment global frame counter.
+if !Define_SMW_FrameHookWanted == !TRUE
+	; The same five bytes as the call and the store below. The project's
+	; own frame code runs around the game mode's: the global main routine
+	; and the mode's own code first, the displaced call through the RTL
+	; below, the mode's end code after. See Config/GlobalCode.asm.
+	JML.l SMW_FrameCode_Stub
+FrameCodeLanding:
+	RTL				;> The RTS return the stub pushes for the call it displaced
+else
 	JSR.w ProcessGameMode		; Run the game.
 	STZ.b !RAM_SMW_Flag_Lagging	; Indicate that the current frame has finished.
+endif
+FrameCodeReturn:
 	BRA.b CODE_00806B
 
 namespace off
@@ -1872,8 +1901,19 @@ else
 endif
 	; Handles transfers to and from the SPC700 (I/O). Changing all values to
 	; [EA] (NOP) or jumping over the code effectively mutes all sound.
+if !SMW_LevelCode_NmiWanted == !TRUE
+	; The same five bytes as the read and its branch. The level's own VBlank
+	; code runs first, and the stub repeats both -- leaving A holding what the
+	; read loaded, which both sides of the branch store back. Only planted
+	; when some level declares an nmi:, so a project without one pays nothing
+	; in VBlank. See Config/LevelCode.asm.
+	JML.l SMW_LevelCode_Nmi
+	NOP
+else
 	LDA.w !RAM_SMW_IO_MusicCh1				;\ Optimization: Waste of V-blank time. This ought to have been done at the start of the frame rather than during V-blank.
 	BNE.b NoMusicChange					;|
+endif
+LevelCodeReturn:
 	LDY.w !REGISTER_APUPort2				;|
 	CPY.w !RAM_SMW_IO_CopyOfMusicCh1			;|
 	BNE.b CODE_00818F					;|
@@ -3716,8 +3756,18 @@ CODE_00A21B:
 CODE_00A23F:
 	STY.w !RAM_SMW_IO_SoundCh1
 CODE_00A242:
+if !SMW_LevelCode_MainWanted == !TRUE
+	; The same five bytes as the read and its branch. The stub calls this
+	; level's own routine where its row names one -- on a paused frame too,
+	; which is where UberASM Tool runs it -- then repeats the read and JMLs
+	; to whichever side the flag chose. See Config/LevelCode.asm.
+	JML.l SMW_LevelCode_Main
+	NOP
+else
 	LDA.w !RAM_SMW_Flag_Pause	;\ if the pause flag is 00,
 	BEQ.b CODE_00A28A		;/
+endif
+LevelCodePaused:
 #Debug_SlowMotion:
 	BRA.b CODE_00A25B		; continue running the code
 	BIT.w !RAM_SMW_IO_ControllerPress1CopyP2	; \ Unreachable
@@ -3765,9 +3815,11 @@ Return00A289:
 endif
 	RTS				; Done!
 
+LevelCodeReturn:
 CODE_00A28A:
 	LDA.w !RAM_SMW_Misc_NMIToUseFlag	;\
 	BPL.b NotInMode7Level		;/ if "regular" game types and such, don't do these jumps
+InMode7Frame:
 	JSR.w InMode7Level
 	JMP.w NotInNormalLevel							; Optimization: BRA.b?
 
@@ -14999,8 +15051,21 @@ CODE_00A5CF:
 	LDX.w !RAM_SMW_Palettes_BackgroundColorLo
 	STX.w !RAM_SMW_Palettes_CopyOfBackgroundColorLo
 	SEP.b #$30			; AXY->8
+if !SMW_LevelCode_InitWanted == !TRUE
+	; The same six bytes as the two JSRs. The level's own init code runs
+	; once the level is prepared, and the stub then makes both displaced
+	; calls in turn, each coming back through the RTL below. See
+	; Config/LevelCode.asm.
+	JML.l SMW_LevelCode_Init
+LevelCodeLanding:
+	RTL				;> The RTS return the stub pushes for the calls it displaced
+	NOP				;> The sixth byte, never reached
+else
+LevelCodeLanding:			;> Named either way, so the stub assembles; only reached above
 	JSR.w CODE_00919B
 	JSR.w SMW_CompressOAMTileSizeBuffer_Main
+endif
+LevelCodeReturn:
 	JMP.w SMW_GameMode00_LoadNintendoPresents_CODE_0093F4
 namespace off
 endmacro

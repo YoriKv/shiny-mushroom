@@ -81,6 +81,7 @@ endif
 namespace SMW_TranslevelRemap
 	incsrc "overworld/tables/translevel-levels.asm"
 namespace off
+	assert pc()-SMW_TranslevelRemap_TileLevelLookup == !Define_SMW_Block_TranslevelRemap, "The translevel remap block is not the size Config/PackedRuns.asm states. The run's other occupants are read past it, so pin the new figure in Define_SMW_Block_TranslevelRemap."
 	assert pc() <= !Loc_SMW_ReservedBank_End, "The translevel remap table has outgrown the reserved run: less fits in it than the editor was told. Check overworld/tables/."
 	!SMW_ReservedBankNext #= pc()
 	pullpc

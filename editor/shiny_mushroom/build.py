@@ -80,7 +80,17 @@ WORKERS = 4
 
 
 class BuildError(Exception):
-    """The project could not be assembled."""
+    """The project could not be assembled.
+
+    :attr:`log_path` is where the assembler's whole output went, for a failure
+    that came out of running it -- see :class:`~smw_tools.asar.AsarError`,
+    which is where it is written. ``None`` for everything else that stops a
+    build, which has no compiler output to show.
+    """
+
+    def __init__(self, message: str, log_path: Path | None = None) -> None:
+        super().__init__(message)
+        self.log_path = log_path
 
 
 @dataclass(frozen=True)
@@ -181,7 +191,9 @@ def build(
             defines=defines_wanted(project),
         )
     except Exception as error:  # noqa: BLE001 - asar reports everything as one
-        raise BuildError(str(error)) from error
+        # The log travels with it where the assembler left one: the message is
+        # the first few error lines, and the file is the rest of what it said.
+        raise BuildError(str(error), getattr(error, "log_path", None)) from error
     # Before the state is recorded: a build whose tables cannot be resolved
     # must not be remembered as current, or the next attempt would skip the
     # assembly and this check with it.
@@ -556,7 +568,9 @@ def _verify_roles(project: Project) -> None:
     and renders wrong three subsystems away. :func:`~smw_tools.rom_tables.resolved`
     is what says so, by name.
     """
-    base = features.applied(rom_base(project.base_id), features_wanted(project))
+    base = features.applied(
+        rom_base(project.base_id), features_wanted(project), project.rom_size_id
+    )
     try:
         rom_tables.resolved(base.tables, _symbols(project))
     except rom_tables.RomTableError as error:
@@ -731,6 +745,7 @@ def merge(
     overlaid = _apply(project, tree)
     _compile_raw(project, tree)
     _derive_level_graphics(project, tree)
+    _derive_code(project, tree)
     # After the reconcile put the stock hook and switch back: the patches are
     # compiled into the tree the way the raw resources are, and toggling one
     # is a reason to rebuild even though no tree file moved -- which is why
@@ -820,6 +835,72 @@ def _derive_level_graphics(project: Project, tree: Path) -> None:
         return
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(text, encoding="utf-8", newline="\n")
+
+
+def _derive_code(project: Project, tree: Path) -> None:
+    """Write the fragments the project's own asm is read through into the
+    merged tree, over whatever the checkout or the overlay put there.
+
+    The same shape as :func:`_derive_level_graphics` and for the same
+    reason: what a project wrote is in its folders, and the fragments that
+    name it are derived from them on every build rather than kept in step.
+    A file appearing in one of those folders is a file the next build
+    assembles, and a stale fragment in an overlay never reaches the
+    assembler.
+
+    A folder with nothing in it derives the empty fragment, which is what
+    the checkout ships -- so a project with no code of its own assembles
+    exactly the cartridge the disassembly does.
+
+    The files themselves are copied by :func:`_apply` like any other overlay
+    entry; only the fragments naming them are written here.
+    """
+    from shiny_mushroom import project_code
+    from smw_tools import level_code
+
+    game = tree / project.base.name
+    derived = {
+        project_code.LEVEL_ROWS: None,
+        project_code.LEVEL_DATA: None,
+        project_code.GAMEMODE_ROWS: None,
+        project_code.GAMEMODE_DATA: None,
+        project_code.GLOBAL_ROWS: None,
+        project_code.GLOBAL_DATA: None,
+        project_code.LIBRARY_ROWS: None,
+        project_code.MACROS_ROWS: None,
+    }
+    # What a project's own asm cannot be is a build failure with a sentence
+    # in it, not a traceback: the file is in the person's hands and the
+    # reason is about the file, so it reaches them the way an assembler
+    # error does.
+    try:
+        rows, data = project_code.level_fragments(project)
+        derived[project_code.LEVEL_ROWS] = rows
+        derived[project_code.LEVEL_DATA] = data
+        rows, data = project_code.gamemode_fragments(project)
+        derived[project_code.GAMEMODE_ROWS] = rows
+        derived[project_code.GAMEMODE_DATA] = data
+        rows, data = project_code.global_fragments(project)
+        derived[project_code.GLOBAL_ROWS] = rows
+        derived[project_code.GLOBAL_DATA] = data
+        derived[project_code.LIBRARY_ROWS] = project_code.library_fragment(project)
+        derived[project_code.MACROS_ROWS] = project_code.macros_fragment(project)
+    except (project_code.CodeError, level_code.LevelCodeError) as why:
+        raise BuildError(str(why)) from None
+
+    for relative, text in derived.items():
+        destination = game / relative
+        shipped = project.base / relative
+        # Unlinked first: the reconcile may have left a hard link to the
+        # checkout's own file here, and writing through it would write into
+        # the checkout -- and a stale copy the overlay laid over it must go.
+        destination.unlink(missing_ok=True)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        # The shipped file's prose is kept in front of what is derived, so a
+        # reader who opens the merged tree finds the fragment explaining
+        # itself rather than a bare list of macro calls.
+        prose = shipped.read_text(encoding="utf-8") if shipped.is_file() else ""
+        destination.write_text(prose + text, encoding="utf-8", newline="\n")
 
 
 def _fingerprint(

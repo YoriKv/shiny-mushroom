@@ -87,8 +87,14 @@ class _Session:
         # failure reads as a bad cartridge. The overrides are the project
         # build's own per-role answers and the features what that build put in
         # the cartridge: between them, what keeps a patched ROM readable.
-        addresses = Addresses.for_base(
-            base_id, target_id, role_addresses, features or (), role_counts
+        #
+        # The cartridge's *size* is the third such fact, and the one nobody
+        # has to send: it is the length of the file about to be opened, so it
+        # is read off that rather than threaded down the protocol beside the
+        # other two -- and a ROM opened by hand is answered as exactly as a
+        # project's own build.
+        addresses = Addresses.for_rom(
+            Path(rom), base_id, target_id, role_addresses, features or (), role_counts
         )
         playing = mode == MODE_PLAY
         self.core = MesenCore(

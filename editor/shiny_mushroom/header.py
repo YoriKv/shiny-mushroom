@@ -26,8 +26,14 @@ from shiny_mushroom.metadata import OBJECTS
 #: Bytes in a level header.
 HEADER_SIZE = 5
 
-#: The music the header's three bits select, from ``LevelMusicTable`` -- eight
-#: entries, each a named define in the disassembly.
+#: The key of the one header field whose choices are not a fact about the
+#: game's code: which track each music setting plays is a table a project can
+#: edit, so a window showing it asks the project rather than reading
+#: :data:`MUSIC` -- see :func:`shiny_mushroom.music_tables.setting_names`.
+MUSIC_FIELD = "music"
+
+#: The tracks the *shipped* ``LevelMusicTable`` gives those eight settings.
+#: What a window falls back to when there is no project to ask.
 MUSIC = (
     "Here We Go",
     "Cave Drums",

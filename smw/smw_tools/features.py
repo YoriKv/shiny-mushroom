@@ -24,6 +24,17 @@ and off for itself. Downstream none of the three is distinguishable from the
 others, which is the point: the editor asks what the cartridge is, not how it
 got that way.
 
+**A bank a feature needs and a bank it can do without are different
+declarations.** :attr:`Feature.min_rom_size` is a requirement -- the data has
+nowhere else to go, and the build refuses a cartridge the bank is not in.
+:attr:`Feature.bank_rom_size` is room: the feature is built at any size, uses
+the bank where the cartridge has one, and packs into what the game's own banks
+leave where it has not. Which of the two is true of a feature decides whether
+the cartridge size is a requirement or a choice, and
+:data:`MANAGED_LEVEL_MEMORY` is the one that makes it a choice -- at the price
+of keeping every address it must be able to name in a bank every cartridge
+has.
+
 **What a feature costs to build is declared here; what it costs a *project* is
 not.** The defines that switch one on and the cartridge it needs room in are
 facts about the assembly, so they sit beside the facts about the cartridge. The
@@ -71,13 +82,15 @@ it fungible: :data:`TRANSLEVEL_REMAP`, :data:`OVERWORLD_TABLES_RELOCATED` and
 sets aside, in that order (:data:`RESERVED_RUN`), so text that shrank pays for
 an overworld table that grew. Each is switched on by itself, so each declares
 its tables **as though it were the only occupant** and says how big a block it
-occupies unedited (:attr:`Feature.block_bytes`); :func:`applied` moves a
+occupies unedited (:attr:`Feature.block_bytes`, declared once in
+``SMW/Config/PackedRuns.asm`` and read from it); :func:`applied` moves a
 feature's tables past whichever occupants ahead of it the cartridge also has.
 That is the whole of what sharing one run costs the reading side, and it is
 why the order is a declaration rather than an implementation detail.
 
-**The block is declared and the shift is derived**, because they are one fact
-read two ways and a run's occupants must not be able to disagree about it.
+**The block is declared once and the shift is derived**, because they are one
+fact read two ways and a run's occupants must not be able to disagree about
+it -- nor with the assembler, which is why the declaration is the asm's.
 :meth:`Feature.shifts_by` is how far this feature's block moves whatever the
 run puts behind it -- nothing at all for the run's last occupant, which owes
 nobody anything -- and :meth:`Feature.block` is what the block costs the run,
@@ -91,7 +104,9 @@ the *level bank* beside the reserved run (:data:`LEVEL_BANK`,
 ``Config/LevelBank.asm``): the level graphics' fixed-size rows at its head,
 the palettes behind them and shifted by them exactly as the reserved run's
 occupants shift one another, the level streams that outgrew the stock level
-banks behind those; and :data:`MANAGED_GRAPHICS_MEMORY`, which packs the
+banks behind those -- with the level number stash the first two read laid
+down by the bank in front of all of them, so no occupant's block depends on
+which others the cartridge has; and :data:`MANAGED_GRAPHICS_MEMORY`, which packs the
 graphics files into the *graphics banks* above both, the last reservation and
 the one that grows
 upward -- and everything below is the contract they and the next one answer
@@ -106,6 +121,7 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 
+from .asm_defines import block
 from .bases import RESERVATION_BANK, DrivenPaths, RomBase, TablePool, TracedCode
 from .ram_map import RamMap
 from .rom_sizes import ROM_SIZES, RomSize
@@ -344,6 +360,26 @@ class Feature:
     #: resize instead of failing the build.
     min_rom_size: str | None = None
 
+    #: The cartridge this feature's expansion bank appears at, where the
+    #: feature is built either way -- ``None`` for one that needs no bank, or
+    #: whose bank it cannot do without (:attr:`min_rom_size`, which refuses
+    #: below it instead).
+    #:
+    #: The two are alternatives, not a pair: a feature declares whichever
+    #: sentence is true of it. A bank it *needs* is a requirement and the size
+    #: is not a choice; a bank it can do **without** is room, and the size is
+    #: the project's -- the feature is assembled at any size, uses the bank
+    #: where the cartridge has one, and packs into what the game's own banks
+    #: leave where it has not. :data:`MANAGED_LEVEL_MEMORY` is the second
+    #: kind, and the disassembly asks the same question with
+    #: ``%SMW_ExpansionBankExists``.
+    #:
+    #: What such a feature may **not** do is keep anything it must be able to
+    #: name in that bank: an address that exists only on the larger cartridge
+    #: is no address at all on the smaller one. :data:`MANAGED_LEVEL_MEMORY`
+    #: keeps its one table at the top of bank ``$07`` for exactly that reason.
+    bank_rom_size: str | None = None
+
     #: Runs of ROM this feature's fragments share -- see
     #: :class:`~smw_tools.bases.TablePool`. Added to the base's rather than
     #: replacing them: two features that pool different fragments disagree
@@ -374,8 +410,15 @@ class Feature:
     #:
     #: The whole block, not the rows: the stubs a feature emits beside its
     #: tables take room in the run and move the fragments behind them exactly
-    #: as its rows do. A test walks this against the shipped fragments' own
-    #: lengths, which is what keeps a hand-held figure honest.
+    #: as its rows do.
+    #:
+    #: **Read from the assembler's own declaration**, never restated here:
+    #: ``SMW/Config/PackedRuns.asm`` states every block and each occupant
+    #: asserts what it emitted against its own figure there, so the number
+    #: this side prices a run by is the number the build checks
+    #: (:mod:`smw_tools.asm_defines`). The two blocks that are editable data all
+    #: through -- the relocated overworld tables and the relocated text --
+    #: cannot be asserted, and a build test measures those instead.
     #:
     #: **Read it through :meth:`block` or :meth:`shifts_by`**, never raw: the
     #: first is what the block costs this cartridge's run, the second how far
@@ -389,24 +432,6 @@ class Feature:
     #: is read past it. Nothing may be placed behind the text until this is
     #: per-target, and ``smw/tests/test_reserved_bank.py`` pins that.
     block_bytes: int = 0
-
-    #: Pieces of :attr:`block_bytes` an occupant **ahead of this one in the
-    #: same run** emits instead where the cartridge has both, as ``(feature
-    #: id, bytes)``: this block is that much shorter and the other's is no
-    #: longer, the bytes being one copy either way.
-    #:
-    #: One piece is shared today -- the level number stash
-    #: (``Config/LevelNumberStash.asm``), which the per-level graphics emit
-    #: whenever they are on and the custom level palettes emit only
-    #: otherwise -- so one feature's block depends on which others the
-    #: cartridge has, and :meth:`block` is what answers that.
-    #:
-    #: **Ahead, and in the same run**, which :func:`_check_packed_runs`
-    #: refuses a declaration over: a block that shrank for something *behind*
-    #: it would change a shift already taken, and one that shrank for a
-    #: feature in another run would depend on a cartridge this run cannot
-    #: see.
-    shares_block_with: tuple[tuple[str, int], ...] = ()
 
     #: Features this one needs under it. Satisfied by the base being built
     #: with one as readily as by another patch providing it.
@@ -432,31 +457,28 @@ class Feature:
         """:attr:`min_rom_size` as a size rather than a name."""
         return None if self.min_rom_size is None else ROM_SIZES[self.min_rom_size]
 
-    def block(self, held: Iterable[str] = ()) -> int:
-        """How big this feature's block is on a cartridge holding ``held``:
-        :attr:`block_bytes`, less every piece of it an occupant ahead carries
-        instead (:attr:`shares_block_with`).
+    @property
+    def uses(self) -> RomSize | None:
+        """:attr:`bank_rom_size` as a size rather than a name."""
+        return None if self.bank_rom_size is None else ROM_SIZES[self.bank_rom_size]
 
-        What switching the feature on costs its packed run, which is what a
-        dialog greys a row out with -- and, for an occupant with anything
-        behind it, what that is read past (:meth:`shifts_by`).
-        """
-        carried = set(held)
-        return self.block_bytes - sum(
-            size for one, size in self.shares_block_with if one in carried
-        )
-
-    def shifts_by(self, held: Iterable[str] = ()) -> int:
+    def shifts_by(self) -> int:
         """How far this feature's block moves the occupants its packed run
-        puts **behind** it, on a cartridge holding ``held``.
+        puts **behind** it.
 
-        Its :meth:`block`, or nothing at all where the run puts nothing
+        Its :attr:`block_bytes`, or nothing at all where the run puts nothing
         behind it: a run's last occupant owes nobody anything, and its block
         is never in a shift. Said here rather than declared as a zero
         block, because the block is real either way and the run is priced by
         it.
+
+        A block is one size on every cartridge, which is what makes this a
+        question about the run rather than about a cartridge: the one piece
+        two occupants ever shared -- the level number stash -- is laid down
+        by the level bank in front of all of them
+        (``Config/LevelNumberStash.asm``).
         """
-        return self.block(held) if _run_behind(self.id) else 0
+        return self.block_bytes if _run_behind(self.id) else 0
 
     @property
     def changes(self) -> tuple[str, ...]:
@@ -521,11 +543,19 @@ class Feature:
         """
         wanted = self.needs
         needs = "" if wanted is None else f"a {wanted.label} cartridge or larger"
+        room = self.uses
+        uses = (
+            ""
+            if room is None
+            else f"an expansion bank on a {room.label} cartridge or larger, "
+            f"and what the game's own banks leave on a smaller one"
+        )
         facts = [
             Detail(heading, body)
             for heading, body in (
                 ("Changes", self.changed_summary),
                 ("Needs", needs),
+                ("Uses", uses),
                 ("Built on", _named(self.requires)),
                 ("Conflicts with", _named(self.conflicts)),
             )
@@ -567,17 +597,10 @@ class Feature:
             raise FeatureError(
                 f"{self.id}'s detail is prose and wants a full stop on the end"
             )
-        for one, size in self.shares_block_with:
-            if size <= 0:
-                raise FeatureError(
-                    f"{self.id} shares {size} bytes with {one}; a share is "
-                    f"bytes of this block another feature emits instead"
-                )
-        shared = sum(size for _, size in self.shares_block_with)
-        if shared and shared >= self.block_bytes:
+        if self.bank_rom_size is not None and self.min_rom_size is not None:
             raise FeatureError(
-                f"{self.id} shares {shared} bytes of a {self.block_bytes}-byte "
-                f"block; a share is a piece of the block, not all of it"
+                f"{self.id} both needs a {self.min_rom_size} cartridge and "
+                f"does without one; a bank is a requirement or it is room"
             )
 
 
@@ -672,7 +695,7 @@ OVERWORLD_TABLES_RELOCATED = Feature(
     min_rom_size="1mb",
     # The eight fragments and the divider table, from the run's head to the
     # first byte the next occupant may have.
-    block_bytes=0xB02,
+    block_bytes=block("RelocatedOverworldTables"),
     # The destroyed-tiles scan, bound to the table's own labels on this build:
     # the shipped over-read ends, and the table can move and grow.
     label_bound_scans=("overworld.destroyed_tiles",),
@@ -775,7 +798,7 @@ TRANSLEVEL_REMAP = Feature(
     bank_define="Define_SMW_ReservedBank",
     min_rom_size="1mb",
     # The 26-byte lookup stub and the 96 rows behind it.
-    block_bytes=0xDA,
+    block_bytes=block("TranslevelRemap"),
     tables={
         "overworld_translevel_levels": RomTable(
             role="overworld_translevel_levels",
@@ -816,13 +839,14 @@ TRANSLEVEL_REMAP = Feature(
 #: though the feature needs nothing else: a level may remix stock files on a
 #: cartridge without it.
 #:
-#: The rows are the **first occupant of the level bank** (:data:`LEVEL_BANK`,
-#: ``Config/LevelBank.asm``): ``$200`` rows of eight bytes at the run's fixed
-#: head, then the stubs, one block of :attr:`Feature.block_bytes` whatever
-#: else the cartridge has -- which is what the custom level palettes behind it
-#: are shifted by when both are on, and what :func:`applied` works out. The
-#: stubs include the level number stash, so the palettes' own block is that
-#: much shorter here (:attr:`Feature.shares_block_with`). The rows are the
+#: The rows are the **first packed occupant of the level bank**
+#: (:data:`LEVEL_BANK`, ``Config/LevelBank.asm``): ``$200`` rows of eight
+#: bytes at the packed head, then the stubs, one block of
+#: :attr:`Feature.block_bytes` whatever else the cartridge has -- which is
+#: what the custom level palettes behind it are shifted by when both are on,
+#: and what :func:`applied` works out. The level number stash the rows are
+#: indexed by is not in that block: the bank lays it down in front of every
+#: occupant (``Config/LevelNumberStash.asm``). The rows are the
 #: fragment ``graphics/levels/level-graphics.asm`` the editor regenerates
 #: (:mod:`smw_tools.level_graphics` is its grammar), shipped naming no level,
 #: so the feature with an unedited table loads exactly what the stock
@@ -843,12 +867,12 @@ LEVEL_GRAPHICS = Feature(
     bank_define="Define_SMW_LevelBank",
     bank_offset=1,
     min_rom_size="1mb",
-    block_bytes=0x12DC,
+    block_bytes=block("LevelGraphics"),
     tables={
         "level_graphics_rows": RomTable(
             role="level_graphics_rows",
             label="SMW_LevelGraphics_Rows",
-            address=0x118008,
+            address=0x118011,
         )
     },
 )
@@ -886,11 +910,10 @@ LEVEL_GRAPHICS = Feature(
 #: the feature with an unedited table loads exactly what the stock cartridge
 #: loads.
 #:
-#: **Its block is the head, and the head is not one number**: the pointer
-#: table and the stubs, less the level number stash where the per-level
-#: graphics lead the bank and emit that themselves. Being the packed head's
-#: last occupant it shifts nothing, but the block is real and the bank is
-#: priced by it -- :meth:`Feature.block`.
+#: **Its block is the head**: the pointer table and the stubs, up to the
+#: first blob. Being the packed head's last occupant it shifts nothing, but
+#: the block is real and the bank is priced by it -- which is exactly the
+#: case a zero block would get wrong.
 LEVEL_CUSTOM_PALETTES = Feature(
     id="level-custom-palettes",
     name="Custom level palettes",
@@ -906,16 +929,12 @@ LEVEL_CUSTOM_PALETTES = Feature(
     min_rom_size="1mb",
     # The pointer table -- three bytes a level -- and the stubs the config
     # budgets, from the run's head to the first blob.
-    block_bytes=3 * 0x200 + 0x40,
-    # The level number stash among those stubs is the per-level graphics'
-    # whenever they are on: one copy, emitted by whichever of the two the
-    # bank puts first (``Config/LevelNumberStash.asm``).
-    shares_block_with=((LEVEL_GRAPHICS.id, 0x09),),
+    block_bytes=block("LevelCustomPalettes"),
     tables={
         "level_palette_pointers": RomTable(
             role="level_palette_pointers",
             label="SMW_LevelCustomPalettes_Pointers",
-            address=0x118008,
+            address=0x118011,
         )
     },
 )
@@ -961,7 +980,7 @@ STRING_TABLES_RELOCATED = Feature(
     min_rom_size="1mb",
     # The stubs, both sets of tables and what the assembler derives beside
     # them -- the whole block, as the run's last occupant leaves it.
-    block_bytes=0xF05,
+    block_bytes=block("RelocatedStrings"),
     # The relocated search takes the slot tables' own length, and the two
     # state-picked pointers sit past the level slots wherever they end: the
     # slots and the messages may be added to and taken from on this build.
@@ -1003,16 +1022,20 @@ STRING_TABLES_RELOCATED = Feature(
 #: byte against the padding after it, so a level's room is its macro's and
 #: the 8,991 bytes of padding the two banks hold are room for nothing.
 #: Under this feature the streams are emitted back to back in ROM-map order
-#: into four runs -- bank ``$06`` whole, bank ``$07`` up to its sprite
-#: routines, that bank's tail, and the *level bank* behind the custom level
-#: palettes' blobs (:data:`LEVEL_BANK`, ``Config/LevelBank.asm``) -- with a
-#: stream that reaches the end of a run placed at the start of the next, and
-#: every pointer-table row recomputed from the labels
-#: (``Config/ManagedLevelMemory.asm``). Nothing reaches the level bank until
-#: the two stock banks are full. Two same-size hooks in the loader supply
-#: what the packing takes away: each sprite list's bank, read off a table of
-#: one byte per level in place of the hardcoded ``$07``, and each Chocolate
-#: Island 2 sub-level's bank.
+#: into three runs -- bank ``$06`` whole, bank ``$07`` up to its sprite
+#: routines, and that bank's tail -- with a stream that reaches the end of a
+#: run placed at the start of the next, and every pointer-table row recomputed
+#: from the labels (``Config/ManagedLevelMemory.asm``). A cartridge of
+#: :attr:`~Feature.bank_rom_size` or larger adds a fourth: the *level bank*
+#: behind the custom level palettes' blobs (:data:`LEVEL_BANK`,
+#: ``Config/LevelBank.asm``), which nothing reaches until the two stock banks
+#: are full. **The bank is room rather than a requirement** -- on a 512 KB
+#: cartridge the feature is built all the same, and what it buys there is the
+#: padding those two banks hold, made fungible across every level.
+#:
+#: Two same-size hooks in the loader supply what the packing takes away: each
+#: sprite list's bank, read off a table of one byte per level in place of the
+#: hardcoded ``$07``, and each Chocolate Island 2 sub-level's bank.
 #:
 #: The containers a project *adds* are packed after the banks' own streams,
 #: out of an editor-regenerated fragment (``levels/added/added-levels.asm``)
@@ -1028,30 +1051,33 @@ STRING_TABLES_RELOCATED = Feature(
 #: file, exactly as on a stock cartridge; what changes is where a save is
 #: priced -- :func:`smw_tools.levels.pack` is the packer's own arithmetic --
 #: and the editor reads that off the feature's presence. The one table
-#: declared is the sprite-bank table at the level bank's **fixed tail**, the
-#: ``$200`` bytes below the bank's end label: the same slot on every
-#: cartridge this bank is, which is what lets SA-1 Pack's patch pass read
-#: the bank of every sprite list off it by address, after this source has
-#: assembled and before any symbol of ours is in reach. A bank the feature
-#: reserves is why it needs a 1 MB cartridge.
+#: declared is the sprite-bank table at the **fixed tail**, the ``$200``
+#: bytes below the end of bank ``$07``: the same slot on every cartridge and
+#: every base, which is what lets SA-1 Pack's patch pass read the bank of
+#: every sprite list off it by address, after this source has assembled and
+#: before any symbol of ours is in reach. In one of the game's own banks
+#: rather than in the expansion bank, because that bank is room this feature
+#: may not have and an address only the larger cartridge has is no address at
+#: all -- it is the one thing :attr:`~Feature.bank_rom_size` forbids.
 MANAGED_LEVEL_MEMORY = Feature(
     id="managed-level-memory",
     name="Growable levels",
     summary="Room for levels to grow, and for levels the project adds",
     detail="Without it the levels are packed to the byte in fixed groups, so "
     "an object added to one is paid for by another in the same group. Here "
-    "the levels are one sequence that overflows into an expansion bank, and "
-    "added levels pack after the game's own. Nothing moves until a level "
-    "grows.",
+    "the levels are one sequence packed into whatever the two level banks "
+    "leave, and added levels pack after the game's own. A 1 MB cartridge "
+    "gives that sequence an expansion bank to overflow into as well. Nothing "
+    "moves until a level grows.",
     defines=(("Define_SMW_ManagedLevelMemory", "1"),),
     bank_define="Define_SMW_LevelBank",
     bank_offset=1,
-    min_rom_size="1mb",
+    bank_rom_size="1mb",
     tables={
         "level_sprite_banks": RomTable(
             role="level_sprite_banks",
             label="SMW_ManagedLevelMemory_SpriteBanks",
-            address=0x11FDFF,
+            address=0x07FE00,
         )
     },
 )
@@ -1125,6 +1151,161 @@ MANAGED_GRAPHICS_MEMORY = Feature(
 )
 
 
+#: **Per-level code**: a level runs 65816 of its own, once a frame, called
+#: from the fork every running level frame passes through
+#: (``Config/LevelCode.asm``). The level number is the word the load stashed,
+#: shared with the per-level graphics and the custom level palettes
+#: (``Config/LevelNumberStash.asm``).
+#:
+#: **Four entry points**, in the order a level reaches them: ``load``
+#: before its objects are drawn -- which is what makes writing the Map16
+#: table possible at all -- ``init`` once it is prepared, ``main`` once a
+#: frame while it runs, and ``nmi`` in the VBlank handler's own time. One
+#: table each, so a level may have any of the four and pay for none of the
+#: others.
+#:
+#: The tables are the level bank's **second packed occupant**
+#: (:data:`LEVEL_BANK`): four ``$200``-row tables of two bytes behind the
+#: per-level graphics' block, then the dispatch and the entry stubs, then the
+#: levels' own routines. Words rather than long pointers because every
+#: routine is in this one bank, so the bank byte is known when the tables are
+#: assembled; the dispatch builds the long pointer from the row and the bank
+#: define. A zero row is a level that runs nothing at that moment, which is
+#: every row as shipped.
+#:
+#: **In front of the palettes, not behind them.** The palettes' blobs are the
+#: packed head's growing end, so nothing may declare an address past them --
+#: which is what fixes this occupant's place rather than leaving it to taste.
+LEVEL_CODE = Feature(
+    id="level-code",
+    name="Per-level code",
+    summary="A level runs 65816 of its own, as it loads and as it runs",
+    detail="Without it a level does only what its header, objects and "
+    "sprites say, so two levels wanting different behaviour need different "
+    "data. A level given code here can write its own Map16 tiles before its "
+    "objects are placed, set itself up once it is prepared, and run every "
+    "frame it is on screen -- in a boss room as readily as in an ordinary "
+    "level. A level given none runs exactly what the stock cartridge runs.",
+    defines=(("Define_SMW_LevelCode", "1"),),
+    bank_define="Define_SMW_LevelBank",
+    bank_offset=1,
+    min_rom_size="1mb",
+    # The four tables and the entry stubs behind them, from the occupant's
+    # head to the first level's own routine.
+    block_bytes=block("LevelCode"),
+    tables={
+        f"level_code_{when}_rows": RomTable(
+            role=f"level_code_{when}_rows",
+            label=f"SMW_LevelCode_{when.capitalize()}Rows",
+            address=0x118011 + index * 0x400,
+        )
+        for index, when in enumerate(("load", "init", "main", "nmi"))
+    },
+)
+
+
+#: **UberASM Tool compatibility**: the defines a routine written for that
+#: tool expects, and a shared library it may call into
+#: (``Config/UberASM.asm``). Switched apart from the features that say a
+#: project *has* code, because one writing its own in this source's idiom
+#: wants neither -- and would rather not have ``!addr`` and ``!14C8``
+#: defined over its head. It names none of them in
+#: :attr:`Feature.requires`: any one of the three will do, which that field
+#: cannot say, so the assembler is what refuses a cartridge carrying a
+#: library nothing can call.
+#:
+#: **It moves nothing and declares nothing**, which is why it has no block
+#: and no tables: the defines emit no bytes, and the library is assembled
+#: with the levels' own routines, behind the packed head where nothing
+#: declares an address. What it costs is what the library holds -- every
+#: file in it, whether a level calls it or not, since nothing can know which
+#: labels a routine will reach for.
+UBERASM = Feature(
+    id="uberasm",
+    name="UberASM Tool compatibility",
+    summary="A level's code written the way UberASM Tool writes it, and a "
+    "library it can call",
+    detail="Without it a level's code is written in this disassembly's own "
+    "terms. Here it also gets that tool's defines and macros -- !addr, "
+    "!sprite_slots, the sprite tables it names after themselves -- so a "
+    "routine published for it assembles unchanged, a macro library of the "
+    "project's own read once, and a shared library whose files are reached "
+    "by filename. Every library file is assembled whether a level calls it "
+    "or not.",
+    defines=(("Define_SMW_UberASM", "1"),),
+)
+
+
+#: **Per-game-mode code**: a mode runs 65816 of its own around the game's
+#: own routine for it (``Config/GameModeCode.asm``): ``init`` on its first
+#: frame, ``main`` on every frame after, ``end`` after the game's routine.
+#:
+#: **It declares no table the editor reads and no block.** Its three
+#: mode-indexed tables and the modes' routines sit behind the packed head
+#: with the levels' own code, where nothing declares an address, and the
+#: hook is the main loop's call to the game mode -- the site the global
+#: main routine already displaces -- so nothing is written into the game's
+#: own banks and the game's pointer table is untouched.
+#:
+#: **One byte of RAM**, the mode the last frame ran, decides which frame is
+#: a mode's first (``!RAM_SMW_GameModeCode_LastMode``). That is the tool
+#: this copies' answer too, and the one that is right for every mode.
+GAMEMODE_CODE = Feature(
+    id="gamemode-code",
+    name="Per-game-mode code",
+    summary="A game mode runs 65816 of its own, before the game's",
+    detail="Without it a game mode does what the game's own routine does "
+    "and nothing else. A mode given code here runs it on the mode's first "
+    "frame, on every frame after, or after the game's own routine each "
+    "frame -- and a routine can be given to every mode at once. Which frame "
+    "is a mode's first is one byte of RAM the stock game never touches, "
+    "$7E010F, holding the last frame's mode; a patch that takes the same "
+    "byte makes a mode's first frame every frame, or none.",
+    defines=(("Define_SMW_GameModeCode", "1"),),
+    bank_define="Define_SMW_LevelBank",
+    bank_offset=1,
+    min_rom_size="1mb",
+)
+
+
+#: **Global and status bar code**: the tool's ``global:`` and ``statusbar:``
+#: tags, which belong to no level and no game mode
+#: (``Config/GlobalCode.asm``). Three entry points, none dispatched through
+#: anything -- there is one of each, so there is nothing to index.
+#:
+#: **Its routines return with ``RTS``**, which is that tool's convention for
+#: these two tags and the reason they cannot go through the dispatch the
+#: levels' and the game modes' code goes through: an ``RTS`` returns within
+#: the program bank it was called in, so the call is made from the bank the
+#: routine is in. The stubs exist for exactly that.
+#:
+#: **A hook is only planted if the project wrote that entry point.** The
+#: fragment naming them is read with the defines rather than with the code,
+#: so each hook in ``Banks/`` asks whether its own is there -- a project with
+#: only status bar code has no frame hook at all, not a branch and not a
+#: byte. The tool this copies installs every hook always, having no way to
+#: know what will be added after it has run. The frame hook is shared with
+#: the game modes' code, which wants it whatever the project wrote.
+#:
+#: No tables and no block: one routine per entry point, placed behind the
+#: packed head with the levels' own code.
+GLOBAL_CODE = Feature(
+    id="global-code",
+    name="Global and status bar code",
+    summary="Code that runs every frame, at boot, or when the status bar is "
+    "drawn",
+    detail="Without it a project's own code belongs to a level or a game "
+    "mode. Here it can also run once at boot, every frame whatever the game "
+    "is doing, and when the status bar's counters are drawn. Each entry "
+    "point costs nothing until it is written: the hook for one nobody wrote "
+    "is not assembled.",
+    defines=(("Define_SMW_GlobalCode", "1"),),
+    bank_define="Define_SMW_LevelBank",
+    bank_offset=1,
+    min_rom_size="1mb",
+)
+
+
 #: The occupants of the level bank, in the order it holds them: the level
 #: graphics' fixed-size block at its head, the palettes behind it, and the
 #: packed level streams behind those, up to the managed level banks' fixed
@@ -1140,13 +1321,14 @@ MANAGED_GRAPHICS_MEMORY = Feature(
 #: head.
 LEVEL_BANK: tuple[str, ...] = (
     LEVEL_GRAPHICS.id,
+    LEVEL_CODE.id,
     LEVEL_CUSTOM_PALETTES.id,
     MANAGED_LEVEL_MEMORY.id,
 )
 
 #: The level bank's occupants whose declared addresses shift by what is in
 #: front of them -- see :data:`LEVEL_BANK`.
-LEVEL_BANK_HEAD: tuple[str, ...] = LEVEL_BANK[:2]
+LEVEL_BANK_HEAD: tuple[str, ...] = LEVEL_BANK[:3]
 
 
 #: The occupants of the shared reserved run, in the order the ROM map emits
@@ -1197,6 +1379,10 @@ FEATURES: dict[str, Feature] = {
     TRANSLEVEL_REMAP.id: TRANSLEVEL_REMAP,
     LEVEL_GRAPHICS.id: LEVEL_GRAPHICS,
     LEVEL_CUSTOM_PALETTES.id: LEVEL_CUSTOM_PALETTES,
+    LEVEL_CODE.id: LEVEL_CODE,
+    GAMEMODE_CODE.id: GAMEMODE_CODE,
+    GLOBAL_CODE.id: GLOBAL_CODE,
+    UBERASM.id: UBERASM,
 }
 
 
@@ -1249,7 +1435,9 @@ def build_defines(
     return tuple(out.values())
 
 
-def applied(base: RomBase, ids: Iterable[str] = ()) -> RomBase:
+def applied(
+    base: RomBase, ids: Iterable[str] = (), rom_size: str | None = None
+) -> RomBase:
     """``base`` as amended by ``ids``, or :class:`FeatureError` saying why not.
 
     The result is a base like any other, carrying the union of what it was
@@ -1285,8 +1473,30 @@ def applied(base: RomBase, ids: Iterable[str] = ()) -> RomBase:
     occupants in one call for the same reason: the result carries
     what was applied in ``features``, so a second call adding an occupant in
     front of the first is refused as though the base had shipped with it.
+
+    ``rom_size`` is which of the base's sizes the cartridge **is**, as an id
+    into :data:`~smw_tools.rom_sizes.ROM_SIZES` -- what the project building it
+    chose. It reaches the result as
+    :attr:`~smw_tools.bases.RomBase.built_at`, and it decides where a feature
+    that uses an expansion bank *where the cartridge has one* is read
+    (:attr:`Feature.bank_rom_size`). ``None`` is the base's stock size, which
+    is what a build assembles when nobody has said -- and so is naming that
+    size, which leaves the base as it was.
     """
     wanted = tuple(dict.fromkeys(ids))
+    if rom_size is not None:
+        if rom_size not in ROM_SIZES:
+            raise FeatureError(f"no ROM size {rom_size!r}")
+        if rom_size not in base.sizes:
+            raise FeatureError(
+                f"{base.id} cannot be built at {rom_size}; it offers "
+                f"{', '.join(base.sizes)}"
+            )
+        # The stock size is what "nobody has said" already means, so naming it
+        # leaves the base alone -- a base nothing was applied to is the base.
+        held = None if rom_size == base.stock_size else rom_size
+        if held != base.built_at:
+            base = replace(base, built_at=held)
     if not wanted:
         return base
     features = [feature(feature_id) for feature_id in wanted]
@@ -1414,24 +1624,35 @@ def _in_bank(found: Feature, base: RomBase, held: set[str]) -> dict[str, RomTabl
 
     **The run.** An occupant of one of :data:`PACKED_RUNS` declares its
     tables as though it were the only one, so what it is read at is that plus the
-    :meth:`Feature.shifts_by` of the occupants ahead of it that ``held`` has.
+    :meth:`Feature.shifts_by` of the occupants ahead of it that ``held`` has --
+    one figure each, whatever else the cartridge holds.
     The assembler works the same sum out by emitting them in that order, and
     a build test holds the two equal.
+
+    **Neither shift touches a table below** :data:`RESERVATION_BANK`. A
+    feature that uses an expansion bank it can do *without*
+    (:attr:`Feature.bank_rom_size`) has to keep anything it must be able to
+    name at an address every cartridge has, which means one of the game's own
+    banks -- and those are exactly the banks a reservation can never be, so a
+    table there is where it is declared on every base.
     """
+    tables = dict(found.tables)
     shift = sum(
-        feature(one).shifts_by(held) for one in _run_ahead(found.id) if one in held
+        feature(one).shifts_by() for one in _run_ahead(found.id) if one in held
     )
     if found.bank_define is not None and base.reservation_bank != RESERVATION_BANK:
         shift += (base.reservation_bank - RESERVATION_BANK) << 16
     if not shift:
-        return dict(found.tables)
+        return tables
     return {
-        role: replace(
+        role: table
+        if (table.address >> 16) < RESERVATION_BANK
+        else replace(
             table,
             address=table.address + shift,
             per_target={target: at + shift for target, at in table.per_target.items()},
         )
-        for role, table in found.tables.items()
+        for role, table in tables.items()
     }
 
 
@@ -1465,10 +1686,11 @@ def _check_packed_runs() -> None:
     with nothing behind it is tempted into, since its figure is in no shift.
     A block declared outside a run is a figure nothing reads.
 
-    **A share names an occupant ahead of it in the same run**, so
-    :meth:`Feature.block` is a function of the cartridge and
-    :meth:`Feature.shifts_by` of the blocks already passed -- see
-    :attr:`Feature.shares_block_with`.
+    **A block is one size on every cartridge.** Nothing an occupant emits
+    depends on which others are there, so :meth:`Feature.shifts_by` is a
+    question about the run's order alone. The one piece two of them ever
+    shared, the level number stash, is laid down by the level bank in front
+    of every occupant (``Config/LevelNumberStash.asm``).
     """
     packed = [one for run in PACKED_RUNS for one in run]
     twice = sorted({one for one in packed if packed.count(one) > 1})
@@ -1482,14 +1704,6 @@ def _check_packed_runs() -> None:
             f"a block, and these are in one without the other: "
             f"{', '.join(odd)}"
         )
-    for one in FEATURES.values():
-        ahead = _run_ahead(one.id)
-        for shared, _ in one.shares_block_with:
-            if shared not in ahead:
-                raise FeatureError(
-                    f"{one.id} shares its block with {shared}, which its run "
-                    f"does not put ahead of it"
-                )
 
 
 _check_packed_runs()

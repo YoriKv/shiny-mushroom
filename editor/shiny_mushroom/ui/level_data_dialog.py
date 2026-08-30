@@ -29,11 +29,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from PySide6.QtCore import QModelIndex, Qt, QTimer, Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
-    QComboBox,
     QDialog,
     QDialogButtonBox,
     QHBoxLayout,
@@ -41,7 +40,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QSplitter,
-    QStyleOptionViewItem,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
@@ -55,7 +53,9 @@ from shiny_mushroom.level_files import ContainerUse, LevelFileRow
 from shiny_mushroom.ui.level_budgets import LevelBudgetFoot
 from shiny_mushroom.ui.tables import (
     CELL_PADDING,
+    VALUE_ROLE,
     PaddedCells,
+    PickedCells,
     style_note,
     style_table,
     widen_widget_column,
@@ -155,79 +155,6 @@ _READ_ONLY = Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
 _EDITABLE = _READ_ONLY | Qt.ItemFlag.ItemIsEditable
 
 #: Where a cell's plain value is kept, beside the text that is drawn for it.
-VALUE_ROLE = Qt.ItemDataRole.UserRole
-
-
-class EditableCells(PaddedCells):
-    """Cells whose value is picked from a list, or typed, and handed on.
-
-    The delegate never writes the model. What a committed value *means* is a
-    project edit the window makes and the table is then refilled from, so the
-    cell shows the old value until the edit has landed, and still shows it
-    when the window declines -- an unsaved-work question answered no. The
-    commit is handed on after the editor has closed, because the window's
-    answer may be a modal question or a refill, neither of which belongs
-    inside a delegate's ``setModelData``.
-
-    ``choices(row, column)`` answers ``(text, value)`` pairs for a cell picked
-    from a list, or ``None`` for one typed into a line; ``current(row,
-    column)`` the index of the pair the cell holds today, or ``-1``.
-    """
-
-    committed = Signal(int, int, object)
-
-    def __init__(
-        self,
-        parent: QWidget,
-        choices: Callable[[int, int], list[tuple[str, object]] | None],
-        current: Callable[[int, int], int],
-    ) -> None:
-        super().__init__(parent)
-        self._choices = choices
-        self._current = current
-
-    def createEditor(  # noqa: N802 - Qt override
-        self, parent: QWidget, option: QStyleOptionViewItem, index: QModelIndex
-    ) -> QWidget:
-        offered = self._choices(index.row(), index.column())
-        if offered is None:
-            return QLineEdit(parent)
-        box = QComboBox(parent)
-        for text, value in offered:
-            box.addItem(text, value)
-        # A pick is a commit: nobody wants to click away from a combo to
-        # make it take.
-        box.activated.connect(lambda _index, box=box: self._took(box))
-        return box
-
-    def _took(self, box: QComboBox) -> None:
-        self.commitData.emit(box)
-        self.closeEditor.emit(box)
-
-    def setEditorData(  # noqa: N802 - Qt override
-        self, editor: QWidget, index: QModelIndex
-    ) -> None:
-        if isinstance(editor, QComboBox):
-            editor.setCurrentIndex(self._current(index.row(), index.column()))
-            return
-        if isinstance(editor, QLineEdit):
-            held = index.data(VALUE_ROLE)
-            editor.setText("" if held is None else hexnum(int(held), 3))
-            editor.selectAll()
-
-    def setModelData(  # noqa: N802 - Qt override
-        self, editor: QWidget, model: object, index: QModelIndex
-    ) -> None:
-        if isinstance(editor, QComboBox):
-            value = editor.currentData()
-        elif isinstance(editor, QLineEdit):
-            value = _parsed_level(editor.text())
-            if value is None or value == index.data(VALUE_ROLE):
-                return
-        else:
-            return
-        row, column = index.row(), index.column()
-        QTimer.singleShot(0, lambda: self.committed.emit(row, column, value))
 
 
 def _parsed_level(text: str) -> int | None:
@@ -239,6 +166,15 @@ def _parsed_level(text: str) -> int | None:
     except ValueError:
         return None
     return value if 0 <= value < LEVEL_COUNT else None
+
+
+#: How a level-number cell shows and reads back what it holds, for
+#: :class:`~shiny_mushroom.ui.tables.PickedCells` -- the only typed cell in
+#: the editor, and the reason that delegate has a typed path at all.
+TYPED_LEVEL = (
+    lambda held: "" if held is None else hexnum(int(held), 3),
+    _parsed_level,
+)
 
 
 class LevelDataDialog(QDialog):
@@ -377,7 +313,12 @@ class LevelDataDialog(QDialog):
             | QAbstractItemView.EditTrigger.SelectedClicked
             | QAbstractItemView.EditTrigger.EditKeyPressed
         )
-        cells = EditableCells(self._numbers, self._number_choices, self._number_current)
+        cells = PickedCells(
+            self._numbers,
+            self._number_choices,
+            self._number_current,
+            TYPED_LEVEL,
+        )
         cells.committed.connect(self._number_edited)
         self._numbers.setItemDelegate(cells)
         self._number_search.textChanged.connect(self._filter_numbers)
@@ -422,7 +363,9 @@ class LevelDataDialog(QDialog):
         )
         # Sets of rows, because making room is several files at once.
         self._files.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        cells = EditableCells(self._files, lambda _row, _column: None, lambda *_: -1)
+        cells = PickedCells(
+            self._files, lambda _row, _column: None, lambda *_: -1, TYPED_LEVEL
+        )
         cells.committed.connect(self._file_edited)
         self._files.setItemDelegate(cells)
         self._file_search.textChanged.connect(self._filter_files)

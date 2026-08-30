@@ -71,6 +71,7 @@ from shiny_mushroom.project_files import forget_readings as forget_readings
 from shiny_mushroom.project_files import scanning_once as scanning_once
 from shiny_mushroom.project_graphics import GraphicsFiles, is_sidecar
 from shiny_mushroom.project_levels import LevelFiles
+from shiny_mushroom.project_music import MusicFiles
 from shiny_mushroom.project_overworld import WorldMapFiles
 from smw_tools import asm_codec, asm_regions, asm_room
 from smw_tools.bases import (
@@ -265,7 +266,7 @@ def _data_dir() -> Path:
 
 
 @dataclass(frozen=True)
-class Project(GraphicsFiles, LevelFiles, WorldMapFiles):
+class Project(GraphicsFiles, LevelFiles, MusicFiles, WorldMapFiles):
     """One project folder, and what can be written into it.
 
     The **folder name is the identity**, not anything stored inside it. A
@@ -375,15 +376,40 @@ class Project(GraphicsFiles, LevelFiles, WorldMapFiles):
         return tuple(dict.fromkeys(_string_list(held["features"])))
 
     @property
+    def rom_size_built(self) -> str:
+        """How long this project's **cartridge** is, as a
+        :mod:`smw_tools.rom_sizes` id.
+
+        Its build's own record, exactly as :attr:`features` is and read out of
+        the same file: what a cartridge is was decided when it was assembled,
+        and :attr:`rom_size_id` is a claim about the next one. A project with
+        no build answers with its base's stock size, which is what a cartridge
+        assembled from the stock tree is.
+        """
+        try:
+            held = json.loads((self.root / OUTPUT_DIR / BUILD_STATE).read_text("utf-8"))
+        except (OSError, ValueError):
+            held = None
+        stock = rom_base(self.base_id).stock_size if self.buildable else STOCK
+        if not isinstance(held, dict):
+            return stock
+        size = held.get("rom_size")
+        return size if isinstance(size, str) and size in ROM_SIZES else stock
+
+    @property
     def cartridge_base(self) -> RomBase:
         """This project's base as its **cartridge** is: the declared base with
         :attr:`features` folded in -- see :mod:`smw_tools.features`.
 
         The one place anything reading or writing this project's tables
         resolves a base, so a feature reaches the addresses, the traced code
-        ranges, the RAM map and every table's entry count at once.
+        ranges, the RAM map and every table's entry count at once -- and the
+        cartridge's **size** with them, since a feature that uses an expansion
+        bank where there is one has less room where there is not -- and it is
+        the size that build recorded, for the reason :attr:`features` is the
+        set that build recorded.
         """
-        return applied(rom_base(self.base_id), self.features)
+        return applied(rom_base(self.base_id), self.features, self.rom_size_built)
 
     @property
     def buildable(self) -> bool:

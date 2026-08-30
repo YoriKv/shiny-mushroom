@@ -49,13 +49,15 @@ if defined("Define_SMW_LevelCustomPalettes") == 0
 	!Define_SMW_LevelCustomPalettes = !FALSE
 endif
 
-; The stubs between the pointer table and the blobs, together: the level
-; number stash and the copy below it. Part of the run's budget rather than
-; only this file's business -- the pointer table before them is fixed, so
-; where the blobs start, and how many fit before the packed streams, follows
-; from this. The placement asserts it, and the editor prices the bank
-; against the same number.
-!Define_SMW_LevelCustomPalettesStubBytes #= $40
+; The block this occupant takes of the level bank's head: the pointer table
+; and the stubs behind it, up to the first blob. Declared with every other
+; block in Config/PackedRuns.asm, because where the blobs start -- and so
+; how many fit before the packed streams -- follows from it, and the editor
+; prices the bank against the same number.
+;
+; One size on every cartridge: the level number stash the copy below reads
+; is at the bank's fixed head, in front of every occupant and carried by
+; none of them (Config/LevelBank.asm). The placement asserts it.
 
 ;#############################################################################################################
 ;# Where they go: the pointer table at the level bank's head -- or directly
@@ -83,13 +85,7 @@ namespace SMW_LevelCustomPalettes
 	incsrc "palettes/levels/level-palettes.asm"
 namespace off
 
-; The stubs, !Define_SMW_LevelCustomPalettesStubBytes bytes of them. The
-; level number stash is emitted here only while this is the bank's first
-; occupant; with the level graphics on it is theirs, and the stubs here are
-; the copy alone (Config/LevelNumberStash.asm).
-if !Define_SMW_LevelGraphics == !FALSE
-	%SMW_LevelNumberStash_Stub()
-endif
+; The stubs, the tail of the block above: the copy alone.
 
 ; The copy the bank $00 hijack lands on, entered with AXY 8-bit right after
 ; the stock buffering returned. If the stashed level's pointer row holds
@@ -132,7 +128,7 @@ SMW_LevelCustomPalettes_Apply:
 ; zero. The label marks where they start -- the stubs' end -- so the budget
 ; the comment above states is a distance a symbol file can be asked for.
 SMW_LevelCustomPalettes_Data:
-	assert SMW_LevelCustomPalettes_Data-SMW_LevelCustomPalettes_Apply == !Define_SMW_LevelCustomPalettesStubBytes-!Define_SMW_LevelNumberStashStubBytes, "The custom level palettes' copy is not the size its budget states. Check Define_SMW_LevelCustomPalettesStubBytes."
+	assert SMW_LevelCustomPalettes_Data-SMW_LevelCustomPalettes_Pointers == !Define_SMW_Block_LevelCustomPalettes, "The custom level palettes' block is not the size Config/PackedRuns.asm states. Where the blobs start follows from it, so pin the new figure in Define_SMW_Block_LevelCustomPalettes."
 namespace SMW_LevelCustomPalettes
 	incsrc "palettes/levels/level-palette-data.asm"
 namespace off

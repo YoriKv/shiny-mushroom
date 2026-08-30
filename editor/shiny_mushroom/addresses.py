@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from shiny_mushroom.memtype import SPACES, MemoryType
@@ -30,6 +31,7 @@ from smw_tools.bases import AddressMap, DrivenPaths, RomBase, TracedCode
 from smw_tools.bases import base as rom_base
 from smw_tools.features import applied
 from smw_tools.ram_map import RamMap, cpu_address, window_address
+from smw_tools.rom_sizes import size_for
 
 if TYPE_CHECKING:
     from shiny_mushroom.emu.core import MesenCore
@@ -57,6 +59,20 @@ class Addresses:
     address and the bits read out of it are one fact and are not worth
     separating.
     """
+
+    #: The cartridge these addresses are of: the ROM base with its features
+    #: applied and its size folded in -- what :meth:`of` resolved every field
+    #: below out of.
+    #:
+    #: Kept rather than unpacked and dropped, because a reader that has these
+    #: addresses is reading *that* cartridge, and some of what it needs is
+    #: not an address: how many runs the level packer has
+    #: (:func:`smw_tools.levels.has_level_bank`, off
+    #: :attr:`~smw_tools.bases.RomBase.built_at`), which capabilities it
+    #: carries, what its RAM map is. Re-deriving it at the far end means
+    #: re-deciding the base, the features *and* the size, which is three
+    #: chances to answer differently from the addresses in hand.
+    base: RomBase
 
     #: How this base's CPU addresses reach offsets in the headerless image.
     map: AddressMap
@@ -304,6 +320,7 @@ class Addresses:
             or table.assembled_for(target_id)
         }
         return cls(
+            base=base,
             map=base.address_map,
             ram=base.ram_map,
             sprite_header_build_owned=base.sprite_header_build_owned,
@@ -418,6 +435,7 @@ class Addresses:
         overrides: Mapping[str, int] | None = None,
         features: Iterable[str] = (),
         counts: Mapping[str, int] | None = None,
+        rom_size: str | None = None,
     ) -> Addresses:
         """The addresses of the base with this id, or the default base's --
         for ``target_id``'s build, or the default target's, with ``overrides``
@@ -431,9 +449,56 @@ class Addresses:
         stock base, which is what a cartridge opened by hand is read as; a
         project's own set comes from its build's record
         (:attr:`shiny_mushroom.project.Project.features`).
+
+        ``rom_size`` is **how long that cartridge is**, as a
+        :mod:`smw_tools.rom_sizes` id, and it travels with the features
+        because it is the same kind of fact: a feature that uses an expansion
+        bank where the cartridge has one is read at one address on a 1 MB
+        cartridge and another on a 512 KB one
+        (:attr:`smw_tools.features.Feature.bank_rom_size`). ``None`` is the
+        base's stock size, which is what a build assembles when nobody has
+        said. A caller holding the image can read the answer off it --
+        :func:`smw_tools.rom_sizes.size_for` over its length -- and one
+        holding a project takes its build's record
+        (:attr:`shiny_mushroom.project.Project.rom_size_built`).
         """
         return cls.of(
-            applied(rom_base(base_id), features), target_id, overrides, counts
+            applied(rom_base(base_id), features, rom_size),
+            target_id,
+            overrides,
+            counts,
+        )
+
+    @classmethod
+    def for_rom(
+        cls,
+        rom: Path,
+        base_id: str | None = None,
+        target_id: str | None = None,
+        overrides: Mapping[str, int] | None = None,
+        features: Iterable[str] = (),
+        counts: Mapping[str, int] | None = None,
+    ) -> Addresses:
+        """:meth:`for_base`, with the cartridge's size read off ``rom`` itself.
+
+        For a caller that has the image rather than a record of it -- the
+        emulator worker, which is handed a path and nothing that says how long
+        it is. The file's length is the one answer that cannot be stale, and
+        it is right for a ROM opened by hand as well as for a project's own
+        build. A file that cannot be measured is read as the base's stock
+        size, which is what saying nothing already means.
+        """
+        try:
+            length = rom.stat().st_size
+        except OSError:
+            length = 0
+        return cls.for_base(
+            base_id,
+            target_id,
+            overrides,
+            features,
+            counts,
+            size_for(length, rom_base(base_id).sizes),
         )
 
     def offset(self, address: int) -> int:

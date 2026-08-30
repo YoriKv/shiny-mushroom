@@ -4,19 +4,7 @@
 ; If you'd rather not use that tool, someone will need to write a script that can turn the raw hex from the original ROM into a music file.
 
 %SPCDataBlockStart(!ARAM_SMW_MusicBankLoc)
-MusicPtrs:
-	dw MUSIC_Credits1 ; $01
-	dw MUSIC_Credits2 ; $02
-	dw MUSIC_Credits3 ; $03
-	dw MUSIC_Credits4 ; $04
-	dw MUSIC_Credits1 ; $05
-	dw MUSIC_Credits2 ; $06
-	dw MUSIC_Credits3 ; $07
-	dw MUSIC_Credits4 ; $08
-	dw MUSIC_Credits1 ; $09
-	dw MUSIC_Credits2 ; $0A
-	dw MUSIC_Credits3 ; $0B
-	dw MUSIC_Credits4 ; $0C
+	incsrc "tables/credits-music-pointers.asm"
 
 MUSIC_Credits1: ; all credits share data together
 	dw DATA_139E,DATA_13AE,DATA_13BE,DATA_13DE

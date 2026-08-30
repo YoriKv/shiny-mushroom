@@ -42,6 +42,11 @@
 	; complement are a record to reload rather than believe.
 	!RAM_SMW_LevelGraphics_AnimatedFile #= !Define_SMW_LowRAMLocation+$010D
 	!RAM_SMW_LevelGraphics_AnimatedFileCheck #= !RAM_SMW_LevelGraphics_AnimatedFile+$01
+	; The game mode the last frame ran, complemented, so the cleared RAM the
+	; boot leaves ($00) matches no mode and the first frame of every mode --
+	; mode $00's included -- counts as its first. Only a cartridge assembled
+	; with !Define_SMW_GameModeCode writes it (Config/GameModeCode.asm).
+	!RAM_SMW_GameModeCode_LastMode #= !Define_SMW_LowRAMLocation+$010F
 	!RAM_SMW_Misc_ScratchRAM0110 #= !Define_SMW_LowRAMLocation+$0110					; RAM address used in SMASE
 	!RAM_SMW_Misc_StartOfStack #= !Define_SMW_LowRAMLocation+$01FF
 ; OAM table. Used to handle all sprite tile data, with 128 slots for tiles.

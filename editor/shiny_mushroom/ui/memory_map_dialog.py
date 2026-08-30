@@ -61,6 +61,7 @@ from shiny_mushroom.memory_map import (
     Segment,
 )
 from shiny_mushroom.ui.tables import note_ink
+from shiny_mushroom.ui.theme import blended
 from smw_tools.rom_sizes import bytes_label
 
 TITLE = "Memory Map"
@@ -142,20 +143,6 @@ COUNTED = (
 )
 
 
-def _blended(over: QColor, under: QColor, amount: float) -> QColor:
-    """``over`` mixed ``amount`` of the way onto ``under``, opaque."""
-    return QColor(
-        *(
-            round(below + (above - below) * amount)
-            for above, below in (
-                (over.red(), under.red()),
-                (over.green(), under.green()),
-                (over.blue(), under.blue()),
-            )
-        )
-    )
-
-
 def kind_color(kind: str, palette: QPalette) -> QColor:
     """The solid colour one kind of run is painted in.
 
@@ -165,7 +152,7 @@ def kind_color(kind: str, palette: QPalette) -> QColor:
     """
     if kind in KIND_COLORS:
         return KIND_COLORS[kind]
-    return _blended(
+    return blended(
         palette.color(QPalette.ColorRole.WindowText),
         palette.color(QPalette.ColorRole.Base),
         OTHER_GREY,
@@ -174,7 +161,7 @@ def kind_color(kind: str, palette: QPalette) -> QColor:
 
 def wash(kind: str, palette: QPalette) -> QColor:
     """The colour an editable run's *unused* bytes are painted in."""
-    return _blended(
+    return blended(
         palette.color(QPalette.ColorRole.Base),
         kind_color(kind, palette),
         WASH,

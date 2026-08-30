@@ -98,13 +98,17 @@ macro SMW_LoadROMMap()
 ; is measured from. Nothing unless the feature is on: the mechanism is in
 ; Config/TranslevelRemap.asm.
 %SMW_PlaceTranslevelLevelTable()
-; The level graphics' rows and stubs, at the head of the level bank, and
-; the custom level palettes behind them -- both before any bank emits
-; into it, so the packed level streams the managed level banks place
-; behind them are measured from fixed occupants. Nothing unless each
-; feature is on: the mechanisms are in Config/LevelGraphics.asm and
+; The level number stash at the level bank's fixed head, then the level
+; graphics' rows and stubs and the custom level palettes behind it -- all
+; before any bank emits into it, so the packed level streams the managed
+; level banks place behind them are measured from fixed occupants. The
+; stash is laid down whenever any reader wants it and each occupant only
+; where its own feature is on: the mechanisms are in
+; Config/LevelNumberStash.asm, Config/LevelGraphics.asm and
 ; Config/LevelCustomPalettes.asm.
+%SMW_PlaceLevelNumberStash()
 %SMW_PlaceLevelGraphics()
+%SMW_PlaceLevelCode()
 %SMW_PlaceLevelCustomPalettes()
 ; The managed graphics' head, at the head of the first graphics bank --
 ; before any bank emits into it, so the packed streams behind it are
@@ -1360,6 +1364,24 @@ macro SMW_LoadROMMap()
 ; nothing unless the feature is on -- the mechanism is in
 ; Config/StringTableRelocation.asm.
 %SMW_PlaceRelocatedStrings()
+; The levels' own code, and whatever it hijacks: variable-size, so it goes
+; behind the palettes' blobs rather than in the packed head, and read once
+; every bank has emitted, so a hijack into the game survives. Before the
+; managed level banks close, so the packer sees the cursor it leaves. The
+; mechanism is in Config/LevelCode.asm.
+; The tool's dialect and its shared library, ahead of every kind of project
+; code because any of them may be written in it. The mechanism is in
+; Config/UberASM.asm.
+%SMW_PlaceUberASM()
+%SMW_PlaceLevelCodeData()
+; The game modes' own code, and the four bytes of bank $00 that reach it:
+; the pointer rewrite and the jump both write into a bank that has to have
+; emitted first. The mechanism is in Config/GameModeCode.asm.
+%SMW_PlaceGameModeCode()
+; The global and status bar routines, and their stubs: same place and same
+; two reasons -- variable-size, and their hooks write into banks that have
+; to have emitted. The mechanism is in Config/GlobalCode.asm.
+%SMW_PlaceGlobalCode()
 ; The reserved bank itself, on an expanded cartridge only: the RATS tag over
 ; the run its three occupants packed into. Nothing unless one of them is on
 ; -- the whole mechanism is in Config/ReservedBank.asm.

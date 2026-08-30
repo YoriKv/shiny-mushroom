@@ -55,6 +55,7 @@ from shiny_mushroom.setup import (
     prepare,
     ready_versions,
 )
+from shiny_mushroom.ui.compile_log import show_compile_log
 from shiny_mushroom.ui.dialogs import open_folder, selectable_label
 from smw_tools.bases import BASES, DEFAULT_BASE, DEFAULT_TARGET, RomBase
 from smw_tools.rom_versions import ROM_VERSIONS
@@ -159,6 +160,12 @@ class _Work(QObject):
     finished = Signal(object)
     failed = Signal(str)
 
+    #: Where the failing step wrote its own output, once one has failed and
+    #: left a log -- see :class:`~smw_tools.asar.AsarError`. Read off the worker
+    #: rather than carried by :attr:`failed`, which says what to *show*; the log
+    #: is a file the dialog offers rather than a message.
+    log_path: Path | None = None
+
     def work(self) -> object:
         """Do the job, reporting progress through :attr:`progress`."""
         raise NotImplementedError
@@ -167,6 +174,7 @@ class _Work(QObject):
         try:
             result = self.work()
         except Exception as error:  # noqa: BLE001 - a thread reports everything
+            self.log_path = getattr(error, "log_path", None)
             self.failed.emit(str(error))
         else:
             self.finished.emit(result)
@@ -186,6 +194,12 @@ class _Threaded(QDialog):
     reads it, and a failure that stays on screen with the buttons back. A
     subclass says what the job is, where those two widgets sit among its own,
     and -- in :meth:`_failure_text` -- how a failure is worded.
+
+    **A failure that left a compiler log offers it.** Both jobs run asar, and
+    what a build that will not assemble needs is the whole of what the
+    assembler said rather than the few lines that fit on the status line. The
+    button appears only when there is a log behind it, so it is never a button
+    that opens nothing.
     """
 
     def __init__(
@@ -210,7 +224,19 @@ class _Threaded(QDialog):
         self._progress.setRange(0, 0)
         self._progress.setVisible(False)
 
+        #: The log the failure left, once one has failed and left one.
+        self._log_path: Path | None = None
+
         self._buttons = QDialogButtonBox(buttons)
+        self._log_button = QPushButton("View Compiler Log")
+        # Not the dialog's default: Return dismisses a failure, and a key
+        # pressed at a dialog that has just come up must not open a second one.
+        self._log_button.setAutoDefault(False)
+        self._log_button.setVisible(False)
+        self._log_button.clicked.connect(self._show_log)
+        self._buttons.addButton(
+            self._log_button, QDialogButtonBox.ButtonRole.ActionRole
+        )
         self._buttons.rejected.connect(self.reject)
 
     @property
@@ -243,9 +269,19 @@ class _Threaded(QDialog):
         self.accept()
 
     def _fail(self, message: str) -> None:
+        # Read off the worker before `_stop` lets it go.
+        self._log_path = self._worker.log_path if self._worker is not None else None
         self._stop()
         self._busy(False)
         self._status.setText(self._failure_text(message))
+        self._log_button.setVisible(self._log_path is not None)
+
+    def _show_log(self) -> None:
+        """Show the failing step's own output. The window's seam onto the
+        viewer, so the suite can reach it without a modal that never
+        returns -- see :mod:`shiny_mushroom.ui.dialogs`."""
+        if self._log_path is not None:
+            show_compile_log(self, self._log_path)
 
     def _failure_text(self, message: str) -> str:
         """How a failure is worded: the job's own complaint, unless a subclass

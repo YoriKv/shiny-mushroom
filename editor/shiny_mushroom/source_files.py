@@ -33,8 +33,19 @@ A tile editor's ``.pal`` beside a raw graphics file is not a row and not a
 stray: :attr:`~shiny_mushroom.project.Project.changed`, the walk these rows
 are read off, leaves it out (:func:`~shiny_mushroom.project_graphics.is_sidecar`).
 
+**Two folders hold asm a project writes rather than edits**, and neither
+shadows anything the disassembly ships: ``code/levels/`` for a level's own
+routines and ``code/uberasm/lib/`` for the library they may call. Everywhere
+else in the overlay a file that shadows nothing is a stray the build
+ignores; here the build reads it, through a fragment the editor regenerates
+from whatever is in the folder. So a file appearing there *is* a file
+assembled, which is what makes the dialog's scan on being given the focus
+back worth running: a routine written in somebody's own editor arrives as a
+row that says the build will take it.
+
 Qt-free, like everything outside :mod:`shiny_mushroom.ui`: the dialog draws
 these rows and decides nothing.
+
 """
 
 from __future__ import annotations
@@ -52,7 +63,7 @@ from shiny_mushroom.project_overworld import (
     OVERWORLD_LAYER1,
     OVERWORLD_SPRITES,
 )
-from smw_tools import asm_codec, asm_regions, graphics, packed
+from smw_tools import asm_codec, asm_regions, graphics, level_code, packed
 from smw_tools.bases import RomBase
 from smw_tools.bases import base as rom_base
 from smw_tools.features import FeatureError
@@ -70,6 +81,15 @@ WORLD_MAP = "world map"
 #: application.
 GRAPHICS = "graphics"
 PACKED = "packed"
+#: The project's own asm, which shadows nothing the disassembly ships: a
+#: level's routines and the shared library they may call. The build reads
+#: each through a fragment the editor regenerates, so unlike a file that
+#: shadows nothing anywhere else in the overlay, these are not strays.
+CODE = "code"
+GAMEMODE_CODE = "gamemode code"
+GLOBAL_CODE = "global code"
+LIBRARY = "library"
+MACRO_LIBRARY = "macro library"
 
 #: How each kind is worth naming to somebody looking at the list.
 KIND_NAMES = {
@@ -80,7 +100,42 @@ KIND_NAMES = {
     WORLD_MAP: "world map",
     GRAPHICS: "graphics file",
     PACKED: "compressed data",
+    CODE: "level code",
+    GAMEMODE_CODE: "game mode code",
+    GLOBAL_CODE: "global code",
+    LIBRARY: "library",
+    MACRO_LIBRARY: "macro library",
 }
+
+#: The project's own asm folders, the kind a file in each is, the fragment
+#: the build reads it through, and the entry points a file there may
+#: declare -- none for the two kinds whose labels are the caller's business.
+_CODE_FOLDERS = (
+    (Path(level_code.LIB_DIR), LIBRARY, Path(level_code.LIB_FRAGMENT), ()),
+    (Path(level_code.MACROS_DIR), MACRO_LIBRARY, Path(level_code.MACROS_FRAGMENT), ()),
+    (
+        Path(level_code.CODE_DIR),
+        CODE,
+        Path(level_code.DATA_FRAGMENT),
+        level_code.ENTRIES,
+    ),
+    (
+        Path(level_code.GAMEMODE_DIR),
+        GAMEMODE_CODE,
+        Path(level_code.GAMEMODE_DIR) / "gamemode-code-data.asm",
+        level_code.GAMEMODE_ENTRIES,
+    ),
+    (
+        Path(level_code.GLOBAL_DIR),
+        GLOBAL_CODE,
+        Path(level_code.GLOBAL_DIR) / "global-code-data.asm",
+        ("init", "main"),
+    ),
+)
+
+#: The kinds :data:`_CODE_FOLDERS` names, which is what a row of one of
+#: them is tested for.
+_CODE_KINDS = tuple(kind for _folder, kind, _fragment, _entries in _CODE_FOLDERS)
 
 #: The world-map binaries the editor writes through
 #: :meth:`~shiny_mushroom.project.Project.save_world_map`.
@@ -245,7 +300,7 @@ def _editable(shadows: Path | None, kind: str) -> bool:
     finished row and :func:`stamps` of a classification, so what the dialog
     offers and what the window watches are the same set by construction.
     """
-    return shadows is not None and kind in (SOURCE, REGION, GRAPHICS)
+    return shadows is not None and kind in (SOURCE, REGION, GRAPHICS, *_CODE_KINDS)
 
 
 def _classified(
@@ -345,7 +400,7 @@ def _source_file(
     """
     shadows = project.shadowed(relative)
     if shadows is None:
-        return None, SOURCE, None
+        return (*_project_asm(project, relative), None)
 
     # The registries are keyed the way the game folder spells its own files,
     # so only an entry in that tree can match one -- an asset is nobody's but
@@ -366,6 +421,26 @@ def _source_file(
     return shadows, kind, region_id
 
 
+def _project_asm(project: Project, relative: Path) -> tuple[Path | None, str]:
+    """A file the project wrote into one of its own asm folders, and the
+    fragment the build reads it through -- or ``(None, SOURCE)`` for a path
+    that really does shadow nothing.
+
+    The one place a file that shadows nothing is still a file the build
+    reads. What makes that true is the fragment: the editor regenerates it
+    from whatever is in the folder, so a file appearing there is a file
+    assembled, and saying "the build ignores it" would be a lie the moment
+    somebody dropped one in.
+    """
+    if relative.parts[:1] != (project.base.name,):
+        return None, SOURCE
+    inner = Path(*relative.parts[1:])
+    for folder, kind, fragment, _entries in _CODE_FOLDERS:
+        if inner.parent == folder and inner.suffix == ".asm":
+            return Path(project.base.name) / fragment, kind
+    return None, SOURCE
+
+
 def _row(
     project: Project,
     relative: Path,
@@ -373,6 +448,8 @@ def _row(
     priced: dict[str, int] | None,
 ) -> SourceFileRow:
     shadows, kind, region_id = _source_file(project, relative, owners)
+    if kind in _CODE_KINDS:
+        return _code_row(project, relative, shadows, kind)
     if shadows is None:
         return SourceFileRow(
             relative=relative,
@@ -397,6 +474,40 @@ def _row(
         note=note,
         problem=problem,
         unchanged=unchanged,
+    )
+
+
+def _code_row(
+    project: Project, relative: Path, fragment: Path | None, kind: str
+) -> SourceFileRow:
+    """One file of the project's own asm.
+
+    Added rather than shadowing: there is no stock file behind it, so
+    removing it deletes it outright, exactly as an added graphics file is
+    removed. What is worth saying about one is whether the build will run
+    any of it -- a level's code file that declares no entry point is
+    assembled and never called, which is silent otherwise.
+    """
+    note = ""
+    entries = next(
+        held for _f, held_kind, _r, held in _CODE_FOLDERS if held_kind == kind
+    )
+    if entries:
+        try:
+            text = (project.overlay / relative).read_text(
+                encoding="utf-8", errors="replace"
+            )
+        except OSError:
+            text = ""
+        if not any(entry in entries for entry in level_code.declared(text)):
+            note = f"declares no {', '.join(entries)} label, so nothing calls it"
+    return SourceFileRow(
+        relative=relative,
+        shadows=fragment,
+        kind=kind,
+        note=note,
+        problem=bool(note),
+        added=True,
     )
 
 

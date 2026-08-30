@@ -29,8 +29,12 @@ includeonce
 ;#   the level streams that reached the end of banks $06 and $07 are packed
 ;#   from where the occupants before them ended, and the level files the
 ;#   project adds after those. The feature's sprite-bank stub and its per-level table
-;#   sit at the bank's fixed tail, where the loader's hook and SA-1 Pack's
-;#   patch pass can both find the table without a symbol.
+;#   sit at the top of bank $07 rather than in this bank at all, where the
+;#   loader's hook and SA-1 Pack's patch pass can both find the table
+;#   without a symbol on every cartridge. That occupant is the one this
+;#   bank is optional for: it wants the room and can do without it, so on a
+;#   cartridge with no expansion bank it packs into what the two level
+;#   banks leave -- !Define_SMW_LevelBankExists is what it reads.
 ;#
 ;# The run is the whole bank behind one RATS tag, for the reserved run's
 ;# reason: asar's freespace search takes any long enough run of $00, and a
@@ -50,7 +54,10 @@ includeonce
 ;# was given.
 ;#
 ;# The reservation needs a cartridge assembled at 1 MB or larger, and says so
-;# rather than letting the image quietly double.
+;# rather than letting the image quietly double -- for the two occupants that
+;# have nowhere else to go. The third asks whether the bank is there and does
+;# without where it is not, so a 512 KB build with only that one on reserves
+;# nothing and gains no RATS tag.
 ;#############################################################################################################
 
 ; The bank. %SMW_ReserveLevelBank asserts that the run landed in it.
@@ -59,9 +66,19 @@ if defined("Define_SMW_LevelBank") == 0
 endif
 !Define_SMW_LevelBankBase #= (!Define_SMW_LevelBank<<$10)|$8000
 
+; Whether the cartridge has this bank at all (Config/ExpansionBanks.asm).
+; The managed level banks read it: they use the bank for room they can do
+; without, and pack into what banks $06 and $07 leave on a cartridge that
+; has no expansion bank to reserve.
+%SMW_ExpansionBankExists(!Define_SMW_LevelBank)
+!Define_SMW_LevelBankExists #= !SMW_ExpansionBankExists
+
 ; Whether anything wants the bank at all. A build with none of the three
 ; on reserves nothing, so a stock cartridge gains no RATS tag and no
-; symbol.
+; symbol. The level graphics and the custom level palettes have nowhere
+; else to put their tables, so each wants the bank whatever the cartridge
+; is and the reservation refuses a cartridge without one; the managed level
+; banks want it only where it exists.
 !Define_SMW_LevelBankWanted #= !FALSE
 if !Define_SMW_LevelGraphics == !TRUE
 	!Define_SMW_LevelBankWanted #= !TRUE
@@ -69,40 +86,72 @@ endif
 if !Define_SMW_LevelCustomPalettes == !TRUE
 	!Define_SMW_LevelBankWanted #= !TRUE
 endif
-if !Define_SMW_ManagedLevelMemory == !TRUE
+if !Define_SMW_LevelCode == !TRUE
 	!Define_SMW_LevelBankWanted #= !TRUE
+endif
+if !Define_SMW_GameModeCode == !TRUE
+	!Define_SMW_LevelBankWanted #= !TRUE
+endif
+if !Define_SMW_GlobalCode == !TRUE
+	!Define_SMW_LevelBankWanted #= !TRUE
+endif
+if !Define_SMW_UberASM == !TRUE
+	!Define_SMW_LevelBankWanted #= !TRUE
+endif
+if !Define_SMW_ManagedLevelMemory == !TRUE
+	if !Define_SMW_LevelBankExists == !TRUE
+		!Define_SMW_LevelBankWanted #= !TRUE
+	endif
 endif
 
 !Loc_SMW_LevelBank_Tag		#= !Define_SMW_LevelBankBase+$0000	;> the RATS tag, 8 bytes
-!Loc_SMW_LevelBank_Packed	#= !Define_SMW_LevelBankBase+$0008	;> the run, and SMW_LevelBankStart
+!Loc_SMW_LevelBank_Stash	#= !Define_SMW_LevelBankBase+$0008	;> the run, and SMW_LevelBankStart
 !Loc_SMW_LevelBank_End		#= !Define_SMW_LevelBankBase+$7FFF	;> SMW_LevelBankEnd, the bank's last byte
 
-; Where the run ends for whatever packs into it: the bank's last byte, or
-; the managed level banks' fixed tail when that feature is on -- its
-; sprite-bank table is the $200 bytes below the end label and its stub sits
-; directly before them, !Define_SMW_ManagedLevelTail bytes in all
-; (Config/ManagedLevelMemory.asm, which places them from this figure).
-if !Define_SMW_ManagedLevelMemory == !TRUE
-	!Loc_SMW_LevelBank_RunEnd	#= !Loc_SMW_LevelBank_End-!Define_SMW_ManagedLevelTail
+; The fixed head, then the packed one. The level number stash goes in front
+; of every occupant, laid down by this bank rather than by any of them
+; (Config/LevelNumberStash.asm), so no occupant's block depends on which
+; others the cartridge has and a new reader of the stash costs nothing but
+; its own switch.
+if !Define_SMW_LevelNumberStashWanted == !TRUE
+	!Loc_SMW_LevelBank_Packed	#= !Loc_SMW_LevelBank_Stash+!Define_SMW_Block_LevelNumberStash
 else
-	!Loc_SMW_LevelBank_RunEnd	#= !Loc_SMW_LevelBank_End
+	!Loc_SMW_LevelBank_Packed	#= !Loc_SMW_LevelBank_Stash
 endif
 
-; Where the custom level palettes' pointer table goes: the run's head, or
-; the level graphics' fixed-size block behind it when that feature is on
-; (Config/LevelGraphics.asm states the size). The palettes' placement
-; asserts it landed here.
+; Where the run ends for whatever packs into it: the bank's last byte, and
+; nothing is held back from it. The managed level banks' sprite-bank tail is
+; the one thing that used to be, and it sits at the top of bank $07 instead
+; -- one address on every cartridge, since this bank is one the feature may
+; not have (Config/ManagedLevelMemory.asm).
+!Loc_SMW_LevelBank_RunEnd	#= !Loc_SMW_LevelBank_End
+
+; Where the per-level code's rows go: the packed head, or the level
+; graphics' fixed-size block behind it when that feature is on
+; (Config/PackedRuns.asm states the size). The code's placement asserts it
+; landed here.
 if !Define_SMW_LevelGraphics == !TRUE
-	!Loc_SMW_LevelBank_Palettes	#= !Loc_SMW_LevelBank_Packed+!Define_SMW_LevelGraphicsBytes
+	!Loc_SMW_LevelBank_Code		#= !Loc_SMW_LevelBank_Packed+!Define_SMW_Block_LevelGraphics
 else
-	!Loc_SMW_LevelBank_Palettes	#= !Loc_SMW_LevelBank_Packed
+	!Loc_SMW_LevelBank_Code		#= !Loc_SMW_LevelBank_Packed
+endif
+
+; And where the custom level palettes' pointer table goes: behind the code's
+; block where that feature is on too. The palettes are the packed head's
+; last occupant, because their blobs are its growing end and nothing may
+; declare an address behind them. Their placement asserts it landed here.
+if !Define_SMW_LevelCode == !TRUE
+	!Loc_SMW_LevelBank_Palettes	#= !Loc_SMW_LevelBank_Code+!Define_SMW_Block_LevelCode
+else
+	!Loc_SMW_LevelBank_Palettes	#= !Loc_SMW_LevelBank_Code
 endif
 
 ; Where the run has got to: the cursor the level graphics and the palettes
 ; pack at and carry forward, and the packer opens its fourth run from.
 ; Reset here, which is once per assembler pass, because this file is read
-; at the start of each of them.
-!SMW_LevelBankNext #= !Loc_SMW_LevelBank_Packed
+; at the start of each of them. It opens at the fixed head, which the stash
+; is placed at and carries forward from.
+!SMW_LevelBankNext #= !Loc_SMW_LevelBank_Stash
 
 ; The reservation (Config/ExpansionBanks.asm), and the one thing this bank has
 ; to be that the others do not: not the bank the growable features were

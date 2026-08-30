@@ -106,6 +106,32 @@ class _UnderlinedMnemonics(QProxyStyle):
         return super().styleHint(hint, option, widget, returnData)
 
 
+def blended(over: QColor, under: QColor, amount: float) -> QColor:
+    """``over`` mixed ``amount`` of the way onto ``under``, opaque.
+
+    The one arithmetic behind every colour in the editor that is *derived from
+    the palette* rather than written down: a washed table selection, a greyed
+    note, the memory map's flat ground, an ARAM run the engine merely keeps.
+    Each of those has to hold up on both the light surface and the dark one, and
+    a literal that reads right against one is a smear against the other -- so
+    they are all stated as a distance from a palette role, and computed here.
+
+    Opaque rather than an alpha brush: an item view's selection is painted by
+    the style, and not every style composites a translucent ``Highlight`` the
+    same way -- while every one of them fills with a solid colour identically.
+    """
+    return QColor(
+        *(
+            round(below + (above - below) * amount)
+            for above, below in (
+                (over.red(), under.red()),
+                (over.green(), under.green()),
+                (over.blue(), under.blue()),
+            )
+        )
+    )
+
+
 def dark_palette() -> QPalette:
     """The dark theme's palette: derived from :data:`_DARK_SURFACE`, then the
     handful of roles whose derived value is wrong for a dark UI (see above)."""

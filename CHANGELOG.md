@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.4 - 2026-08-29
+
+- AddMusicKFF and UberASM support
+
 ## v0.1.3 - 2026-08-28
 
 - asar.exe window no longer flashes on screen as a console window

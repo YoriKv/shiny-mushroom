@@ -65,6 +65,7 @@ from PySide6.QtWidgets import (
 from shiny_mushroom.header import (
     FIELDS,
     FIELDS_BY_KEY,
+    MUSIC_FIELD,
     HeaderField,
     field_value,
     format_bytes,
@@ -154,8 +155,15 @@ class HeaderDialog(QDialog):
         colours: Callable[[str, int], Sequence[int]] | None = None,
         gap: Callable[[bytes, Layer2Entry], Layer2Gap | None] | None = None,
         preview: Callable[[bytes | None], None] | None = None,
+        tracks: Sequence[str] | None = None,
     ) -> None:
         super().__init__(parent)
+        #: What this project's eight music settings are called. The field's own
+        #: list is the *shipped* table's tracks and stops being true the moment
+        #: Project > Audio changes one, so a project's own names are asked for
+        #: and the field's are the fallback for a window with no project --
+        #: :func:`~shiny_mushroom.music_tables.setting_names`.
+        self._tracks = tuple(tracks) if tracks else None
         self.setWindowTitle(TITLE)
         self._header = bytes(header)
         self._editors: dict[str, QWidget] = {}
@@ -324,16 +332,29 @@ class HeaderDialog(QDialog):
 
     # -- construction --------------------------------------------------------
 
+    def _choices_for(self, field: HeaderField) -> Sequence[str] | None:
+        """What a field's list offers, the music settings' being the project's.
+
+        Every other field's set is a fact about the game's code -- which
+        tileset, which scroll setting -- and cannot be edited. The music
+        settings' is a table this project may have changed, and a fixed list
+        over an changed table is a label that lies.
+        """
+        if field.key == MUSIC_FIELD and self._tracks is not None:
+            return self._tracks
+        return field.choices
+
     def _editor_for(self, field: HeaderField) -> QWidget:
         """A combo box where the value is one of a named set, a spin box where
         it is a number."""
-        if field.choices is not None:
+        offered = self._choices_for(field)
+        if offered is not None:
             box = ChoiceBox()
             # Padded to the field's own width in hex digits, so the numbers down
             # a five-bit field's list line up rather than stepping from "F" to
             # "10". Every narrower field is one digit and reads as it always did.
             digits = -(-field.bits // 4)
-            for value, name in enumerate(field.choices):
+            for value, name in enumerate(offered):
                 box.addItem(f"{value:0{digits}X} - {name}", value)
             box.setCurrentIndex(field.get(self._header) - field.offset)
             box.currentIndexChanged.connect(
@@ -471,6 +492,7 @@ class HeaderDialog(QDialog):
         colours: Callable[[str, int], Sequence[int]] | None = None,
         gap: Callable[[bytes, Layer2Entry], Layer2Gap | None] | None = None,
         preview: Callable[[bytes | None], None] | None = None,
+        tracks: Sequence[str] | None = None,
     ) -> tuple[bytes, Layer2Entry | None] | None:
         """Show the dialog; return what was decided, or ``None`` if cancelled.
 
@@ -481,7 +503,13 @@ class HeaderDialog(QDialog):
         alone, which is most accepts.
         """
         dialog = cls(
-            header, parent, layer2=layer2, colours=colours, gap=gap, preview=preview
+            header,
+            parent,
+            layer2=layer2,
+            colours=colours,
+            gap=gap,
+            preview=preview,
+            tracks=tracks,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return None

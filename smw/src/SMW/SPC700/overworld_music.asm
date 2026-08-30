@@ -4,16 +4,7 @@
 ; If you'd rather not use that tool, someone will need to write a script that can turn the raw hex from the original ROM into a music file.
 
 %SPCDataBlockStart(!ARAM_SMW_MusicBankLoc)
-MusicPtrs:
-	dw MUSIC_TitleScreen           ; $01
-	dw MUSIC_MainArea              ; $02
-	dw MUSIC_YoshisIsland          ; $03
-	dw MUSIC_VanillaDome           ; $04
-	dw MUSIC_StarRoad              ; $05
-	dw MUSIC_ForestofIllusion      ; $06
-	dw MUSIC_BowsersValley         ; $07
-	dw MUSIC_BowsersValleyRevealed ; $08
-	dw MUSIC_SpecialWorld          ; $09
+	incsrc "tables/overworld-music-pointers.asm"
 
 MUSIC_ForestofIllusion:
 	dw DATA_1380,DATA_1390,DATA_1390,DATA_13A0

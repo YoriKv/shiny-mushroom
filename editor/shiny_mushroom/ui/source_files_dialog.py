@@ -15,19 +15,28 @@ them the editor owns, and what is wrong with any of them -- see
 :mod:`shiny_mushroom.source_files`, which answers all three and knows nothing
 about Qt.
 
-**Nothing watches the overlay**, so the dialog re-reads it whenever it is given
-the focus back: coming back from the editor a file was handed to is exactly
-when a hand edit has just happened, and the list would otherwise go on showing
-what was there before somebody left. A stat apiece decides whether there is
-anything to re-read at all, which is what makes that affordable on every
-activation -- see :meth:`SourceFilesDialog._recheck`.
+**Nothing watches the overlay**, so the dialog re-reads it whenever this
+application is given the focus back: coming back from the editor a file was
+handed to is exactly when a hand edit has just happened, and the list would
+otherwise go on showing what was there before somebody left. A stat apiece
+decides whether there is anything to re-read at all, which is what makes that
+affordable every time -- see :meth:`SourceFilesDialog._recheck`.
+
+**The application's focus, not this window's.** The dialog is modeless and
+somebody who alt-tabs away from it comes back to whichever window they were
+last in, which is usually the main one -- and this window, sitting behind it,
+would go on showing what it showed before. So the hook is
+``focusWindowChanged``, which fires for every window of this application and
+not for the widgets inside one: the sweep runs when somebody comes back to
+the application, wherever they land, and not on every click.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, Qt
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QGuiApplication, QWindow
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -99,6 +108,14 @@ class SourceFilesDialog(QDialog):
         #: see :meth:`_recheck`, which is what an outside edit is noticed
         #: against, there being nothing watching them.
         self._stamps: dict[Path, tuple[int, int]] = {}
+
+        # Every window of this application, so coming back to the main one
+        # with this behind it re-reads too -- see :meth:`_focus_moved`. The
+        # connection is owned by this dialog and goes when it does.
+        app = QGuiApplication.instance()
+        if app is not None:
+            app.focusWindowChanged.connect(self._focus_moved)
+
         self.setWindowTitle(TITLE)
         self.setMinimumSize(720, 420)
 
@@ -266,16 +283,19 @@ class SourceFilesDialog(QDialog):
 
     # -- what moved while somebody was in another window ---------------------
 
-    def changeEvent(self, event) -> None:  # noqa: ANN001, N802 - Qt override
-        """Read the overlay again when the dialog is given the focus back.
+    def _focus_moved(self, window: QWindow | None) -> None:
+        """Read the overlay again when this application is given the focus.
 
-        This application's own picker and message box hand the focus back too
-        and are not a hand edit, but :meth:`_recheck` is a stat sweep and says
+        ``None`` is the application having no focused window at all, which is
+        somebody leaving rather than arriving; anything else is a window of
+        this application, since that is the only kind this signal reports.
+
+        Its own picker and message box change the focus window too and are
+        not a hand edit, but :meth:`_recheck` is a stat sweep that says
         nothing when nothing moved, so telling those from a return out of the
         editor would buy nothing.
         """
-        super().changeEvent(event)
-        if event.type() == QEvent.Type.ActivationChange and self.isActiveWindow():
+        if window is not None and self.isVisible():
             self._recheck()
 
     def _recheck(self) -> None:
@@ -335,6 +355,10 @@ def _consequence(row: source_files.SourceFileRow) -> str:
         return (
             "The build reads the disassembly's own copy again; any hand edits are lost."
         )
+    if row.kind in (source_files.CODE, source_files.LIBRARY):
+        # The project's own asm: nothing ships behind it, and the fragment
+        # the build reads it through is regenerated without it.
+        return "The file is deleted; nothing ships in its place."
     if row.kind == source_files.GRAPHICS:
         # A file the project added has no shipped stream behind it.
         if row.added:

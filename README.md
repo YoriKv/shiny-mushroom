@@ -1,6 +1,6 @@
 # Shiny Mushroom
 
-**Shiny Mushroom** is a cross-platform Super Mario World all-in-one editor.
+**Shiny Mushroom** is a cross-platform Super Mario World romhack editor.
 
 If you run into issues or have questions. Submit a github issue or reach out to me
 on Discord through the https://romhack.ing/ Discord server.

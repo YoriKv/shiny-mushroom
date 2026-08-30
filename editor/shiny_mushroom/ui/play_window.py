@@ -18,6 +18,14 @@ boot away.
 The window is deliberately small in what it offers. Restart, pause, and a
 loadout -- the three things somebody testing a level reaches for. Everything
 else about the run comes from the cart.
+
+**Two devices, one pad.** A keyboard arrives as Qt key events and a gamepad is
+read out of the machine by :mod:`shiny_mushroom.pads`; both are turned into
+:mod:`shiny_mushroom.mesen_keys`' codes and answered by one set of bindings
+(:mod:`shiny_mushroom.ui.controls_dialog`), so what is held is recomputed from
+what is down rather than accumulated. The gamepads are read by a timer that
+runs only while a run is on screen, unpaused and in front of the person: a test
+window left open behind the editor holds no device and polls nothing.
 """
 
 from __future__ import annotations
@@ -26,7 +34,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QCloseEvent, QKeyEvent, QKeySequence
 from PySide6.QtWidgets import QComboBox, QLabel, QMainWindow, QToolBar, QWidget
 
@@ -34,51 +42,20 @@ from shiny_mushroom import APP_NAME
 from shiny_mushroom.addresses import MODE_IN_LEVEL
 from shiny_mushroom.hexnum import hexnum
 from shiny_mushroom.overworld_snapshot import MODE_OVERWORLD
+from shiny_mushroom.pads import PadReader, open_pads
 from shiny_mushroom.play_request import Buttons, PlayerState
+from shiny_mushroom.ui.controls_dialog import bindings as stored_bindings
+from shiny_mushroom.ui.controls_dialog import deadzone as stored_deadzone
 from shiny_mushroom.ui.dialogs import warn
 from shiny_mushroom.ui.play import PlayController
+from shiny_mushroom.ui.qt_keys import mesen_codes
 from shiny_mushroom.ui.screen import DEFAULT_SCALE, FRAME_HEIGHT, FRAME_WIDTH, Screen
 
-#: Keyboard to pad. The arrows-plus-ZX layout every SNES emulator has shipped
-#: with for twenty years, so a player's hands already know it: Z and X are the
-#: buttons nearest the left hand and get the two Mario uses constantly -- Y to
-#: run and spin, B to jump.
-#:
-#: Keyed by plain ``int`` rather than by ``Qt.Key``: a key event can carry a
-#: value that is not in the enum at all, and converting one to look it up raises
-#: instead of missing.
-KEY_MAP: dict[int, Buttons] = {
-    int(key): button
-    for key, button in (
-        (Qt.Key.Key_Up, Buttons.UP),
-        (Qt.Key.Key_Down, Buttons.DOWN),
-        (Qt.Key.Key_Left, Buttons.LEFT),
-        (Qt.Key.Key_Right, Buttons.RIGHT),
-        (Qt.Key.Key_Z, Buttons.Y),
-        (Qt.Key.Key_X, Buttons.B),
-        (Qt.Key.Key_A, Buttons.X),
-        (Qt.Key.Key_S, Buttons.A),
-        (Qt.Key.Key_Q, Buttons.L),
-        (Qt.Key.Key_W, Buttons.R),
-        (Qt.Key.Key_Return, Buttons.START),
-        (Qt.Key.Key_Enter, Buttons.START),
-        (Qt.Key.Key_Shift, Buttons.SELECT),
-    )
-}
-
-
-def held_after(held: Buttons, key: int, down: bool) -> Buttons:
-    """What is held once ``key`` goes down or comes up.
-
-    Separated out because it is the only arithmetic in this window and the one
-    thing that has to be right for a level to be controllable: the pad is told
-    what is *down*, not what changed, so a button dropped from this set is a
-    button nothing will ever release.
-    """
-    button = KEY_MAP.get(key)
-    if button is None:
-        return held
-    return Buttons(held | button if down else held & ~button)
+#: How often the gamepads are read while a run is on screen. Half a frame, so
+#: a tap shorter than one still lands: the pad is asked what is held rather
+#: than told what changed, and a press that begins and ends between two polls
+#: is a press that never happened.
+PAD_POLL_MS = 8
 
 
 #: What the powerup picker offers, in the order the game numbers them.
@@ -142,7 +119,16 @@ class PlayWindow(QMainWindow):
         #: When set, the window is testing the world map rather than a level;
         #: :meth:`test` and :meth:`test_overworld` switch it either way.
         self._overworld = overworld
+        #: What the pad is currently told to hold, and the two sources it is
+        #: computed from: the Mesen codes held on the keyboard, and the ones
+        #: the last gamepad poll found. Kept apart so that letting go of the
+        #: keyboard on a focus change does not let go of a controller.
         self._buttons = Buttons.NONE
+        self._bindings = stored_bindings()
+        self._keys: set[int] = set()
+        self._pad: frozenset[int] = frozenset()
+        self._pads: PadReader | None = None
+        self._paused = False
         self._closing = False
 
         self.screen = Screen()
@@ -166,6 +152,12 @@ class PlayWindow(QMainWindow):
         # moving the player.
         self.screen.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.screen.setFocus()
+
+        # Built here rather than started here: it belongs to this thread,
+        # and it runs only between :meth:`_sync_pads`' two answers.
+        self._pad_timer = QTimer(self)
+        self._pad_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self._pad_timer.timeout.connect(self._poll_pads)
 
         self._apply_run_chrome()
         self._controller = session
@@ -305,6 +297,7 @@ class PlayWindow(QMainWindow):
     def _request(self) -> None:
         self._pause_action.setChecked(False)
         self._release_keys()
+        self._sync_pads()
         if self._overworld is not None:
             run = self._overworld
             self._controller.enter_overworld(
@@ -357,11 +350,13 @@ class PlayWindow(QMainWindow):
         self.screen.setFocus()
 
     def _set_paused(self, paused: bool) -> None:
+        self._paused = paused
         self._pause_action.setText("Resu&me" if paused else "&Pause")
         if paused:
             # A held button that is never released because the game stopped
             # reading is a button still held when it starts again.
             self._release_keys()
+        self._sync_pads()
         self._controller.set_paused(paused)
         self.screen.setFocus()
 
@@ -389,40 +384,134 @@ class PlayWindow(QMainWindow):
         self._alert(f"The {what} could not be tested.", detail=message)
         self.close()
 
-    # -- the keyboard -------------------------------------------------------
+    # -- the keyboard and the pad -------------------------------------------
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802 - Qt override
-        if event.isAutoRepeat() or not self._hold(event.key(), True):
+        if event.isAutoRepeat() or not self._hold(event, True):
             super().keyPressEvent(event)
 
     def keyReleaseEvent(self, event: QKeyEvent) -> None:  # noqa: N802 - Qt override
-        if event.isAutoRepeat() or not self._hold(event.key(), False):
+        if event.isAutoRepeat() or not self._hold(event, False):
             super().keyReleaseEvent(event)
 
-    def _hold(self, key: int, down: bool) -> bool:
-        """Press or release one mapped key. False if it is not one of ours."""
-        if key not in KEY_MAP:
+    def _hold(self, event: QKeyEvent, down: bool) -> bool:
+        """Press or release one key. False if nothing is bound to it.
+
+        False rather than swallowing it: an unbound key has to reach Qt, or the
+        window eats every shortcut on its own toolbar.
+        """
+        keypad = bool(event.modifiers() & Qt.KeyboardModifier.KeypadModifier)
+        bound = self._bindings.bound_codes()
+        codes = [code for code in mesen_codes(event.key(), keypad) if code in bound]
+        if not codes:
             return False
-        held = held_after(self._buttons, key, down)
-        if held is not self._buttons:
-            self._buttons = held
-            self._controller.set_buttons(int(held))
+        if down:
+            self._keys.update(codes)
+        else:
+            self._keys.difference_update(codes)
+        self._send()
         return True
 
+    def _send(self) -> None:
+        """Work out what is held, from both devices, and say so if it changed.
+
+        Recomputed from what is down rather than folded key by key, which is
+        what makes two keys on one button work: releasing one of Start's two
+        Enters while the other is held must not release Start.
+        """
+        held = self._bindings.held(self._keys | self._pad)
+        if held != self._buttons:
+            self._buttons = held
+            self._controller.set_buttons(int(held))
+
+    def _poll_pads(self) -> None:
+        """One look at the gamepads. Only ever called by :attr:`_pad_timer`."""
+        if self._pads is None:
+            return
+        held = self._pads.poll()
+        if held != self._pad:
+            self._pad = held
+            self._send()
+
+    def _sync_pads(self) -> None:
+        """Read the gamepads exactly while the run is being played.
+
+        Three conditions, and all of them are "is somebody playing this": the
+        window is not on its way out, the run is not paused, and it is the
+        window in front. A test window left open behind the editor would
+        otherwise move the player while somebody types in a level, and would
+        hold every input device on the machine open to do it.
+        """
+        self._set_pad_polling(self._playing())
+
+    def _playing(self) -> bool:
+        """Whether somebody is playing this run right now."""
+        return not self._closing and not self._paused and self.isActiveWindow()
+
+    def _set_pad_polling(self, on: bool) -> None:
+        """Open or let go of the machine's gamepads, and start or stop the
+        timer that reads them. Idempotent -- it is called from three places
+        that each know only their own half of the answer."""
+        if on == (self._pads is not None):
+            return
+        if on:
+            self._pads = open_pads(stored_deadzone())
+            self._pad_timer.start(PAD_POLL_MS)
+            return
+        self._pad_timer.stop()
+        if self._pads is not None:
+            self._pads.close()
+            self._pads = None
+        if self._pad:
+            # A button held on a pad the window has stopped reading is a button
+            # nothing will ever release -- the same trap as a key held through
+            # a focus change, and the same answer.
+            self._pad = frozenset()
+            self._send()
+
+    def reload_controls(self) -> None:
+        """Take up bindings that changed while this window was open.
+
+        The dialog is reached from the editor's menu, which is reachable with a
+        run up, so the window cannot assume it read the bindings for the last
+        time in its constructor. Everything held is dropped: what was down was
+        down under the old set, and there is no honest way to carry it across.
+        """
+        self._bindings = stored_bindings()
+        self._keys.clear()
+        # Reopened rather than kept, because the deadzone is imported with the
+        # bindings and a reader is built with it.
+        self._set_pad_polling(False)
+        self._sync_pads()
+        self._send()
+
     def _release_keys(self) -> None:
-        """Let go of everything. Used whenever the window stops watching keys.
+        """Let go of the keyboard. Used whenever the window stops watching it.
 
         Losing focus mid-jump would otherwise leave the button held: the pad is
-        told what is down, not what changed, so nothing ever arrives to say
-        the key came back up.
+        told what is down, not what changed, so nothing ever arrives to say the
+        key came back up. The gamepad is not released here -- it is released by
+        :meth:`_set_pad_polling` when the run stops being played, which is a
+        different moment.
         """
-        if self._buttons is not Buttons.NONE:
-            self._buttons = Buttons.NONE
-            self._controller.set_buttons(0)
+        if self._keys:
+            self._keys.clear()
+            self._send()
 
     def focusOutEvent(self, event) -> None:  # noqa: N802, ANN001 - Qt override
         self._release_keys()
         super().focusOutEvent(event)
+
+    def changeEvent(self, event) -> None:  # noqa: N802, ANN001 - Qt override
+        """Start or stop reading the gamepads as the window comes and goes.
+
+        Activation rather than focus: focus moves between this window's own
+        widgets, and a run does not stop being played because the toolbar took
+        the keyboard.
+        """
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.ActivationChange:
+            self._sync_pads()
 
     # -- shutdown -----------------------------------------------------------
 
@@ -452,6 +541,7 @@ class PlayWindow(QMainWindow):
             super().closeEvent(event)
             return
         self._closing = True
+        self._set_pad_polling(False)
         self._controller.entered.disconnect(self._entered)
         self._controller.frame.disconnect(self.screen.set_frame)
         self._controller.status.disconnect(self._show_status)

@@ -1,8 +1,15 @@
-"""Testing it: the two test runs, what they carry, and the window they use.
+"""Testing it: the test runs, what they carry, and the window they use.
 
 Test > Level plays what is on the canvas and Test > World Map walks the map,
 both in the one play window (:mod:`shiny_mushroom.ui.play_window`) -- a second
 emulator in a second process, so the picture on the canvas stays where it is.
+
+Two rows are the odd ones out and are here for the name they share. File > Test
+ROM builds the project's cartridge and hands the file to whatever emulator the
+person has set (:mod:`shiny_mushroom.external_emulator`); Test Level Externally
+sends a Lua warp with it, so a Mesen starts where the canvas is
+(:mod:`shiny_mushroom.mesen_lua`). Neither patches anything, because the editor
+did not start that program: both carry what has been *saved*.
 
 **The emulator is booted before anybody asks for a run.** It is started when a
 cartridge's first level lands on the canvas
@@ -25,21 +32,29 @@ Not a test module: pytest collects ``test_*.py`` and ``*_test.py`` alone, and
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 
 from shiny_mushroom import cart_patches
 from shiny_mushroom.addresses import LAYOUT_LAYER1_VERTICAL
+from shiny_mushroom.build import rom_path
 from shiny_mushroom.edit import Level
+from shiny_mushroom.external_emulator import LaunchError, is_mesen, launch
 from shiny_mushroom.hexnum import hexnum
+from shiny_mushroom.mesen_lua import SCRIPT_NAME, level_script, overworld_script
 from shiny_mushroom.overworld import (
     DEFAULT_SPAWN,
+    WorldSpawn,
     cell_at,
     save_tables,
     spawn_for_cell,
 )
 from shiny_mushroom.project import scanning_once
 from shiny_mushroom.rom_patches import entrance_patch, initial_level_flags
+from shiny_mushroom.ui.controls_dialog import ControlsDialog
 from shiny_mushroom.ui.play import PlayController
 from shiny_mushroom.ui.play_window import OverworldRun, PlayWindow
+from shiny_mushroom.ui.project_dialog import BuildDialog
+from shiny_mushroom.ui.settings_dialog import external_emulator
 from shiny_mushroom.ui.window.modes import EditorMode
 from shiny_mushroom.ui.window.parts import DISASSEMBLY, LEVEL_PARTS
 
@@ -84,6 +99,18 @@ class Testing:
         self._warn_unpatched()
         self._show_play(self._snapshot.level, patches)
 
+    def edit_controls(self) -> None:
+        """What drives the test window's pad, and the offer to import a set.
+
+        A preference of the person's rather than the project's, so it needs no
+        cartridge and asks about none. A run that is already up is told to take
+        the new bindings rather than being left on the ones it opened with:
+        somebody who has just imported their controller wants to try it in the
+        window they imported it for.
+        """
+        if ControlsDialog(self).exec() and self._play is not None:
+            self._play.reload_controls()
+
     def test_world_map(self) -> None:
         """Walk the world map, edits, marked completions and spawn included.
 
@@ -112,6 +139,168 @@ class Testing:
             return
         self._warn_unpatched()
         self._show_play(None, None, overworld=run)
+
+    def test_rom(self) -> None:
+        """Build the project's cartridge and open it, at its title screen.
+
+        File's row, because it tests no document in particular: it is the
+        cartridge, run. What lands in the emulator is the file
+        :meth:`export_rom` would copy -- the ordinary build, skipped when
+        nothing has moved -- so there is nothing here that could disagree with
+        what the project produces.
+
+        The run is of what has been *saved*: a build reads the project's
+        overlay off disk, so the unsaved-work question an export asks is asked
+        here, on the same terms.
+        """
+        self._run_externally(warp=False)
+
+    def test_level_external(self) -> None:
+        """Build the cartridge and open it *where the canvas is*.
+
+        :meth:`test_rom`'s run with the one thing an emulator the editor
+        merely launched cannot normally be asked for: a starting point. Mesen
+        takes a Lua script on its command line and runs it against the machine,
+        so the same warp the editor's own test window drives from Python is
+        written out as a script and handed over with the cartridge --
+        :mod:`shiny_mushroom.mesen_lua`. The row follows the mode the way Test
+        Level does: the level on the canvas, or the world map.
+
+        **Dead unless the emulator on file is a Mesen**, because the warp is
+        the whole of what this adds to the row above it -- see
+        :meth:`~shiny_mushroom.ui.main_window.MainWindow._sync_rom_size_menu`,
+        which greys it. Called anyway -- a shortcut is not the only way in --
+        it says which of the two is missing.
+
+        A warp that cannot be *written* is a different matter, and not a run
+        that does not happen: the cartridge is still the project's and it still
+        opens. What is lost is where it starts, which the status line says.
+        """
+        self._run_externally(warp=True)
+
+    def _run_externally(self, *, warp: bool) -> None:
+        """Both external runs: build, hand the cartridge over, say what happened.
+
+        One method because they differ in one thing -- whether a warp script
+        goes with the cartridge -- and agree on everything that can refuse
+        them: a project to build, an emulator to open it in, work that would
+        not be in the build, and an assembly that failed.
+        """
+        project = self._project
+        if project is None or not project.buildable:
+            self._alert(
+                "There is no project to test.",
+                detail="An external test run opens a project's built "
+                "cartridge; File > New Project makes one.",
+            )
+            return
+        emulator = external_emulator()
+        if emulator is None:
+            self._alert(
+                "No external emulator is set.",
+                detail="File > Settings names the emulator these rows open the "
+                "built cartridge in.",
+            )
+            return
+        if warp and not is_mesen(emulator):
+            self._alert(
+                f"{emulator.name} cannot be told where to start.",
+                detail="Only Mesen runs a script the editor writes for it, "
+                "which is what a warp is. File > Test ROM opens the same "
+                "cartridge at its title screen.",
+            )
+            return
+        if not self._may_export():
+            return
+        if BuildDialog.run(project, self) is None:
+            # Nothing to add: the dialog is still up with asar's complaint on
+            # it, which is the only thing that says why there is no cartridge.
+            return
+        cartridge = rom_path(project)
+        script, where = (
+            self._warp_script(cartridge)
+            if warp
+            else (None, "it starts at the title screen.")
+        )
+        try:
+            launch(emulator, cartridge, script)
+        except LaunchError as error:
+            self._alert(
+                f"{emulator.name} could not be started.",
+                detail=f"{error} File > Settings is where the emulator is set.",
+            )
+            return
+        self.statusBar().showMessage(
+            f"Opened {cartridge.name} in {emulator.name} - "
+            + (f"warping to {where}." if script is not None else where),
+            8000,
+        )
+
+    def _warp_script(self, cartridge: Path) -> tuple[Path | None, str]:
+        """The Lua warp for this run, and what the status line should say.
+
+        ``(None, reason)`` whenever there is not going to be one -- a document
+        that has not arrived yet, a level whose request needs a branch this
+        cartridge no longer has, a file that could not be written. Each of
+        those is a run that still happens, so the reason is worded to finish
+        "Opened <cart> in <emulator> - ".
+
+        The script is written beside the built cartridge and rewritten by every
+        run: it is a product of the build in the same sense the ROM is, and
+        keeping one per project is what stops a folder of stale warps.
+        """
+        try:
+            text = self._warp_lua()
+        except (ValueError, OSError) as error:
+            # :class:`BranchNotTheGames` among them, and the cartridge that
+            # could not be read for it: neither is a reason to hold the run
+            # back, so both are said and then launched past.
+            return None, f"it starts at the title screen: {error}."
+        if text is None:
+            return None, "it starts at the title screen."
+        script = cartridge.with_name(SCRIPT_NAME)
+        try:
+            script.write_text(text, newline="\n")
+        except OSError as error:
+            return None, (
+                f"it starts at the title screen: {SCRIPT_NAME} could not be "
+                f"written ({error.strerror or error})."
+            )
+        return script, self._warp_label()
+
+    def _warp_lua(self) -> str | None:
+        """The script for whichever document is being edited, or None for one
+        that is not up yet -- a cartridge still opening, a map still loading."""
+        if self._mode is EditorMode.WORLD:
+            state = self._overworld_save_state()
+            if state is None:
+                return None
+            spawn, settings, flags = state
+            return overworld_script(
+                spawn.submap,
+                spawn.x,
+                spawn.y,
+                settings,
+                flags,
+                where=self._addresses,
+            )
+        if self._snapshot is None:
+            return None
+        # The built cartridge rather than the image on the canvas: the build
+        # that just ran may have moved the branch the request needs, and it is
+        # the file the emulator is about to open that has to be asked about.
+        return level_script(
+            self._snapshot.level,
+            rom_path(self._project).read_bytes(),
+            where=self._addresses,
+        )
+
+    def _warp_label(self) -> str:
+        """What the run warps to, as the status line says it."""
+        if self._mode is EditorMode.WORLD:
+            return "the world map"
+        assert self._snapshot is not None
+        return f"level {hexnum(self._snapshot.level, 3)}"
 
     def _warn_unpatched(self) -> None:
         """Say, before a run opens, what it will not be showing.
@@ -256,17 +445,19 @@ class Testing:
             )
         return "", ""
 
-    def _overworld_run(self) -> OverworldRun | None:
-        """Everything a world-map test run is made of, or None without a map.
+    def _overworld_save_state(self) -> tuple[WorldSpawn, bytes, bytes] | None:
+        """Where the map run starts and the save tables it starts with.
 
-        The save tables come from the *document* -- the marks are cell-keyed,
-        the translevel scan is recomputed, and the event and direction rows
-        are the document's own where it carries them, so a repointed or
-        edited table means the map as edited; the capture answers only where
-        the document has no part. The patches carry the level document too --
-        its Layer 2 pointer riding along, exactly as a direct test run carries
-        it -- but without its entrance override: a level entered from the map
-        should show its edits, through its own front door.
+        The half of a world-map run that is about the *map* rather than about
+        the cartridge, so both runs that need it can ask: the emulator the
+        editor owns, whose run also carries patches, and the external one,
+        whose cartridge already has the project's saved edits in it.
+
+        The tables come from the **document** -- the marks are cell-keyed, the
+        translevel scan is recomputed, and the event and direction rows are the
+        document's own where it carries them, so a repointed or edited table
+        means the map as edited; the capture answers only where the document
+        has no part. ``None`` before there is a map to answer for.
         """
         snapshot = self._world.snapshot
         if self._rom is None or snapshot is None or not self._world.ready:
@@ -282,6 +473,24 @@ class Testing:
             spawn = spawn_for_cell(*cell_at(self._world.test_spawn))
         else:
             spawn = DEFAULT_SPAWN
+        return spawn, settings, flags
+
+    def _overworld_run(self) -> OverworldRun | None:
+        """Everything a world-map test run is made of, or None without a map.
+
+        The save tables come from the *document* -- the marks are cell-keyed,
+        the translevel scan is recomputed, and the event and direction rows
+        are the document's own where it carries them, so a repointed or
+        edited table means the map as edited; the capture answers only where
+        the document has no part. The patches carry the level document too --
+        its Layer 2 pointer riding along, exactly as a direct test run carries
+        it -- but without its entrance override: a level entered from the map
+        should show its edits, through its own front door.
+        """
+        state = self._overworld_save_state()
+        if state is None:
+            return None
+        spawn, settings, flags = state
         patches = (
             self._layer2_pointer_patch()
             | self._level_document_patch()

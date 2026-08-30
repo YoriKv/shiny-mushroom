@@ -47,6 +47,7 @@ header where a >4 MB SA-1 ROM needs a second copy of it.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 #: The define a ROM map guards and the build overrides.
@@ -129,6 +130,25 @@ ROM_SIZES: dict[str, RomSize] = {
 #: **Not "the stock size" in general** -- that is per base, and ``sa1``'s is
 #: 1 MB. :attr:`~smw_tools.bases.RomBase.stock_size` is the question to ask.
 STOCK = "512kb"
+
+
+def size_for(length: int, sizes: Iterable[str]) -> str | None:
+    """Which of ``sizes`` a cartridge ``length`` bytes long is, or ``None``
+    where it is shorter than the smallest of them.
+
+    The **largest one it covers**, not the nearest: what anything asks a size
+    is whether some bank is in the image, so an image longer than a size holds
+    everything that size holds. That is also what makes this right over a
+    length no ladder names -- a ``.smc`` dump carrying its 512-byte copier
+    header answers as the cartridge under the header rather than as nothing.
+
+    For a caller holding the cartridge itself rather than a record of it: the
+    file's length is the one answer that cannot be stale, and it is what
+    :attr:`~smw_tools.bases.RomBase.built_at` wants. ``sizes`` is the base's
+    own ladder, since that is what a base may be read at.
+    """
+    covered = [one for one in sizes if length >= ROM_SIZES[one].size]
+    return max(covered, key=lambda one: ROM_SIZES[one].size, default=None)
 
 
 def rom_size(size_id: str | None = None) -> RomSize:

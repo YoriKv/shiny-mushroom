@@ -45,8 +45,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from shiny_mushroom import APP_NAME, __version__, resources
-from shiny_mushroom.ui.play_window import KEY_MAP
+from shiny_mushroom import APP_NAME, __version__, mesen_keys, resources
+from shiny_mushroom.pad_bindings import BUTTON_ORDER
+from shiny_mushroom.ui.controls_dialog import bindings as pad_bindings
 
 __all__ = ["AboutDialog", "ShortcutGuide", "shortcut_sections"]
 
@@ -135,8 +136,10 @@ PANEL_KEYS: tuple[tuple[str, str], ...] = (
 # The test window's own keys. It is a second top-level window with a toolbar
 # rather than a menu bar, so nothing above can reach it -- and while it has the
 # keyboard the arrows are the pad's, not the editor's. The pad half is read from
-# `play_window.KEY_MAP` so the two cannot drift apart; the toolbar half is the
-# three things somebody testing a level reaches for.
+# the stored bindings so the two cannot drift apart -- and so that a guide
+# opened after somebody has imported their MesenCE controls shows theirs rather
+# than the ones the editor ships with. The toolbar half is the three things
+# somebody testing a level reaches for.
 TEST_WINDOW: tuple[tuple[str, str], ...] = (
     ("Restart the run", "Ctrl+R"),
     ("Pause", "F6"),
@@ -145,21 +148,33 @@ TEST_WINDOW: tuple[tuple[str, str], ...] = (
 
 
 def _pad_keys() -> list[tuple[str, str]]:
-    """The pad, as ``(button, the keys that press it)`` in the pad's own order.
+    """The pad, as ``(button, what presses it)`` in the pad's own order.
 
-    Read from :data:`~shiny_mushroom.ui.play_window.KEY_MAP` rather than written
-    out again, so a rebinding there is a rebinding here. Two keys can stand for
-    one button -- Return and Enter both start -- so the map is inverted into a
-    list per button rather than a key per button.
+    Read from the stored bindings rather than written out again, so a rebinding
+    -- or an import over the lot of them -- is a rebinding here too. A button
+    can have several codes on it, keyboard and controller both, so each row is
+    a list rather than a single key.
+
+    Named in Mesen's spelling, which is the spelling the Test Controls dialog
+    shows and the spelling the file the bindings came from uses. A button
+    nothing is bound to is left out: an empty row says less than no row.
     """
-    pressed: dict[str, list[str]] = {}
-    for key, button in KEY_MAP.items():
-        text = QKeySequence(key).toString(QKeySequence.SequenceFormat.NativeText)
+    found = pad_bindings()
+    rows: list[tuple[str, str]] = []
+    for button in BUTTON_ORDER:
+        bound = found.for_button(button)
+        if not bound:
+            continue
         # "Pad", because a pad button and the key that presses it are often the
         # same word -- Up is pressed with Up -- and a row reading "Up  Up" says
         # nothing about which of the two columns is the keyboard.
-        pressed.setdefault(f"Pad {button.name.title()}", []).append(text)
-    return [(button, " / ".join(keys)) for button, keys in pressed.items()]
+        rows.append(
+            (
+                f"Pad {button.name.title()}",
+                " / ".join(mesen_keys.key_name(code) for code in bound),
+            )
+        )
+    return rows
 
 
 def _key_text(action: QAction) -> str:

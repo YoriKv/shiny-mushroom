@@ -431,8 +431,21 @@ CODE_058079:								;| I have a feeling that whoever wrote this was still used t
 	CPX.w #$0200							;|
 	BNE.b CODE_058079						;/
 	STZ.w !RAM_SMW_Blocks_ScreenToPlaceCurrentObject
+if !SMW_LevelCode_LoadWanted == !TRUE
+	; The same five bytes as the JSR and the SEP under it. The level's own
+	; load code runs before the objects are placed, so what it writes into
+	; the Map16 table is what they are placed over; the stub then makes the
+	; displaced call and comes back through the RTL below. See
+	; Config/LevelCode.asm.
+	JML.l SMW_LevelCode_Load
+LevelCodeLanding:
+	RTL				;> The RTS return the stub pushes for the call it displaced
+else
+LevelCodeLanding:			;> Named either way, so the stub assembles; only reached above
 	JSR.w SMW_BeginLoadingLevelData_Main	; Load the level
 	SEP.b #$30			; AXY->8
+endif
+LevelCodeReturn:
 	LDA.w !RAM_SMW_Misc_GameMode
 	CMP.b #!Define_SMW_GameMode22_FadeOutToEnemyRollcall
 	BPL.b CODE_05809C		; |If level mode is less than x22,
@@ -911,31 +924,9 @@ LevXYPPCCCTtbl:		; LM: These are the "Sprite Layer" values.
 TimerTable:
 	db $00,$02,$03,$04
 
-; Level Music - Here We Go! [02] (change to any other value to change what
-; music plays by default in grassland levels)
-LevelMusicTable:
-	db !Define_SMW_LevelMusic_HereWeGo	; A level can choose between 8 tracks. ; This table contains the tracks to choose from.
-	; Level Music - Cave Drums [06] (change to any other value to change what
-	; music plays by default in cave levels)
-	db !Define_SMW_LevelMusic_CaveDrums
-	; Level Music - Piano [01] (change to any other value to change what music
-	; plays by default in rope/sky levels)
-	db !Define_SMW_LevelMusic_Piano
-	; Level Music - Castle [08] (change to any other value to change what music
-	; plays by default in Castles and Fortresses)
-	db !Define_SMW_LevelMusic_Castle
-	; Level Music - Ghost House [07] (change to any other value to change what
-	; music plays by default in Ghost Houses)
-	db !Define_SMW_LevelMusic_GhostHouse
-	; Level Music - Water [03] (change to any other value to change what music
-	; plays by default in water levels)
-	db !Define_SMW_LevelMusic_WaterLevel
-	; Level Music - Boss Battle [05] (change to any other value to change what
-	; music plays by default during boss battles)
-	db !Define_SMW_LevelMusic_BossBattle
-	; Level Music - Switch Palace [12] (change to any other value to change
-	; what music plays by default in Switch Palaces)
-	db !Define_SMW_LevelMusic_SwitchPalace
+; The eight tracks a level header's music setting can name, one row per
+; setting.
+	incsrc "levels/music.asm"
 
 Main:
 ;$0584E3

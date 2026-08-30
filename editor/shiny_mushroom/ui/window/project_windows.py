@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from shiny_mushroom import level_names, secondary_entrances, strings
+from shiny_mushroom.audio import AudioMap, AudioMapError, audio_map
 from shiny_mushroom.build import (
     BuildError,
     SharedRoom,
@@ -22,9 +23,12 @@ from shiny_mushroom.build import (
     asm_shared_rooms,
     features_wanted,
 )
+from shiny_mushroom.hexnum import hexnum
 from shiny_mushroom.memory_map import MemoryMap, memory_map
+from shiny_mushroom.music_tables import MusicTableError
 from shiny_mushroom.project import HandEditedRegion, ProjectError
 from shiny_mushroom.rom_patches import secondary_entrance_rows
+from shiny_mushroom.ui.audio_dialog import AudioDialog
 from shiny_mushroom.ui.map16_dialog import Map16Dialog
 from shiny_mushroom.ui.memory_map_dialog import MemoryMapDialog
 from shiny_mushroom.ui.secondary_entrances_dialog import SecondaryEntrancesDialog
@@ -32,6 +36,7 @@ from shiny_mushroom.ui.strings_window import StringsWindow
 from shiny_mushroom.ui.window.parts import _rebuild_detail
 from smw_tools.asm_codec import AsmRegionError, AsmRegionFull
 from smw_tools.asm_regions import region_for
+from smw_tools.audio import AudioError
 from smw_tools.features import STRING_TABLES_RELOCATED, FeatureError
 
 __all__ = ["ProjectWindows"]
@@ -420,3 +425,119 @@ class ProjectWindows:
         """Put the map away with the project it was laid out from."""
         if self._memory_map is not None:
             self._memory_map.close()
+
+    # -- what the SPC700 is sent ----------------------------------------------
+
+    def view_audio(self) -> None:
+        """Open the project's audio, or bring it forward.
+
+        Kept and re-read, exactly as :meth:`view_memory_map` is. Unlike the
+        map this one can only be read from a **build**: every byte it shows is
+        in the cartridge and every address comes off the symbol file beside it,
+        so a project that has never been built has nothing here to read and is
+        told which menu row makes one.
+        """
+        if self._project is None:
+            return
+        read = self._audio_read()
+        if read is None:
+            return
+        if self._audio is None:
+            self._audio = AudioDialog(self)
+            self._audio.repoint_asked.connect(self._repoint_music)
+            self._audio.track_asked.connect(self._set_level_music)
+            self._adopt_shortcuts(self._audio)
+        self._audio.show_audio(read)
+        self._audio.show()
+        self._audio.raise_()
+        self._audio.activateWindow()
+
+    def _audio_read(self) -> AudioMap | None:
+        """The open project's audio, saying why not rather than opening empty.
+
+        Handed the window's own symbol table and the cartridge already on the
+        canvas, for :meth:`_laid_out`' reason: both are held against the build
+        that wrote them, and this window is not worth a second reading of
+        either.
+        """
+        assert self._project is not None
+        symbols = self._build_symbols()
+        if symbols is None or self._rom is None:
+            self._alert(
+                "The project's audio could not be read.",
+                detail="It is read out of the cartridge the project builds, and "
+                "this one has not been built yet -- Project > Rebuild (Ctrl+B) "
+                "makes it.",
+            )
+            return None
+        try:
+            return audio_map(self._project, symbols, self._rom, self._addresses)
+        except (AudioMapError, AudioError, ProjectError, OSError) as error:
+            self._alert(
+                "The project's audio could not be read.",
+                detail=_rebuild_detail(str(error)),
+            )
+            return None
+
+    def _refresh_audio(self) -> None:
+        """Bring the open window up to date after a rebuild moved something.
+
+        Skipped when it is closed, which re-reads on open anyway -- and skipped
+        silently on a failed reading, since a window already showing a good one
+        is better than an alert nobody asked for.
+        """
+        if self._audio is not None and self._audio.isVisible():
+            read = self._audio_read()
+            if read is not None:
+                self._audio.show_audio(read)
+
+    def _repoint_music(self, blob: str, value: int, label: str) -> None:
+        """Point one music value at another of its bank's songs.
+
+        A token moving inside a fixed-size table, so there is nothing to price
+        and no other value moves -- but the bytes are inside an SPC700 blob,
+        which is its own assembly pass, so nothing is audible until the
+        cartridge is rebuilt. The window is re-read from the project rather
+        than from the build, which is what lets it show the edit at once and
+        still be honest about needing one.
+        """
+        if self._project is None:
+            return
+        try:
+            self._project.save_music_pointers(blob, {value: label})
+        except (MusicTableError, ProjectError, OSError) as error:
+            self._alert("The music value could not be repointed.", detail=str(error))
+            return
+        self._music_saved(f"Music value {hexnum(value, 2)} now plays {label}")
+
+    def _set_level_music(self, setting: int, define: str) -> None:
+        """Give one of the header's eight music settings another track."""
+        if self._project is None:
+            return
+        try:
+            self._project.save_level_music({setting: define})
+        except (MusicTableError, ProjectError, OSError) as error:
+            self._alert("The music setting could not be changed.", detail=str(error))
+            return
+        self._music_saved(f"Music setting {setting} changed")
+
+    def _music_saved(self, said: str) -> None:
+        """After either audio table is written: show it, and arm Rebuild.
+
+        The reading the window shows comes from the *cartridge* for everything
+        but these two tables and from the **project** for them, so a re-read
+        shows the edit standing over a build that does not have it yet. That is
+        the honest picture, and the status line says which half is which.
+        """
+        self._refresh_audio()
+        self._sync_rebuild_action()
+        self._status_message(f"{said} -- Project > Rebuild (Ctrl+B) to hear it", 8000)
+
+    def _close_audio(self) -> None:
+        """Put the window away with the project it was read from.
+
+        Closed and kept, like the memory map: what it holds is a reading rather
+        than an edit, so the next project fills the same window.
+        """
+        if self._audio is not None:
+            self._audio.close()

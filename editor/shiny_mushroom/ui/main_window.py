@@ -58,7 +58,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QAction, QActionGroup, QImage
+from PySide6.QtGui import QAction, QActionGroup, QImage, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QDockWidget,
@@ -102,6 +102,7 @@ from shiny_mushroom.edit import (
     bounding_blocks,
     group_origin,
 )
+from shiny_mushroom.external_emulator import is_mesen
 from shiny_mushroom.fields import Choice as FieldChoice
 from shiny_mushroom.fields import Field
 from shiny_mushroom.header import (
@@ -150,6 +151,7 @@ from shiny_mushroom.level_snapshot import LevelSnapshot
 from shiny_mushroom.load_path import (
     OPEN_LEVEL,
 )
+from shiny_mushroom.music_tables import MusicTableError
 from shiny_mushroom.mwl import MwlError
 from shiny_mushroom.navigation import Place, Trail
 from shiny_mushroom.objects import (
@@ -217,6 +219,7 @@ from shiny_mushroom.tile_clipboard import (
     relative,
 )
 from shiny_mushroom.ui import graphics_dialog, menus
+from shiny_mushroom.ui.audio_dialog import AudioDialog
 from shiny_mushroom.ui.canvas import (
     DEFAULT_ZOOM,
     RESET_ZOOM,
@@ -294,6 +297,7 @@ from shiny_mushroom.ui.settings import (
     save_int_setting,
     save_str_setting,
 )
+from shiny_mushroom.ui.settings_dialog import SettingsDialog, external_emulator
 from shiny_mushroom.ui.source_files_dialog import SourceFilesDialog
 from shiny_mushroom.ui.strings_window import StringsWindow
 from shiny_mushroom.ui.theme import THEME_KEY, Theme, apply_theme
@@ -344,7 +348,7 @@ from smw_tools.features import (
 from smw_tools.graphics import GraphicsError
 from smw_tools.level_graphics import decode as decode_graphics
 from smw_tools.level_graphics import effective as effective_graphics
-from smw_tools.rom_sizes import bytes_label
+from smw_tools.rom_sizes import bytes_label, size_for
 from smw_tools.symbols import SymbolTable, load_symbols
 
 ZOOM_KEY = "view/zoom"
@@ -476,6 +480,22 @@ def _palette_sets(header: bytes) -> tuple[int, int, int]:
         field_value(header, "foreground_palette"),
         field_value(header, "sprite_palette"),
     )
+
+
+def _rom_length(path: Path | None) -> int:
+    """How long ``path`` is, or nothing for a file there is no reading.
+
+    A cartridge opened by hand carries its own size in its length, which is
+    what :func:`~smw_tools.rom_sizes.size_for` wants; a file that cannot be
+    measured is read as the base's stock cartridge, which is what saying
+    nothing already means.
+    """
+    if path is None:
+        return 0
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
 
 
 def _same_file(one: Path, other: Path) -> bool:
@@ -881,6 +901,11 @@ class MainWindow(
         # :attr:`_role_addresses`' reason, and amends the base every one of
         # them resolves through; see :mod:`smw_tools.features`.
         self._features: tuple[str, ...] = ()
+        # And how long that cartridge is, as a rom_sizes id. Beside the
+        # features because it is the same kind of fact about it -- a feature
+        # that uses an expansion bank where the cartridge has one is read
+        # somewhere else where it has not. See `_use_base`.
+        self._rom_size: str | None = None
         # How many entries each of the world map's tables holds on it -- the
         # stock format until a cartridge with a feature that grew one is open.
         # See `_use_base`.
@@ -1149,6 +1174,10 @@ class MainWindow(
         # The cartridge's memory map, kept for the same reason and closed with
         # the project the same way -- see :meth:`view_memory_map`.
         self._memory_map: MemoryMapDialog | None = None
+        # The Audio window, kept and re-read for the memory map's reason: it
+        # is a thing to keep beside the work, and its reading goes stale the
+        # moment the project is built again.
+        self._audio: AudioDialog | None = None
         #: The Level Load Path window: one level's chain from overworld
         #: tile to level data, kept and refreshed like the viewers above.
         self._load_path: LoadPathDialog | None = None
@@ -1705,6 +1734,16 @@ class MainWindow(
         # its own record, not the patch manifest -- a patch enabled since is a
         # claim about the next build, and this one is reading this ROM.
         self._features = project.features if ours and project else ()
+        # And how long it is, which travels with them for the same reason: a
+        # feature that uses an expansion bank where the cartridge has one is
+        # read at one address on a 1 MB cartridge and another on a 512 KB one.
+        # The build's record where the ROM is ours, and the file's own length
+        # otherwise -- a cartridge opened by hand still has a length.
+        self._rom_size = (
+            project.rom_size_built
+            if ours and project
+            else size_for(_rom_length(path), rom_base(self._base_id).sizes)
+        )
         if ours and project:
             try:
                 self._role_addresses = role_addresses(project)
@@ -1718,6 +1757,7 @@ class MainWindow(
                 self._role_addresses,
                 self._features,
                 self._role_counts,
+                self._rom_size,
             )
         except FeatureError as error:
             # A cartridge claiming a capability this build has no declaration
@@ -1731,6 +1771,7 @@ class MainWindow(
                 self._target_id,
                 self._role_addresses,
                 counts=self._role_counts,
+                rom_size=self._rom_size,
             )
             self.statusBar().showMessage(
                 f"{error} -- reading this cartridge as a stock {self._base_id}", 8000
@@ -1742,7 +1783,7 @@ class MainWindow(
         # measured -- and this is what carries that from the capture through
         # to the fragment a save emits.
         self._map_shape = MapShape.of(
-            applied(rom_base(self._base_id), self._features)
+            applied(rom_base(self._base_id), self._features, self._rom_size)
             if self._features
             else None,
             self._role_counts,
@@ -1814,6 +1855,9 @@ class MainWindow(
         # the path that also opens one as a byte map.
         self._index = build_index(self._rom, where=self._addresses)
         self.find_bar.set_index(self._index)
+        # Every byte the Audio window shows is in this image, so a rebuild --
+        # which lands right back here -- is exactly when its reading is stale.
+        self._refresh_audio()
         self.canvas.set_image(bytes_to_image(data))
         self.menu_actions.world_map.setEnabled(True)
         self.menu_actions.load_path.setEnabled(True)
@@ -4551,6 +4595,20 @@ class MainWindow(
             return
         self.load_level(self._level, patches, refreshing=True)
 
+    def _music_setting_names(self) -> tuple[str, ...] | None:
+        """What the open project calls its eight header music settings.
+
+        ``None`` with no project, or with a table this cannot read back, which
+        leaves the header field showing the shipped game's own names -- the
+        honest answer when there is no project's table to read.
+        """
+        if self._project is None:
+            return None
+        try:
+            return self._project.music_setting_names()
+        except (MusicTableError, ProjectError, OSError):
+            return None
+
     def _project_patches(self) -> dict[int, bytes]:
         """What the open project has already saved for the level being loaded."""
         return cart_patches.project_patches(
@@ -5627,8 +5685,13 @@ class MainWindow(
         for row in self.menu_actions.level_views:
             row.setEnabled(not on)
         # Not the screen grid: it is one action in both rows -- the page grid
-        # is the world map's screens -- so it has one key and no mode to be
-        # dead in.
+        # is the world map's screens -- so it stays armed in both, and only
+        # its key moves. Each row's Shift+digits count from 1 with no gaps
+        # (see :func:`menus.build`), and the grid is last in both rows: the
+        # level's seventh toggle, the map's sixth.
+        self.menu_actions.screens.setShortcut(
+            QKeySequence("Shift+6" if on else "Shift+7")
+        )
         #
         # The editing rows carry the bare digits, so they are armed only where
         # a digit can mean a layer: over the level those keys belong to the
@@ -5649,6 +5712,12 @@ class MainWindow(
         # Test follows the mode the way Save does: same action, same shortcut,
         # testing whatever is being edited -- see :meth:`test_level`.
         self.menu_actions.test.setText("&Test World Map" if on else "&Test Level")
+        # And the external run with it, which warps to whichever document is
+        # being edited wherever the emulator is Mesen -- see
+        # :meth:`test_level_external`.
+        self.menu_actions.test_external.setText(
+            "Test World Map &Externally" if on else "Test Level &Externally"
+        )
         # The header dialog acts on the *level*, and a header edit ends in a
         # refresh that would repaint the canvas with the level's picture -- so
         # its key goes dead here and comes back exactly as level-armed as it
@@ -6183,6 +6252,20 @@ class MainWindow(
                 lambda _checked=False, chosen=project: self.open_project(chosen)
             )
 
+    def edit_settings(self) -> None:
+        """The application's own preferences, in a form.
+
+        Everything it sets belongs to the person rather than to what they have
+        open, so it needs no project and asks nothing about one. The dialog
+        writes the store itself on OK; what follows here is the one row a
+        preference decides -- Test Level Externally, which is dead unless the
+        emulator on file is a Mesen, since warping is the whole of what it
+        adds to File > Test ROM. That row carries a key, so it cannot wait for
+        its menu to be opened.
+        """
+        SettingsDialog(self).exec()
+        self.sync_project_menu()
+
     def sync_file_menu(self) -> None:
         """Put the File menu's rows in step with what is open.
 
@@ -6194,6 +6277,11 @@ class MainWindow(
         exportable = self._project is not None and self._project.buildable
         self.menu_actions.export.setEnabled(exportable)
         self.menu_actions.export_headered.setEnabled(exportable)
+        # Test ROM opens what the exports copy, so it asks their question and
+        # not a word more: which emulator is set is answered when the row is
+        # used, since a row greyed for an unset preference is a row that
+        # cannot say what preference it wants.
+        self.menu_actions.test_rom.setEnabled(exportable)
         self.sync_save_rows()
 
     def sync_save_rows(self) -> None:
@@ -6265,6 +6353,11 @@ class MainWindow(
         # the level data and the padding are read from the source and are as
         # true before a first build as after one.
         self.menu_actions.memory_map.setEnabled(project is not None)
+        # The Audio window needs the project's *build* -- every byte it reads
+        # is in the cartridge and every address comes off the symbol file --
+        # but the row stays armed with a project and says so when there is no
+        # build, which is a reason rather than a dead row.
+        self.menu_actions.audio.setEnabled(project is not None)
         # The strings are the project's overlay, so they need one too.
         self.menu_actions.strings.setEnabled(project is not None)
         # The Map16 editor draws in a level's graphics, so it needs one open.
@@ -6282,6 +6375,21 @@ class MainWindow(
         )
         # The graphics files are a reading of the project's set, built or not.
         self.menu_actions.graphics_files.setEnabled(project is not None)
+        # The external test run is a Level-menu row asking a Project-menu
+        # question -- what it opens is the project's build -- and it carries
+        # Ctrl+Shift+R, so like Rebuild below it cannot wait for the menu it
+        # lives in to be opened: a disabled action's shortcut is a dead key.
+        #
+        # Plus the one question no other row asks: whether the emulator on file
+        # can be told where to start. Only Mesen can, and warping is the whole
+        # of what this row adds to File > Test ROM.
+        emulator = external_emulator()
+        self.menu_actions.test_external.setEnabled(
+            project is not None
+            and project.buildable
+            and emulator is not None
+            and is_mesen(emulator)
+        )
         self._sync_rebuild_action()
 
     def _sync_rebuild_action(self) -> None:
@@ -6335,6 +6443,14 @@ class MainWindow(
             row.setChecked(size_id == project.rom_size_id)
             row.setData(size_id)
             group.addAction(row)
+            # A cartridge the saved levels would not fit is a build that
+            # fails, so it is greyed out with the reason on it rather than
+            # offered: the growable levels overflow into an expansion bank,
+            # and shrinking past it is the one resize that takes room away.
+            refused = project.levels_refuse_size(size_id)
+            if refused:
+                row.setEnabled(False)
+                row.setToolTip(refused)
 
     def set_rom_size(self, rom_size_id: str) -> None:
         """Build this project into a cartridge of a different size.
@@ -6351,6 +6467,11 @@ class MainWindow(
         # The click has already moved the check mark, so every path out from
         # here rebuilds the rows rather than leaving one lit that is not what
         # the project builds.
+        refused = project.levels_refuse_size(rom_size_id)
+        if refused:
+            self._alert("The ROM size could not be changed.", detail=refused)
+            self.fill_rom_size_menu()
+            return
         if not self._may_discard():
             self.fill_rom_size_menu()
             return
@@ -6660,6 +6781,7 @@ class MainWindow(
         self._close_map16()
         self._close_secondary_entrances()
         self._close_memory_map()
+        self._close_audio()
         self._project = project
         # Nothing is known about the incoming cartridge until its build has run.
         self._build_current = False
@@ -7844,6 +7966,7 @@ class MainWindow(
                 colours=self._header_colours,
                 gap=self._layer2_gap_for_level,
                 preview=self.preview_header,
+                tracks=self._music_setting_names(),
             )
         finally:
             # The picture goes back to the document's header whichever way the

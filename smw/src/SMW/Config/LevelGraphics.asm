@@ -82,18 +82,17 @@ if defined("Define_SMW_LevelGraphics") == 0
 	!Define_SMW_LevelGraphics = !FALSE
 endif
 
-; The two tables, and the block's whole size: the rows, one animated file
-; per level, the two read stubs with their shared tail, the animated
-; tiles' own stub, and the level number stash. Part of the level bank's
-; budget -- the palettes' pointer table sits this far behind the bank's
-; head when this is on, and the editor prices the bank against the same
-; figure -- so a change to a stub is a change to that budget and not only
-; to this file. The placement asserts it.
+; The two tables: the rows, and one animated file per level. What the whole
+; block comes to -- these, the two read stubs with their shared tail, the
+; animated tiles' own stub and the level number stash -- is
+; !Define_SMW_Block_LevelGraphics, declared with every other block in
+; Config/PackedRuns.asm because the palettes behind it are read past the
+; same figure and the editor prices the bank against it. The placement
+; asserts what it emitted against it, so a change to a stub is caught here
+; and answered there.
 !Define_SMW_LevelGraphicsRowBytes	#= $0008
 !Define_SMW_LevelGraphicsRowsBytes	#= $0200*!Define_SMW_LevelGraphicsRowBytes
 !Define_SMW_LevelGraphicsAnimatedBytes	#= $0200
-!Define_SMW_LevelGraphicsStubBytes	#= $DC
-!Define_SMW_LevelGraphicsBytes		#= !Define_SMW_LevelGraphicsRowsBytes+!Define_SMW_LevelGraphicsAnimatedBytes+!Define_SMW_LevelGraphicsStubBytes
 
 ;#############################################################################################################
 ;# The fragment's line: one level's row.
@@ -307,9 +306,7 @@ SMW_LevelGraphics_Animated:
 .Held:
 	RTS
 
-; The level number stash, this being the bank's first occupant.
-	%SMW_LevelNumberStash_Stub()
-	assert pc() == SMW_LevelGraphics_Rows+!Define_SMW_LevelGraphicsBytes, "The level graphics block is not the size its budget states. Check Define_SMW_LevelGraphicsStubBytes."
+	assert pc() == SMW_LevelGraphics_Rows+!Define_SMW_Block_LevelGraphics, "The level graphics block is not the size Config/PackedRuns.asm states. A stub that changed size changes what the palettes behind it are read past, so pin the new figure in Define_SMW_Block_LevelGraphics."
 	!SMW_LevelBankNext #= pc()
 	pullpc
 endif

@@ -318,6 +318,16 @@ _MAPPER = re.compile(
 #: there is never a previous application to clean.
 _AUTOCLEAN = re.compile(r"^(\s*)autoclean\s+", re.IGNORECASE)
 
+#: A line the assembler evaluates while it is reading, rather than emitting:
+#: a conditional, an assertion, a loop bound. A label is not static there --
+#: asar refuses one with ``Elabel_in_conditional`` -- so an address on such a
+#: line stays the number it was. The idiom this exists for is the SA-1 test
+#: every second community patch opens with, ``if read1($00FFD5) == $23``:
+#: rewritten to a label it does not assemble at all.
+_STATIC_ONLY = re.compile(
+    r"^\s*(?:(?:if|elseif|while|assert)\b|![A-Za-z0-9_]+\s*#=)", re.IGNORECASE
+)
+
 #: A 24-bit address literal in operand position -- six hex digits, not an
 #: immediate (``#$``) and not part of a longer literal.
 _LONG_ADDRESS = re.compile(r"(?<![#$\w])\$([0-9A-Fa-f]{6})\b")
@@ -341,7 +351,11 @@ def convert_import(source: str, symbols: SymbolTable | None) -> Imported:
     Mapper directives are dropped -- the framework has set the mapping, and a
     ``lorom`` mid-assembly would remap everything after itself -- and
     ``autoclean`` is dropped because every build assembles from pristine
-    sources. Both leave a note, as does everything left alone: a RAM literal
+    sources. An address on a line the assembler evaluates as it reads --
+    ``if``, ``elseif``, ``while``, ``assert`` -- is left alone whatever it
+    points at, because a label is not static there and asar refuses one.
+
+    Each leaves a note, as does everything left alone: a RAM literal
     (RAM does not move under a patch), an address below any label of its
     bank, and a ``freecode``/``freedata`` claim, which needs a ROM size above
     stock. With no ``symbols`` in hand nothing is rewritten, and the one note
@@ -353,7 +367,7 @@ def convert_import(source: str, symbols: SymbolTable | None) -> Imported:
             notes=("Not converted to labels -- build the project first.",),
         )
     notes: list[str] = []
-    counts = {"converted": 0, "ram": 0}
+    counts = {"converted": 0, "ram": 0, "static": 0}
 
     def symbolize(match: re.Match[str], line_number: int) -> str:
         address = int(match.group(1), 16)
@@ -384,9 +398,13 @@ def convert_import(source: str, symbols: SymbolTable | None) -> Imported:
             notes.append(
                 f"line {number}: dropped autoclean -- every build starts pristine"
             )
-        converted = _LONG_ADDRESS.sub(
-            lambda match, at=number: symbolize(match, at), cleaned
-        )
+        if _STATIC_ONLY.match(cleaned):
+            counts["static"] += len(_LONG_ADDRESS.findall(cleaned))
+            converted = cleaned
+        else:
+            converted = _LONG_ADDRESS.sub(
+                lambda match, at=number: symbolize(match, at), cleaned
+            )
         unknown = [
             token
             for token in _LABEL_TOKEN.findall(converted)
@@ -402,6 +420,11 @@ def convert_import(source: str, symbols: SymbolTable | None) -> Imported:
         notes.append(
             f"{counts['ram']} RAM address(es) left as is -- RAM does not "
             f"move under a patch."
+        )
+    if counts["static"]:
+        notes.append(
+            f"{counts['static']} address(es) left as is on a conditional -- "
+            f"the assembler wants a number there, not a label."
         )
     if uses_freespace(text):
         notes.append("Claims freespace, so it needs a ROM Size above stock.")

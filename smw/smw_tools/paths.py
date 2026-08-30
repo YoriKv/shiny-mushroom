@@ -50,6 +50,19 @@ def data_dir() -> Path:
     return base / APP_ID
 
 
+def logs_dir() -> Path:
+    """Where a run that failed leaves its output for someone to read.
+
+    The platform data directory when frozen, for the reason
+    :func:`_assets_root` gives -- an installed application must not write
+    inside itself -- and the checkout's own ``tmp/`` otherwise, which is
+    gitignored and is where everything else this project leaves behind goes.
+    """
+    if getattr(sys, "frozen", False):
+        return data_dir() / "logs"
+    return TMP_DIR / "logs"
+
+
 def _assets_root() -> Path:
     """Where extracted cart assets live, which depends on what is running them.
 

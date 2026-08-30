@@ -2,6 +2,10 @@ incsrc "Config/Versions.asm"
 ; What reserving a whole expansion bank is, read before the three files that
 ; reserve one: each calls the macro at include time, from the initialize pass.
 incsrc "Config/ExpansionBanks.asm"
+; The blocks the two packed runs are made of, read before every occupant of
+; one: each asserts what it emitted against the figure declared there, and
+; the run behind it is read past the same figure.
+incsrc "Config/PackedRuns.asm"
 ; The three features that share one reserved run, then the run itself: it
 ; asks which of them are on, so it is read after all three and before anything
 ; that asks whether the run is wanted.
@@ -9,11 +13,23 @@ incsrc "Config/OverworldTableRelocation.asm"
 incsrc "Config/TranslevelRemap.asm"
 incsrc "Config/StringTableRelocation.asm"
 incsrc "Config/ReservedBank.asm"
-; The three features that share the level bank, the level number stash the
-; first two of them share -- it asks which of the two are on, so it is read
-; after both -- and then the bank itself, which asks which of the three
-; are on and is read after all of them.
+; The four features that share the level bank, then the level number stash
+; three of them read -- it asks which are on, so it is read after all of
+; them -- and then the bank itself, which asks the same and is read last.
 incsrc "Config/LevelGraphics.asm"
+incsrc "Config/LevelCode.asm"
+; Per-game-mode code, which shares the level bank's tail with the levels'
+; own but declares no block: its stubs are variable-size and behind the
+; packed head, and its only cost in the game's own banks is one jump.
+incsrc "Config/GameModeCode.asm"
+; Code that belongs to no level and no game mode, and the fragment naming
+; which of its entry points a project wrote -- read with the defines,
+; because each hook in Banks/ asks whether its own is there at all.
+incsrc "Config/GlobalCode.asm"
+; How a project's code is spelled, which is switched apart from whether any
+; of it runs: read after all three kinds, since it refuses a cartridge with
+; none of them to use it.
+incsrc "Config/UberASM.asm"
 incsrc "Config/LevelCustomPalettes.asm"
 incsrc "Config/LevelNumberStash.asm"
 incsrc "Config/ManagedLevelMemory.asm"

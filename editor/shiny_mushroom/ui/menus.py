@@ -78,6 +78,12 @@ class Actions:
     export: QAction
     export_headered: QAction
 
+    #: Open that same build in the external emulator, at its title screen.
+    #: Greyed out on the exports' question and no other: which emulator is set
+    #: -- or whether one is at all -- is answered when the row is used, so the
+    #: setting stays findable from the row that needs it.
+    test_rom: QAction
+
     save: QAction
     revert: QAction
     cartridge: QAction
@@ -121,6 +127,12 @@ class Actions:
     #: reason again -- and no more than that, because a project with no build
     #: still has banks, level data and padding to show.
     memory_map: QAction
+
+    #: The music, the sound effects, what the SPC700 holds and how the game
+    #: asks for any of it. Greyed out with no project, for :attr:`memory_map`'
+    #: reason -- though unlike the map this one needs a build to say anything,
+    #: and says so when there is none.
+    audio: QAction
 
     #: The game's text -- the message boxes and the level-name parts -- in a
     #: window of its own. Greyed out with no project: what it edits is the
@@ -274,6 +286,19 @@ class Actions:
     exits: QAction
     test: QAction
 
+    #: The external test run, which asks a different question from the one
+    #: above it: Test Level needs a document, and this needs a *project to
+    #: build*, since what it opens is the cartridge asar produced. So it is
+    #: armed with the rest of the project's rows
+    #: (``MainWindow._sync_rom_size_menu``) rather than with the level's.
+    #:
+    #: And on one more question than they ask: whether the emulator on file is
+    #: a Mesen, since the warp is the whole of what this row does that
+    #: :attr:`test_rom` does not, and only Mesen can be asked for it. That is
+    #: greying a row for a reason the menu *can* give -- File > Test ROM is
+    #: right there, doing the part that still works.
+    test_external: QAction
+
     #: The Level Load Path window: one level's chain from overworld tile to
     #: level data. Greyed out until a cartridge is open -- the chain is a
     #: reading of one.
@@ -327,10 +352,21 @@ def build(window: MainWindow) -> Actions:
         lambda: window.export_rom(with_header=True),
     )
     export_headered.setEnabled(False)
+    # The third thing done with a build, and filed with the two that write it
+    # out: this one opens it. Plain -- the cartridge, from its title screen, in
+    # whatever emulator is set -- which is what makes it a File row rather than
+    # one of Level's, since it tests no document in particular.
+    test_rom = action(file_menu, window, "&Test ROM", None, window.test_rom)
+    test_rom.setEnabled(False)
     file_menu.addSeparator()
     cartridge = action(
         file_menu, window, "Reference &Cartridge...", None, window.choose_cartridge
     )
+    file_menu.addSeparator()
+    # The application's own preferences, as opposed to the open project's,
+    # which are Project's. Never greyed: what it sets belongs to the person and
+    # is worth setting before there is anything open at all.
+    action(file_menu, window, "Se&ttings...", None, window.edit_settings)
     file_menu.addSeparator()
     # Ctrl+Q spelled out rather than the platform's own Quit key, which is not
     # one thing: Windows binds nothing at all, and X11 answers a bare Exit media
@@ -366,12 +402,13 @@ def build(window: MainWindow) -> Actions:
         None,
         window.edit_secondary_entrances,
     )
-    # Filed apart from the rows above it: those are settings of the project,
-    # and this one only reports what the cartridge they produce looks like.
+    # Filed apart from the rows above them: those are settings of the project,
+    # and these two only report what the cartridge they produce looks like.
     project_menu.addSeparator()
     memory_map = action(
         project_menu, window, "&Memory Map...", None, window.view_memory_map
     )
+    audio = action(project_menu, window, "&Audio...", None, window.view_audio)
     project_menu.aboutToShow.connect(window.sync_project_menu)
 
     edit_menu = bar.addMenu("&Edit")
@@ -502,17 +539,19 @@ def build(window: MainWindow) -> Actions:
     # to another's setter or checking it against another's preference, and it is
     # written once.
     #
-    # **Shift and a digit, counted the same way in both environments.** A
-    # toggle answers "is this in the picture", and the number is what the
-    # thing is: 1-3 the layers -- the map has no third, so Shift+3 is its
-    # events view instead -- 4 the sprites, 5 and 6 the environment's two
-    # overlay readouts, and 7 the screen grid, which is one action in both
-    # rows and so keeps one key. The same key shows the same kind of thing
-    # over the level and over the map, which is what the counting is for; the
-    # *editing* modes carry bare digits of their own, and past the layers
-    # those are the map's own order, not this one. Only one environment's
-    # toggles are armed at a time (see ``MainWindow._show_world_chrome``),
-    # which is what lets both rows count from 1.
+    # **Shift and a digit, counting each environment's row from 1.** A toggle
+    # answers "is this in the picture", and the number is where the row sits:
+    # over the level 1-3 the layers, 4 the sprites, 5 and 6 the two overlay
+    # readouts, 7 the screen grid; over the map, which has no third layer,
+    # 1-2 the layers, 3 the sprites, 4 the tile marks, 5 the frame, 6 the same
+    # screen grid. Each row is the digit its bar shows it at -- see
+    # ``view_bar.LEVEL_BUTTONS`` and ``WORLD_BUTTONS`` -- so no digit is
+    # skipped around a row the other environment does not have; the events
+    # view, which is only the map's, carries no key at all. The *editing*
+    # modes carry bare digits of their own, and past the layers those are the
+    # map's own order, not this one. Only one environment's toggles are armed
+    # at a time (see ``MainWindow._show_world_chrome``, which also moves the
+    # shared screen grid's key between the two rows' counts).
     options = window.options
     layer1 = toggle(
         view_menu, window, "Show Layer &1", options.layer1, "Shift+1", window.set_layer1
@@ -577,14 +616,15 @@ def build(window: MainWindow) -> Actions:
         "Shift+2",
         window.set_world_layer2,
     )
-    # Shift+3 is the level's Layer 3, and here the events view: the map has no
-    # third layer, and the replay is what its third editing mode edits.
+    # No key: the events view is the one map toggle with a handle of its own
+    # already -- the world bar's Event box -- and a key on it would make the
+    # digits count past a row the other environment does not have.
     world_events = toggle(
         view_menu,
         window,
         "Overworld &Events",
         False,
-        "Shift+3",
+        "",
         window.set_world_events,
     )
     world_sprites = toggle(
@@ -592,7 +632,7 @@ def build(window: MainWindow) -> Actions:
         window,
         "Overworld Sprite&s",
         True,
-        "Shift+4",
+        "Shift+3",
         window.set_world_sprites,
     )
     # Down at the start, like the events view: the tile marks cover the map
@@ -602,11 +642,11 @@ def build(window: MainWindow) -> Actions:
         window,
         "Overworld Tile &Marks",
         False,
-        "Shift+5",
+        "Shift+4",
         window.set_world_tile_marks,
     )
     world_frame = toggle(
-        view_menu, window, "Overworld &Frame", True, "Shift+6", window.set_world_frame
+        view_menu, window, "Overworld &Frame", True, "Shift+5", window.set_world_frame
     )
     world_views = (
         world_layer1,
@@ -795,6 +835,26 @@ def build(window: MainWindow) -> Actions:
     test.setEnabled(False)
     # Renamed per mode too, and pinned for the guide alongside Save and Revert.
     test.setProperty("guideLabel", "Test")
+    # Never greyed: what drives the pad is a preference of the person's, so it
+    # is answerable with no project open and with none of the rows above it
+    # armed.
+    action(level_menu, window, "Edit Test &Controls...", None, window.edit_controls)
+    # The other test run: the project's cartridge as it was built, warped to
+    # whichever document is being edited. Greyed out unless the emulator on
+    # file is a Mesen, because the warp *is* the row -- opening the cart at its
+    # title screen is File > Test ROM, and two rows that did the same thing
+    # under different names would be one row too many.
+    test_external = action(
+        level_menu,
+        window,
+        "Test Level &Externally",
+        "Ctrl+Shift+R",
+        window.test_level_external,
+    )
+    test_external.setEnabled(False)
+    # Renamed per mode like Test above it, so the guide is told the name the
+    # key has rather than whichever one the menu is wearing.
+    test_external.setProperty("guideLabel", "Test Externally")
 
     # The panels themselves, gathered where every application puts them rather
     # than among View's questions about what is *in* the picture. Each brings
@@ -877,6 +937,7 @@ def build(window: MainWindow) -> Actions:
         source_files=source_files,
         graphics_files=graphics_files,
         memory_map=memory_map,
+        audio=audio,
         map16=map16,
         secondary_entrances=secondary_entrances,
         strings=strings,
@@ -932,6 +993,8 @@ def build(window: MainWindow) -> Actions:
         exits=exits,
         load_path=load_path,
         test=test,
+        test_external=test_external,
+        test_rom=test_rom,
     )
 
 
@@ -979,6 +1042,7 @@ def toggle(
     ``checked`` is set **before** the signal is connected, so restoring a
     preference is not itself a toggle: the setters each write the preference
     back, and wiring first would have every launch save what it had just read.
+    An empty ``shortcut`` is a row reached from the menus and its bar alone.
     """
     made = QAction(text, window)
     made.setCheckable(True)

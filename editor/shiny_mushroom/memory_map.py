@@ -63,7 +63,7 @@ from shiny_mushroom.project import Project
 from smw_tools import asm_codec, asm_regions, asm_room, rom_map
 from smw_tools.bases import RomBase
 from smw_tools.graphics_memory import RUN0, STOCK_FILES
-from smw_tools.levels import MANAGED_RUNS, LevelRegion, level_regions
+from smw_tools.levels import MANAGED_RUNS, LevelRegion, has_level_bank, level_regions
 from smw_tools.rom_image import snes_to_pc
 from smw_tools.symbols import SymbolTable, reservations, vacated
 
@@ -421,7 +421,7 @@ def _packed_runs(project: Project) -> dict[int, Segment] | None:
     is charged to the last run, which is where the next save is refused.
 
     Three runs in the stock banks, and a fourth in the level bank where the
-    level memory is expanded -- :meth:`~shiny_mushroom.project.Project.level_runs`
+    cartridge has one -- :meth:`~shiny_mushroom.project.Project.level_runs`
     -- which the ROM map places nothing at: :func:`_level_bank_run` is what
     draws that one, over the reservation it sits in.
     """
@@ -459,12 +459,15 @@ def _level_bank_run(
     are managed: the one run the ROM map does not place, so it is laid over
     the bank's reservation here rather than found among the placements.
 
-    Behind the palettes' blobs and up to the managed level banks' fixed
-    tail, sized by the same arithmetic a save is refused by -- ``packed`` is
+    Behind the palettes' blobs and up to the bank's end label, sized by the
+    same arithmetic a save is refused by -- ``packed`` is
     :func:`_packed_runs`' answer, priced once for every run. Nothing on a
-    project whose level banks are stock.
+    project whose level banks are stock, and nothing on one whose cartridge
+    has no expansion bank for the packing to overflow into: there the last
+    run is bank ``$07``'s, which the ROM map places and ``packed`` has
+    already drawn.
     """
-    if packed is None:
+    if packed is None or not has_level_bank(project.next_base):
         return []
     run = project.level_runs()[-1]
     if run.size <= 0:

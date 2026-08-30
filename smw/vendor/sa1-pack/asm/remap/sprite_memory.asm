@@ -4,12 +4,17 @@
 ; and both are right for every list the stock cartridge has. Under
 ; Define_SMW_ManagedLevelMemory -- which the patch pass receives on its
 ; command line with the rest of the build's defines -- the loader instead
-; reads a byte per level off a table at the level bank's fixed tail
+; reads a byte per level off a table at the fixed tail of bank $07
 ; (Config/ManagedLevelMemory.asm), because that feature packs sprite lists
 ; into whichever bank has room; so this reads the same table, by address,
 ; and follows the list wherever it went. Inert on a stock build.
+;
+; A literal, because that is what the table is: it sits at the top of bank
+; $07 on every cartridge and every base, the feature's expansion bank being
+; room it may not have. There is no symbol of ours in reach here -- this
+; pass runs after that source has assembled.
 if defined("Define_SMW_ManagedLevelMemory")
-	!sprite_banks #= (!Define_SMW_LevelBank<<16)|$FDFF
+	!sprite_banks #= $07FE00
 endif
 
 macro remap_memory()

@@ -55,7 +55,7 @@ from shiny_mushroom.secondary_header import REGION_IDS as SECONDARY_REGIONS
 from shiny_mushroom.secondary_header import SIZE as SECONDARY_SIZE
 from smw_tools import asm_codec, asm_room, packed
 from smw_tools.bases import base as rom_base
-from smw_tools.features import LEVEL_CUSTOM_PALETTES, LEVEL_GRAPHICS, applied
+from smw_tools.features import LEVEL_CUSTOM_PALETTES, applied
 from smw_tools.levels import (
     EMPTY_STREAM_SIZES,
     LAYER1_TABLE,
@@ -88,6 +88,7 @@ from smw_tools.levels import (
     undecorated,
 )
 from smw_tools.rle import CorruptStream, Variant, decompress
+from smw_tools.rom_sizes import ROM_SIZES
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -601,9 +602,44 @@ class LevelFiles:
     @property
     def next_base(self) -> RomBase:
         """The cartridge this project's **next build** makes: the base with
-        every feature :attr:`feature_state` asks for applied. What a save is
-        priced against, for the reason :attr:`level_memory_managed` gives."""
-        return applied(rom_base(self.base_id), self.feature_state)
+        every feature :attr:`feature_state` asks for applied, at the size the
+        project builds. What a save is priced against, for the reason
+        :attr:`level_memory_managed` gives -- and the size is part of it,
+        because the packing overflows into an expansion bank only where the
+        cartridge has one (:func:`smw_tools.levels.has_level_bank`)."""
+        return applied(rom_base(self.base_id), self.feature_state, self.rom_size_id)
+
+    def levels_refuse_size(self, rom_size_id: str) -> str:
+        """Why this project's saved levels could not be built into a cartridge
+        of ``rom_size_id``, or ``""`` where they could.
+
+        The one resize that takes room away. Growable levels overflow into an
+        expansion bank where the cartridge has one
+        (:func:`smw_tools.levels.has_level_bank`), so shrinking past it hands
+        the packer fewer runs than the streams need -- which the build would
+        refuse with a `warnpc`, too late to do anything about. Priced here
+        against the cartridge being *asked for*, exactly as a feature switch
+        is priced against the cartridge it would make.
+
+        Nothing to say on a project whose level banks are stock: the seven
+        macros are placed at literal addresses and hold what they held at
+        every size.
+        """
+        if rom_size_id == self.rom_size_id or not self.level_memory_managed:
+            return ""
+        base = applied(rom_base(self.base_id), self.feature_state, rom_size_id)
+        try:
+            packing = self.level_packing(base)
+        except (ProjectError, OSError, ValueError):
+            return ""
+        if packing.fits:
+            return ""
+        return (
+            f"The saved levels need {packing.over:,} bytes more than a "
+            f"{ROM_SIZES[rom_size_id].label} cartridge holds: growable levels "
+            f"overflow into an expansion bank this one has not got. Take that "
+            f"much back out of the levels first."
+        )
 
     def level_palette_bytes(self, count: int | None = None) -> int:
         """How many bytes of the level bank the custom level palettes take
@@ -620,9 +656,7 @@ class LevelFiles:
         base = self.next_base
         if not count and LEVEL_CUSTOM_PALETTES.id not in base.features:
             return 0
-        return level_palettes.bytes_for(
-            count, level_graphics=LEVEL_GRAPHICS.id in base.features
-        )
+        return level_palettes.bytes_for(count)
 
     def level_runs(
         self, base: RomBase | None = None, palettes: int | None = None
@@ -716,9 +750,7 @@ class LevelFiles:
             if not packing.fits:
                 return held
             room -= packing.used[-1]
-        return level_palettes.capacity(
-            room, level_graphics=LEVEL_GRAPHICS.id in base.features
-        )
+        return level_palettes.capacity(room)
 
     def _edited_containers(self) -> dict[str, Path]:
         """Container name -> the overlay's copy, for every level this has saved."""

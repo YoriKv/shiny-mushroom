@@ -147,10 +147,9 @@ GLYPHS: dict[str, Glyph] = {
 #: The rows the window builds its bars from: one per editing environment,
 #: each entry an :class:`Actions` field name with a glyph in :data:`GLYPHS`.
 #: In the order their Shift+digits count -- see :func:`menus.build` -- so a
-#: button's place in the row is the number that reaches it. The map's row
-#: skips Shift+3, whose key is the events view: it has a handle in the world
-#: bar's Event box already, and renumbering around it would cost the two rows
-#: their shared counting.
+#: button's place in the row is the number that reaches it, with no gaps in
+#: either row. The events view is in neither: it has a handle in the world
+#: bar's Event box already, and carries no key.
 LEVEL_BUTTONS = (
     "layer1",
     "layer2",
