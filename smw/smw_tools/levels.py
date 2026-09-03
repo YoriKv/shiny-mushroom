@@ -95,12 +95,16 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from . import rom_map
 from .asm_defines import define
 from .bases import DEFAULT_TARGET, VANILLA, BuildTarget, RomBase
 from .packing import lay_out
 from .paths import GAME_DIR
+
+if TYPE_CHECKING:
+    from .symbols import SymbolTable
 
 #: The ``VerDif`` argument that names no variant. The macro tests against this
 #: rather than against the release being built, so it is the framework's spelling
@@ -690,8 +694,8 @@ LEVEL_BANK_END = 0xFFFF
 #: :data:`PACKING_RUNS` says.
 #:
 #: In one of the game's own banks and not in the level bank, because the
-#: level bank is room this feature may not have: SA-1 Pack's patch pass and
-#: the editor both name the table by address, and an address that exists
+#: level bank is room this feature may not have: the sprite-memory rewrite
+#: and the editor both name the table by address, and an address that exists
 #: only on a 1 MB cartridge is no address at all on a 512 KB one.
 #: The stub's own size is read from the file that emits it and asserts it
 #: (:mod:`smw_tools.asm_defines`): where the last run ends follows from it.
@@ -770,6 +774,29 @@ def has_level_bank(base: RomBase) -> bool:
     return base.size_bytes >= (level_bank(base) + 1) * 0x8000
 
 
+#: The two labels ``%SMW_PlaceLevelBank`` drops around the project's own code
+#: in the level bank -- the tool's dialect and library, the levels', the game
+#: modes' and the global routines -- so a build's symbol file says how long
+#: that code assembled to: the second is where the packer's fourth run opens.
+LEVEL_BANK_CODE_LABELS = ("SMW_LevelBank_Code", "SMW_LevelBank_Streams")
+
+
+def code_bytes(symbols: SymbolTable) -> int | None:
+    """How many bytes of the level bank the project's own code took on the
+    build ``symbols`` describes, or ``None`` where that build placed no
+    level bank at all.
+
+    Read off the two labels the bank's sequence drops around the code
+    (:data:`LEVEL_BANK_CODE_LABELS`), because the code's length is whatever
+    the project's files assembled to and nothing but a build knows it. Zero
+    on a build whose level bank holds no code.
+    """
+    found = [symbols.by_name.get(label) for label in LEVEL_BANK_CODE_LABELS]
+    if any(one is None for one in found):
+        return None
+    return found[1].addr - found[0].addr
+
+
 def level_bank_run(base: RomBase, ahead: int = 0) -> LevelRun:
     """What the level bank has behind its first ``ahead`` bytes on ``base``.
 
@@ -781,17 +808,18 @@ def level_bank_run(base: RomBase, ahead: int = 0) -> LevelRun:
     (their block is one fixed size, :data:`level_graphics.BLOCK_BYTES`), and
     less ``ahead`` bytes behind that: what the custom level palettes put
     there -- their pointer table, their stubs and every blob a dressed level
-    wears. A caller pricing a project passes the project's own figure for
-    the palettes, and ``0`` is a cartridge with them off. The packer opens
-    its fourth run here (:func:`runs_for`), and a palette save prices itself
-    against the same run with the streams in it.
+    wears -- and what the project's own code assembled to behind them
+    (:func:`code_bytes`). A caller pricing a project passes the project's
+    own figure for both, and ``0`` is a cartridge with neither. The packer
+    opens its fourth run here (:func:`runs_for`), and a palette save prices
+    itself against the same run with the streams in it.
     """
     from . import level_graphics
     from .asm_defines import block
-    from .features import LEVEL_CODE, LEVEL_CUSTOM_PALETTES, LEVEL_GRAPHICS
+    from .features import LEVEL_CUSTOM_PALETTES, LEVEL_GRAPHICS, UBERASM_SUPPORT
 
     held = set(base.features)
-    readers = {LEVEL_GRAPHICS.id, LEVEL_CODE.id, LEVEL_CUSTOM_PALETTES.id}
+    readers = {LEVEL_GRAPHICS.id, UBERASM_SUPPORT.id, LEVEL_CUSTOM_PALETTES.id}
     base_address = level_bank(base) << 16
     end = base_address | LEVEL_BANK_END
     start = base_address | LEVEL_BANK_RUN
@@ -799,8 +827,8 @@ def level_bank_run(base: RomBase, ahead: int = 0) -> LevelRun:
         start += block("LevelNumberStash")
     if level_graphics.is_enabled(base):
         start += level_graphics.BLOCK_BYTES
-    if LEVEL_CODE.id in held:
-        start += LEVEL_CODE.block_bytes
+    if UBERASM_SUPPORT.id in held:
+        start += UBERASM_SUPPORT.block_bytes
     return LevelRun(start=start + ahead, end=end)
 
 

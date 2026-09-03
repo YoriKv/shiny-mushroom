@@ -29,13 +29,13 @@ class Trailing:
     def _may_walk_the_trail(self) -> bool:
         """Whether Back and Forward mean anything at all just now.
 
-        The trail is a browser over *level* views, so the world map sits
-        outside it: Back would have to leave the mode implicitly, and the
-        toggle already is the way back. Asked here as well as in
-        :meth:`sync_go_menu` because the menu rows are not the only door --
-        the mouse's side buttons come straight in.
+        The trail is a browser over *level* views, so the world map and the
+        Map16 sheet sit outside it: Back would have to leave the mode
+        implicitly, and each toggle already is the way back. Asked here as
+        well as in :meth:`sync_go_menu` because the menu rows are not the
+        only door -- the mouse's side buttons come straight in.
         """
-        return self._mode is not EditorMode.WORLD
+        return self._mode is EditorMode.LEVEL
 
     def go_back(self) -> None:
         """Return to the last place you were looking at."""
@@ -117,7 +117,7 @@ class Trailing:
         self._trail.record(Place(level, looking.x() // BLOCK, looking.y() // BLOCK))
 
     def sync_go_menu(self) -> None:
-        # Ctrl+M is symmetric with what `_may_walk_the_trail` refuses: the way
+        # Ctrl+2 is symmetric with what `_may_walk_the_trail` refuses: the way
         # out of the world map is the toggle that led into it.
         walkable = self._may_walk_the_trail
         self.menu_actions.go_back.setEnabled(walkable and self._trail.can_go_back)

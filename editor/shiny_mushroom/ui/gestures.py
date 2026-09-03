@@ -19,7 +19,7 @@ without a display.
 
 from __future__ import annotations
 
-from collections.abc import Collection, Sequence
+from collections.abc import Callable, Collection, Sequence
 from enum import Flag, auto
 
 from PySide6.QtCore import QPoint, QRect, Qt
@@ -28,6 +28,7 @@ from shiny_mushroom.fields import Field
 from shiny_mushroom.level import BLOCK
 from shiny_mushroom.objects import LevelObject
 from shiny_mushroom.sprites import Sprite
+from shiny_mushroom.tile_clipboard import GridStamp
 
 # What each arrow key steps, in blocks. One block, because that is the unit a
 # level is built in: the object stream addresses blocks, the tilemap is blocks,
@@ -109,6 +110,122 @@ def box_between(start: QPoint, end: QPoint) -> QRect:
     left, right = sorted((start.x(), end.x()))
     top, bottom = sorted((start.y(), end.y()))
     return QRect(left, top, right - left + 1, bottom - top + 1)
+
+
+def snapped_box(start: QPoint, end: QPoint, side: int) -> QRect:
+    """The box two dragged pixels make, grown outward to whole cells of
+    ``side`` pixels.
+
+    What a right drag over a tile grid *draws* on every surface: the cells it
+    would grab, exactly as a selection there is drawn -- the pixels the
+    pointer travelled between say nothing a cell does not. The far edge is
+    inclusive, like :func:`box_between`'s, so the box covers every cell
+    either corner is in.
+    """
+    box = box_between(start, end)
+    left, top = box.left() // side, box.top() // side
+    right, bottom = box.right() // side, box.bottom() // side
+    return QRect(
+        left * side, top * side, (right - left + 1) * side, (bottom - top + 1) * side
+    )
+
+
+#: How far a right press travels, in widget pixels, before it is a grab
+#: rather than a click. The picture's own drag threshold, for the panels'
+#: grids.
+GRAB_THRESHOLD = 4
+
+
+class RightGrab:
+    """The right button over a grid widget: a press, its travel, its release
+    -- up to what they mean, which is the widget's.
+
+    The three panel grids each tracked this for themselves. A press is held
+    until the release, because what it turned into -- a pick or a grab -- is
+    only visible then; a press that travels :data:`GRAB_THRESHOLD` is a grab
+    from there on, and its box is the two corners it was made from.
+    """
+
+    def __init__(self) -> None:
+        self.press: QPoint | None = None
+        #: Where the grab has reached, once the press has travelled far
+        #: enough to be one -- ``None`` while it is still a press.
+        self.reached: QPoint | None = None
+
+    @property
+    def dragging(self) -> bool:
+        return self.reached is not None
+
+    def begin(self, pos: QPoint) -> None:
+        self.press, self.reached = QPoint(pos), None
+
+    def move(self, pos: QPoint) -> bool:
+        """Follow the pointer, reporting whether a grab is in flight."""
+        if self.press is None:
+            return False
+        if self.reached is None:
+            travelled = pos - self.press
+            if max(abs(travelled.x()), abs(travelled.y())) < GRAB_THRESHOLD:
+                return False
+        self.reached = QPoint(pos)
+        return True
+
+    def box(self) -> QRect | None:
+        """The box in flight, or ``None`` while the press has not travelled."""
+        if self.press is None or self.reached is None:
+            return None
+        return box_between(self.press, self.reached)
+
+    def end(self) -> tuple[QPoint, QRect | None] | None:
+        """The release: where it was pressed and the box it swept -- ``None``
+        for a press that never travelled -- or ``None`` with no press held.
+        Forgets the press either way."""
+        press, box = self.press, self.box()
+        self.press, self.reached = None, None
+        return None if press is None else (press, box)
+
+
+def grab_stamp(
+    box: QRect,
+    side: int,
+    payload_at: Callable[[int, int], object | None],
+    pick: Callable[[QPoint], object],
+    arm: Callable[[GridStamp], object],
+) -> None:
+    """Turn a right drag's ``box`` into what the drag grabbed -- the one
+    spelling of the editor-wide convention
+    ([`right-click.md`](../../../docs/editor/right-click.md)).
+
+    ``box`` is in image pixels over a grid of ``side``-pixel cells;
+    ``payload_at(column, row)`` answers the value under a cell, or ``None``
+    off the grid. A region of payloads is handed to ``arm`` as a
+    :class:`GridStamp`; exactly one covered cell is not a region, so the
+    short drag degrades to ``pick`` at the box's corner -- the eyedropper
+    the gesture started as; none at all does nothing. The stamp's offsets
+    and size are measured over the covered cells alone, so a box hanging
+    off the grid cannot place its content beside the pointer or declare a
+    size the stamp does not have.
+    """
+    left, top = box.left() // side, box.top() // side
+    columns = box.right() // side - left + 1
+    rows = box.bottom() // side - top + 1
+    entries: list[tuple[int, int, object]] = []
+    for dy in range(rows):
+        for dx in range(columns):
+            payload = payload_at(left + dx, top + dy)
+            if payload is not None:
+                entries.append((dx, dy, payload))
+    if not entries:
+        return
+    if len(entries) == 1:
+        pick(box.topLeft())
+        return
+    least_x = min(dx for dx, _, _ in entries)
+    least_y = min(dy for _, dy, _ in entries)
+    placed = tuple((dx - least_x, dy - least_y, leaf) for dx, dy, leaf in entries)
+    width = max(dx for dx, _, _ in placed) + 1
+    height = max(dy for _, dy, _ in placed) + 1
+    arm(GridStamp(placed, width, height))
 
 
 def landing_beside(origin: tuple[int, int] | None) -> tuple[int, int]:

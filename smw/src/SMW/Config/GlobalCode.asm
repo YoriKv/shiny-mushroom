@@ -35,8 +35,8 @@ includeonce
 ;#
 ;# Two fragments under code/global/, both the editor's: global-code.asm,
 ;# which is defines only and is read early, and global-code-data.asm, the
-;# routines themselves, read from the end of the ROM map with the levels'
-;# own code.
+;# routines themselves, emitted in the level bank's sequence with the
+;# levels' own code.
 ;#
 ;# The define needs a cartridge assembled at 1 MB or larger, for the level
 ;# bank the stubs share.
@@ -57,26 +57,37 @@ endif
 
 ; Whether each hook is wanted, as one question apiece so a bank file asks it
 ; without knowing how the answer is spelled.
-!Define_SMW_GlobalCodeInitWanted	#= !FALSE
-!Define_SMW_GlobalCodeMainWanted	#= !FALSE
-!Define_SMW_GlobalCodeStatusWanted	#= !FALSE
+!SMW_GlobalCode_InitWanted	#= !FALSE
+!SMW_GlobalCode_MainWanted	#= !FALSE
+!SMW_GlobalCode_StatusWanted	#= !FALSE
 if !Define_SMW_GlobalCode == !TRUE
 	if defined("SMW_GlobalCode_Init")
-		!Define_SMW_GlobalCodeInitWanted #= !TRUE
+		!SMW_GlobalCode_InitWanted #= !TRUE
 	endif
 	if defined("SMW_GlobalCode_Main")
-		!Define_SMW_GlobalCodeMainWanted #= !TRUE
+		!SMW_GlobalCode_MainWanted #= !TRUE
 	endif
 	if defined("SMW_GlobalCode_Status")
-		!Define_SMW_GlobalCodeStatusWanted #= !TRUE
+		!SMW_GlobalCode_StatusWanted #= !TRUE
 	endif
 endif
 
-; The frame hook: wanted by the global main routine, and by the game modes'
-; code whatever the project wrote.
-!Define_SMW_FrameHookWanted	#= !FALSE
-if !Define_SMW_GlobalCodeMainWanted == !TRUE || !Define_SMW_GameModeCode == !TRUE
-	!Define_SMW_FrameHookWanted #= !TRUE
+; The frame hook: wanted by the global main routine, by the game modes' code
+; whatever the project wrote, and by the custom music, whose sound driver has
+; to be given the frame's mailbox writes once the game mode has made them.
+;
+; There is one hook and the main loop has room for one: it is five bytes, the
+; call to the game mode and the store that ends the frame, and anything wanting
+; to run every frame runs from this stub rather than taking those bytes for
+; itself. That is what keeps two features from overwriting each other there --
+; the trap AddmusicK falls into when it patches a ROM, hijacking the same five
+; bytes with no way to know what else wanted them.
+!SMW_FrameHookWanted	#= !FALSE
+if !SMW_GlobalCode_MainWanted == !TRUE || !Define_SMW_GameModeCode == !TRUE
+	!SMW_FrameHookWanted #= !TRUE
+endif
+if !Define_SMW_CustomMusic == !TRUE
+	!SMW_FrameHookWanted #= !TRUE
 endif
 
 ;#############################################################################################################
@@ -97,23 +108,21 @@ macro SMW_GlobalCode_Call(routine)
 	PLB
 endmacro
 
-; Place the stubs and the routines. Called from the end of each ROM map,
-; with the levels' own code, for the same two reasons: what a project wrote
-; is variable-size, and a file that hijacks the game only lands once every
-; bank has emitted.
+; Place the stubs and the routines. Called from %SMW_PlaceLevelBank behind
+; the levels' and the game modes' own code, for the same two reasons: what
+; a project wrote is variable-size, and a file that hijacks the game only
+; lands once every bank has emitted.
 macro SMW_PlaceGlobalCode()
-if !Define_SMW_FrameHookWanted == !TRUE || !Define_SMW_GlobalCode == !TRUE
-	pushpc
-	org !SMW_LevelBankNext
+if !SMW_FrameHookWanted == !TRUE || !Define_SMW_GlobalCode == !TRUE
 
-if !Define_SMW_FrameHookWanted == !TRUE
+if !SMW_FrameHookWanted == !TRUE
 ; The frame, entered by JML from the main loop in place of the call to the
 ; game mode and the store that ends the frame. The global main routine and
 ; the mode's own code run first, the game mode's own work is made from here
 ; through the RTL the hook left in the bytes it freed, and the mode's end
 ; code runs after it.
 SMW_FrameCode_Stub:
-if !Define_SMW_GlobalCodeMainWanted == !TRUE
+if !SMW_GlobalCode_MainWanted == !TRUE
 	%SMW_GlobalCode_Call(!SMW_GlobalCode_Main)
 endif
 if !Define_SMW_GameModeCode == !TRUE
@@ -127,11 +136,14 @@ endif
 if !Define_SMW_GameModeCode == !TRUE
 	JSL.l SMW_GameModeCode_After
 endif
+if !Define_SMW_CustomMusic == !TRUE
+	JSL.l SMW_CustomMusic_FrameHook		;> The sound driver's frame, after the game mode wrote the mailboxes
+endif
 	STZ.b !RAM_SMW_Flag_Lagging		;> The displaced store: the frame is done
 	JML.l SMW_InitAndMainLoop_FrameCodeReturn
 endif
 
-if !Define_SMW_GlobalCodeInitWanted == !TRUE
+if !SMW_GlobalCode_InitWanted == !TRUE
 ; init, entered by JML from the boot path with AXY 8-bit. The two displaced
 ; instructions set up OAM, and are repeated here rather than guessed at.
 SMW_GlobalCode_InitStub:
@@ -141,7 +153,7 @@ SMW_GlobalCode_InitStub:
 	JML.l SMW_InitAndMainLoop_GlobalCodeInitReturn
 endif
 
-if !Define_SMW_GlobalCodeStatusWanted == !TRUE
+if !SMW_GlobalCode_StatusWanted == !TRUE
 ; statusbar, entered by JML in place of the read and the OR that open the
 ; counters' routine, both repeated here so the branch under them sees the
 ; flags it expects.
@@ -158,7 +170,5 @@ SMW_GlobalCode_Data:
 	assert (pc()>>$10) == !Define_SMW_LevelBank, "A global code file left the level bank: an org into the game needs a pushpc/pullpc bracket around it, or the rest of the file assembles over the game. Check code/global/."
 	assert pc() <= !Loc_SMW_LevelBank_RunEnd, "The global code has outgrown the level bank: less fits in it than the editor was told. Check code/global/."
 endif
-	!SMW_LevelBankNext #= pc()
-	pullpc
 endif
 endmacro

@@ -48,7 +48,26 @@
 	; with !Define_SMW_GameModeCode writes it (Config/GameModeCode.asm).
 	!RAM_SMW_GameModeCode_LastMode #= !Define_SMW_LowRAMLocation+$010F
 	!RAM_SMW_Misc_ScratchRAM0110 #= !Define_SMW_LowRAMLocation+$0110					; RAM address used in SMASE
-	!RAM_SMW_Misc_StartOfStack #= !Define_SMW_LowRAMLocation+$01FF
+	; Where the machine stack tops out -- the value the boot loads into SP.
+	; On every shipped cartridge that is the last byte of this page, so it
+	; follows low RAM; the SA-1 base deliberately does not follow the remap.
+	; SA-1 Pack points the S-CPU's stack at $1FFF, the top of the stack
+	; window it keeps at $7E:1F00-$7E:1FFF in the work RAM the relocation
+	; vacates, and the relocated page's byte at +$01FF is plain moved low
+	; RAM with no role. A base that moves the stack sets the define, as
+	; the SA-1 branch here does.
+	if defined("Define_SMW_SA1")
+	!Define_SMW_StackTopLocation #= $1FFF
+	endif
+	if defined("Define_SMW_StackTopLocation") == 0
+	!Define_SMW_StackTopLocation #= !Define_SMW_LowRAMLocation+$01FF
+	endif
+	!RAM_SMW_Misc_StartOfStack #= !Define_SMW_StackTopLocation
+	; The stack's floor, $FF below the top: the bound the boot's clearing
+	; loop leaves alone on the shipped cartridge, and the RAM-table struct's
+	; anchor. On the SA-1 base the arithmetic lands on $1F00, the floor of
+	; the window above.
+	!RAM_SMW_Misc_EndOfStack #= !RAM_SMW_Misc_StartOfStack-$FF
 ; OAM table. Used to handle all sprite tile data, with 128 slots for tiles.
 ; Generally, the table is indexed from either $0200 or $0300, with $0300
 ; being used for normal sprites (and Mario) and $0200 being used for various

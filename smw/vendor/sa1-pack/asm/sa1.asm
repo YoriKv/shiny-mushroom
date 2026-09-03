@@ -3,7 +3,15 @@
 ;  by Vitor Vilela				;
 ;===============================================;
 
-asar 1.90
+; LOCAL MODIFICATION (shiny-mushroom): the version directive sets asar's
+; math mode -- C precedence, floating-point division -- for the *whole*
+; assembly it appears in, bytes emitted before it included. Included here
+; as its own file so a build that assembles this tree inside its own pass
+; (sa1_code_in_pass) can leave it out and keep the mode its sources were
+; written for; a run of the pack on its own reads it exactly as before.
+if defined("sa1_code_in_pass") == 0
+incsrc "asar_version.asm"
+endif
 
 !ZSNES		= 0				; Put 0 if you don't want to SA-1 Pack automatically deal with ZSNES limitations.
 						; (in other words, put 0 if you don't want ZSNES 1.51 or older support)
@@ -31,6 +39,27 @@ endif
 if defined("remap_addr") == 0
 	!remap_addr = 1
 endif
+if defined("remap_sram") == 0
+	!remap_sram = 1
+endif
+if defined("remap_map16") == 0
+	!remap_map16 = 1
+endif
+if defined("remap_dma") == 0
+	!remap_dma = 1
+endif
+; LOCAL MODIFICATION (shiny-mushroom): every same-length hijack this tree
+; writes over the game's banks -- the boosts', the engine's and More
+; Sprites' -- sits under this switch. A build that assembles the tree inside
+; its own pass carries each hijack as a conditional at its site in the
+; game's source and sets sa1_hijacks_external=1; the labels the hijacks
+; define for the code in freespace are then given as addresses in the
+; switch's else arm, and the larger bodies live in asm/inline/ so the site
+; can include them. Off by default, so a run of the pack on its own is
+; byte-for-byte what it was.
+if defined("sa1_hijacks_external") == 0
+	!sa1_hijacks_external = 0
+endif
 
 ;===============================================;
 ; Hijacks					;
@@ -53,11 +82,18 @@ endif
 if !remap_addr
 incsrc "remap/addr.asm"				; Remaps $7E:0100-$7E:1FFF
 endif
+if !remap_sram
 incsrc "remap/sram.asm"				; Remaps SRAM
+endif
+if !remap_map16
 incsrc "remap/map16.asm"			; Remaps Map16
+endif
+if !remap_dma
 incsrc "remap/dma.asm"				; Remaps DMA channels*
+endif
 incsrc "remap/sprite_memory.asm"		; Remaps Sprite Memory*
 
+if !sa1_hijacks_external == 0
 org $FFFC					; \ Change Reset Vector.
 	dw Reset2				; /
 	
@@ -92,38 +128,31 @@ bank_switch:					; Ensure that bank switching is only written on clean ROMs.
 ; RAM in its own source reads as "already patched" and loses this block.
 ; On a clean ROM both spellings answer the same.
 if read1($008A60) != $80			; \ $00:8A60 - Default vanilla SA-1 ROM bank switch
-	db $80,$81,$82,$83			;  | values for Super MMC registers.
+if defined("sa1_rom_past_4mb")		;  | values for Super MMC registers -- or, past
+	db $04,$05,$06,$07			;  | 4 MB, the values asm/6mb.asm and asm/8mb.asm
+else					;  | write over them, set here instead when the
+	db $80,$81,$82,$83			;  | build that includes this tree says so
+endif					;  | (LOCAL MODIFICATION, shiny-mushroom).
 endif						; /
 
 org $8A64
-	
-Reset:						; \ Use the "unused" space
-!c	JML SA1_Reset				;  | to store some vectors.
-						;  |
-IRQ:						;  |
-!c	JML SA1_IRQ				;  |
-						;  |
-NMI:						;  |
-!c	JML SA1_NMI				;  |
-						;  |
-Reset2:						;  |
-!c	JML snes_init				; /
-
-
-	JML SA1_Loop				; This points to SA-1 main loop.
-						; Needed so the Dual ROM system can locate SA-1 main loop easier.
-
-assert pc() <= $8A78
+incsrc "inline/008A64.asm"
 
 ORG $8069					; \ Restore old code
 	INC $10					; /
+else
+bank_switch = $008A60
+endif
 	
 if read1($806B) != $5C				; \  This hijack lets Background Mode
+if !sa1_hijacks_external == 0
 ORG $806B					;  | run at 10.74 MHz while SNES is idle.
 	JMP ram_main_loop_start			;  |
 	NOP					;  |
+endif
 endif						; /
 
+if !sa1_hijacks_external == 0
 ORG $801F					; \ Set Direct Page to $3000.
 	LDA #$3000				; /
 	
@@ -163,6 +192,7 @@ org $829F
 	BRA +
 	NOP
 +
+endif
 	
 ;===============================================;
 ; Main Code					;

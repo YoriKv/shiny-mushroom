@@ -45,7 +45,7 @@ ever means, and placing one would send the object across the whole level. See
 
 from __future__ import annotations
 
-from collections.abc import Collection, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from enum import Enum
 
@@ -62,7 +62,10 @@ from shiny_mushroom.objects import (
     parse_objects,
     screen_exit_record,
 )
+from shiny_mushroom.sprite_art import CUSTOM_ART_BASE
 from shiny_mushroom.sprites import (
+    FIRST_SHOOTER,
+    GOAL_TAPE,
     UNKNOWN,
     Sprite,
     SpriteKind,
@@ -127,6 +130,26 @@ class Entry:
     #: nothing here needs them to -- it is a word to group and search by.
     category: str
 
+    #: Whether placing this entry sets the custom bit: a row for the
+    #: project's own sprite of this number rather than the game's. The two
+    #: share a byte and nothing else -- different code, different picture,
+    #: different name -- so they are two entries with two keys.
+    custom: bool = False
+
+    #: The extra bytes a fresh custom record carries: as many zeros as the
+    #: built cartridge's count table declares for the number, so the stream
+    #: an edit re-encodes parses back record for record. Empty for every
+    #: vanilla entry, whose records carry none.
+    extra_bytes: bytes = b""
+
+    #: A record to copy the properties of -- what the eyedropper picked up,
+    #: or that record as the keys since shaped it. A placement then carries
+    #: its settings byte, its extra bits, a screen exit's destination: the
+    #: thing under the pointer *as it is*, not the catalogue's fresh one of
+    #: its kind. Never part of :attr:`key`: the entry is still the row it
+    #: was, only what placing it produces has moved.
+    template: LevelObject | Sprite | None = None
+
     @property
     def key(self) -> CatalogKey:
         """What identifies this entry, and what a record in a level is matched
@@ -139,7 +162,26 @@ class Entry:
         """
         if self.stream is Stream.OBJECT and self.number == EXTENDED_OBJECT:
             return (self.stream, EXTENDED_OBJECT, self.settings)
+        if self.stream is Stream.SPRITE and self.custom:
+            # The custom space's copy of the number, as the captures key it
+            # (:data:`~shiny_mushroom.sprite_art.CUSTOM_ART_BASE`): the
+            # project's $1A and the game's $1A are different things to
+            # place, and :func:`key_of` says the same of their records.
+            return (self.stream, self.number | CUSTOM_ART_BASE, 0)
         return (self.stream, self.number, 0)
+
+    @property
+    def reshaped(self) -> bool:
+        """Whether the template places something the row's own fresh record
+        would not draw the same -- an object whose settings byte has moved,
+        so its size or its variant is not the catalogue's. A sprite's
+        picture is its number's whatever its bits, so it is never this."""
+        template = self.template
+        return (
+            isinstance(template, LevelObject)
+            and template.settings != self.settings
+            and template.kind is not ObjectKind.COMMAND
+        )
 
     @property
     def id_text(self) -> str:
@@ -147,10 +189,15 @@ class Entry:
 
         An extended object is spelled ``ext $12`` rather than ``$00``, because
         ``$00`` is what every one of them would read as: the number is zero and
-        the settings byte is the identity.
+        the settings byte is the identity. A project sprite is spelled
+        ``custom $1A`` for the same reason at the other end: the byte is the
+        vanilla sprite's too, and a list holding both rows as ``$1A`` would
+        leave only the name to say which is the game's.
         """
         if self.stream is Stream.OBJECT and self.number == EXTENDED_OBJECT:
             return f"ext {hexnum(self.settings)}"
+        if self.stream is Stream.SPRITE and self.custom:
+            return f"custom {hexnum(self.number)}"
         return hexnum(self.number)
 
     @property
@@ -197,13 +244,23 @@ class Entry:
         debug.
         """
         screen = shape.screen_of(column, row)
+        template = self.template
+        if template is not None:
+            return self._like(template, column, row, screen, shape)
         if self.stream is Stream.SPRITE:
+            # A custom entry arrives as its record will be read back: the
+            # bit set, the name on it, and the declared count's worth of
+            # zero extra bytes -- the loader's stride, without which the
+            # re-encoded stream would misparse every record behind it.
             return Sprite(
                 number=self.number,
                 column=column,
                 row=row,
                 screen=screen,
-                extra_bits=0,
+                extra_bits=0b10 if self.custom else 0,
+                custom_capable=self.custom,
+                extra_bytes=self.extra_bytes,
+                custom_name=self.name if self.custom else "",
             )
         if self.number == EXTENDED_OBJECT and self.settings == SCREEN_EXIT:
             return screen_exit_record(screen, shape)
@@ -216,6 +273,39 @@ class Entry:
             index=0,
             offset=0,
             data=b"",
+        )
+
+    @staticmethod
+    def _like(
+        template: LevelObject | Sprite,
+        column: int,
+        row: int,
+        screen: int,
+        shape: Geometry,
+    ) -> LevelObject | Sprite:
+        """A copy of ``template`` placed at ``(column, row)``: its properties
+        kept, everything a stream computes reset as :meth:`at` resets it.
+
+        A screen exit keeps its destination and its entrance flag and takes
+        the screen it lands on, which is the whole of what one is.
+        """
+        if isinstance(template, LevelObject) and template.kind is ObjectKind.COMMAND:
+            fresh = screen_exit_record(screen, shape)
+            if template.settings != SCREEN_EXIT or len(template.data) != 4:
+                return fresh
+            data = bytes(
+                (fresh.data[0], template.data[1], SCREEN_EXIT, template.data[3])
+            )
+            return replace(fresh, data=data)
+        return replace(
+            template,
+            column=column,
+            row=row,
+            screen=screen,
+            index=0,
+            offset=0,
+            data=b"",
+            uid=0,
         )
 
     def preview(
@@ -338,16 +428,34 @@ def object_entries(tileset: int) -> list[Entry]:
     return entries
 
 
-def sprite_entries() -> list[Entry]:
+#: The category every project sprite files under: the one judgement the
+#: metadata cannot make, because the sprite is not in it. One word for all
+#: of them keeps the project's rows one filter click away.
+CUSTOM_CATEGORY = "custom"
+
+
+def sprite_entries(
+    custom_names: Mapping[int, str] = {},
+    extra_counts: Mapping[int, int] = {},
+) -> list[Entry]:
     """Everything that can be added to the sprite stream.
 
-    The same list for every level, unlike the objects: a sprite number means one
-    thing across the cartridge, and what a level's header decides is whether the
-    graphics for it are loaded -- which is a question about how it will *look*,
-    not about what the record is. The editor cannot answer that one yet, and
-    offering a list that quietly left sprites out would be claiming it could.
+    The game's list is the same for every level, unlike the objects: a sprite
+    number means one thing across the cartridge, and what a level's header
+    decides is whether the graphics for it are loaded -- which is a question
+    about how it will *look*, not about what the record is. The editor cannot
+    answer that one yet, and offering a list that quietly left sprites out
+    would be claiming it could.
+
+    Behind it come the **project's own sprites** -- ``custom_names`` as
+    :func:`shiny_mushroom.project_sprites.custom_names` reads it off the
+    sprite folders -- each placed with the custom bit set and, from
+    ``extra_counts``, the built cartridge's stride of zero extra bytes. The
+    goal tape's number is left out however the project spells it: both of
+    that record's extra bits are Lunar Magic's secret-exit choice, so the
+    bit cannot mark it and a row offering to would place the vanilla tape.
     """
-    return [
+    entries = [
         Entry(
             stream=Stream.SPRITE,
             number=number,
@@ -358,6 +466,24 @@ def sprite_entries() -> list[Entry]:
         for number in range(0x100)
         if name_of(number) != UNKNOWN
     ]
+    entries += [
+        Entry(
+            stream=Stream.SPRITE,
+            number=number,
+            settings=0,
+            name=name,
+            category=CUSTOM_CATEGORY,
+            custom=True,
+            extra_bytes=bytes(extra_counts.get(number, 0)),
+        )
+        for number, name in sorted(custom_names.items())
+        # A record byte from the shooter range up is a command to the
+        # loader -- a generator, a shooter, a scroll -- before any custom
+        # bit is read, so a custom normal sprite numbered there could
+        # never be placed as itself.
+        if number != GOAL_TAPE and number < FIRST_SHOOTER
+    ]
+    return entries
 
 
 class Art(Enum):
@@ -450,6 +576,11 @@ def art_verdict_under(
     """
     if entry.stream is not Stream.SPRITE:
         return Art.SETTLED
+    if entry.custom:
+        # A project sprite's artwork is its own drawing code's, captured by
+        # the probe like any other -- and the shipped evidence is about the
+        # vanilla number that shares its byte, so it says nothing here.
+        return Art.SETTLED
     if SpriteKind.of(entry.number) is not SpriteKind.SPRITE:
         return Art.SETTLED
     if not shipped or not tilesets:
@@ -482,7 +613,7 @@ PROBE_CELL = 8
 
 def probe_stream(
     entries: Sequence[Entry], shape: Geometry
-) -> tuple[bytes, dict[int, CatalogKey]]:
+) -> tuple[bytes, dict[int, Entry]]:
     """One object stream drawing the whole catalogue, and what each record is.
 
     The trick that makes object previews affordable. Asking the emulator what
@@ -492,7 +623,9 @@ def probe_stream(
     on, and the footprints come back one per record.
 
     Returns the stream and a map from each record's **byte offset** to the entry
-    it came from -- the offset because that is what a parse of the stream pairs
+    it came from -- the entry itself, since a reshaped one is keyed apart from
+    its row (see :attr:`Entry.reshaped`); the offset because that is what a
+    parse of the stream pairs
     the loader's footprints by, exactly as
     :meth:`~shiny_mushroom.ui.main_window.MainWindow._read_level` pairs a real
     level's. Records the encoder invented (the screen jumps that carry the
@@ -527,10 +660,10 @@ def probe_stream(
         placed.append(replace(record, uid=len(placed) + 1))
 
     stream, uids = encode_objects(placed, shape)
-    by_offset: dict[int, CatalogKey] = {}
+    by_offset: dict[int, Entry] = {}
     for parsed, uid in zip(parse_objects(stream, shape), uids, strict=True):
         if uid:
-            by_offset[parsed.offset] = key_of(placed[uid - 1])
+            by_offset[parsed.offset] = wanted[uid - 1]
     return stream, by_offset
 
 
@@ -544,7 +677,10 @@ def key_of(record: LevelObject | Sprite) -> CatalogKey:
     should do with it.
     """
     if isinstance(record, Sprite):
-        return (Stream.SPRITE, record.number, 0)
+        # The art key, not the byte: a custom record came from the custom
+        # entry, and matching it to the vanilla row would say a level that
+        # places the project's $1A already uses the game's.
+        return (Stream.SPRITE, record.art_key, 0)
     if record.number == EXTENDED_OBJECT:
         return (Stream.OBJECT, EXTENDED_OBJECT, record.settings)
     return (Stream.OBJECT, record.number, 0)

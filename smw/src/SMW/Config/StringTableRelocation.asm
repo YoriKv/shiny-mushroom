@@ -69,16 +69,12 @@ endif
 ;# then the line positions, the slot tables and the text out of bank $05 --
 ;# growing towards the reserved run's end label.
 ;#
-;# **One block, emitted from one place.** A ROM map's bank macros run in the
-;# map's order, and the two sets of text sit either side of half the
-;# relocated overworld tables, so leaving each set to emit at its own slot
-;# would thread the text through the middle of them -- and what address any
-;# fragment in the run had would then depend on which of the features the
-;# build had on. Instead the bank macros leave a labelled hole at their slot
-;# and hand their tables to %SMW_PlaceRelocatedStrings, which emits the lot in
-;# one block at the tail: the text is one contiguous occupant, and everything
-;# ahead of it keeps the address it would have had without this feature at
-;# all.
+;# **One block, emitted from one place.** The bank macros leave a labelled
+;# hole at their slot and hand their tables to %SMW_PlaceRelocatedStrings,
+;# which emits the lot in one block as the run's last occupant -- the shape
+;# every occupant of the run has, so the text is one contiguous occupant
+;# and everything ahead of it keeps the address it would have had without
+;# this feature at all.
 ;#
 ;# smw_tools.features declares the whole reserved run as one TablePool: what
 ;# any occupant does not use, the others may. Three things in this block are
@@ -106,14 +102,11 @@ endif
 endmacro
 
 ; The whole of the relocated text -- the stubs, then both sets of tables --
-; at the tail of the reserved run. Called from each ROM map once every bank
-; has emitted, so !SMW_ReservedBankNext is the run's first free byte, and
-; bracketed with pushpc/pullpc like every placement there.
+; at the tail of the reserved run. Called from %SMW_PlaceReservedRun as the
+; run's last occupant, at whatever position the occupants ahead of it left.
 macro SMW_PlaceRelocatedStrings()
 if !Define_SMW_RelocateStringTables == !TRUE
-!SMW_RelocatedStringsAt #= !SMW_ReservedBankNext
-	pushpc
-	org !SMW_ReservedBankNext
+!SMW_RelocatedStringsAt #= pc()
 
 ; The search DisplayText hooks into, entered with AXY 8-bit and the data
 ; bank on bank $05: which slot is for the level being played and the message
@@ -325,8 +318,12 @@ SMW_RelocatedStrings_LevelName:
 SMW_RelocatedStringsTables:
 	%SMW_UpdateLevelName_Tables()
 	%SMW_DisplayMessage_Tables()
+	; The text assembles against a font table its fragment loads and does
+	; not clear, and a table in force maps every later db string through
+	; it -- a RATS tag's "STAR" included. In place, bank $05's own strings
+	; clear it; here nothing does, so it is cleared before the placements
+	; after this one.
+	cleartable
 	assert pc() <= !Loc_SMW_ReservedBank_End, "The relocated strings have outgrown the reserved run: less text fits than the editor was told. Check strings/."
-	!SMW_ReservedBankNext #= pc()
-	pullpc
 endif
 endmacro

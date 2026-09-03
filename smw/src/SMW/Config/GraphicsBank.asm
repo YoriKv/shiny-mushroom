@@ -37,12 +37,13 @@ includeonce
 ;# and bumps this define; the count then moves with it.
 ;#
 ;# Which bank the run starts in belongs to the cartridge. The default is
-;# one past the level bank's, and deliberately fixed rather than derived
+;# one past the sprite bank's, and deliberately fixed rather than derived
 ;# from it: the reservations are independent, and fixed, distinct defaults
 ;# are what keeps any combination of the features collision-free. A build
-;# whose $12 is spoken for names another with --define
-;# Define_SMW_GraphicsBank=$13 -- the sa1 base does, its pack holding $10,
-;# the shared run $11 and the level bank $12 -- and every bank from $10 to
+;# whose $13 is spoken for names another with --define
+;# Define_SMW_GraphicsBank=$14 -- the sa1 base does, its pack holding $10,
+;# the shared run $11, the level bank $12 and the sprite bank $13 -- and
+;# every bank from $10 to
 ;# $3F buys the same two things the reserved run's does: one address at
 ;# every cartridge size, and the work RAM mirror underneath. smw_tools
 ;# fills the value in from the base, so the editor reads the cartridge at
@@ -56,7 +57,7 @@ includeonce
 ; The first bank, and how many. %SMW_ReserveGraphicsBanks asserts that the
 ; run landed in it.
 if defined("Define_SMW_GraphicsBank") == 0
-	!Define_SMW_GraphicsBank #= $12
+	!Define_SMW_GraphicsBank #= $13
 endif
 if defined("Define_SMW_GraphicsBankCount") == 0
 	!Define_SMW_GraphicsBankCount #= 1
@@ -67,9 +68,9 @@ endif
 ; Whether anything wants the banks at all. A build without the managed
 ; graphics reserves nothing, so a stock cartridge gains no RATS tag and no
 ; symbol.
-!Define_SMW_GraphicsBankWanted #= !FALSE
+!SMW_GraphicsBankWanted #= !FALSE
 if !Define_SMW_ManagedGraphicsMemory == !TRUE
-	!Define_SMW_GraphicsBankWanted #= !TRUE
+	!SMW_GraphicsBankWanted #= !TRUE
 endif
 
 !Loc_SMW_GraphicsBank_Tag	#= !Define_SMW_GraphicsBankBase+$0000	;> the first bank's RATS tag, 8 bytes
@@ -86,21 +87,26 @@ endif
 ; the same bytes again, which is where the end label the editor prices
 ; against comes from.
 macro SMW_ReserveGraphicsBanks()
-if !Define_SMW_GraphicsBankWanted == !TRUE
+if !SMW_GraphicsBankWanted == !TRUE
 	if !Define_SMW_GraphicsBankCount < 1
 		error "The managed graphics need at least one graphics bank. Check Define_SMW_GraphicsBankCount."
 	endif
 	if !Define_SMW_GraphicsBankLast > $3F
 		error "The graphics banks run past bank $3F, above which the work RAM mirror is gone and the loader's stubs cannot run. Fewer banks, or a lower Define_SMW_GraphicsBank."
 	endif
-	if !Define_SMW_ReservedBankWanted == !TRUE
+	if !SMW_ReservedBankWanted == !TRUE
 		if !Define_SMW_GraphicsBank <= !Define_SMW_ReservedBank
 			error "The graphics banks must lie above the growable features' bank: graphics is the last reservation. Check the two bank defines."
 		endif
 	endif
-	if !Define_SMW_LevelBankWanted == !TRUE
+	if !SMW_LevelBankWanted == !TRUE
 		if !Define_SMW_GraphicsBank <= !Define_SMW_LevelBank
 			error "The graphics banks must lie above the level bank: graphics is the last reservation. Check the two bank defines."
+		endif
+	endif
+	if !SMW_SpriteBankWanted == !TRUE
+		if !Define_SMW_GraphicsBank <= !Define_SMW_SpriteBank
+			error "The graphics banks must lie above the sprite bank: graphics is the last reservation. Check the two bank defines."
 		endif
 	endif
 	pushpc
@@ -125,7 +131,7 @@ endif
 endmacro
 
 ; The same reservation, laid down in the initialize pass -- see the macro.
-if !Define_SMW_GraphicsBankWanted == !TRUE
+if !SMW_GraphicsBankWanted == !TRUE
 	if !FileType == !FileType_InitializeROM
 		%SMW_ReserveGraphicsBanks()
 	endif

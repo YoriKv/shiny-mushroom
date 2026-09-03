@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 from shiny_mushroom.hexnum import hexnum
+from shiny_mushroom.tile_clipboard import GridStamp
 from shiny_mushroom.ui.lists import TileGrid, add_tile
 from shiny_mushroom.ui.tile_palette import OutlinedSelection
 
@@ -55,10 +56,14 @@ NO_BACKGROUND = "This level has no Layer 2 background to paint."
 #: the other, and both are editable, so this is left for the level that has
 #: neither -- no cartridge yet, or a Layer 2 the editor could not read.
 NO_LAYER2 = "This level has no Layer 2 for the editor to edit."
-NOTHING_ARMED = "Pick a tile, then click or drag to paint. Alt+click picks up a tile."
-ARMED = (
-    "Placing tile {number}. Drag paints; Shift keeps it; "
-    "Esc or right-click puts it down."
+NOTHING_ARMED = (
+    "Pick a tile, then click or drag to paint. "
+    "Right-click or Alt+click picks up a tile."
+)
+ARMED = "Placing tile {number}. Drag paints; Shift keeps it; Esc puts it down."
+ARMED_REGION = (
+    "Placing a {w}x{h} grabbed region. Click stamps it; a drag paints with "
+    "it; Esc puts it down."
 )
 
 
@@ -79,11 +84,16 @@ class LevelPalette(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
 
-        self._held: BackgroundTile | None = None
+        self._held: BackgroundTile | GridStamp | None = None
 
         self._list = TileGrid(ICON)
         self._list.setItemDelegate(OutlinedSelection(self._list))
         self._list.itemClicked.connect(self._picked)
+        # The right button works on the offer as it does on the level: a
+        # right click picks exactly as a left one, and a right drag grabs a
+        # rectangle of the grid as a stamp.
+        self._list.right_picked.connect(self._picked)
+        self._list.region_grabbed.connect(self._region_grabbed)
         # Enter means "this one" as well, and arming is idempotent, so the
         # two paths cannot fight over a single row.
         self._list.itemActivated.connect(self._picked)
@@ -125,18 +135,20 @@ class LevelPalette(QWidget):
     # -- what is in hand -----------------------------------------------------
 
     @property
-    def held(self) -> BackgroundTile | None:
+    def held(self) -> BackgroundTile | GridStamp | None:
         return self._held
 
-    def arm(self, payload: BackgroundTile | None) -> None:
+    def arm(self, payload: BackgroundTile | GridStamp | None) -> None:
         """Put ``payload`` in hand, announcing it. Idempotent, so a click and
-        Enter on the same row cannot fight."""
+        Enter on the same row cannot fight. A grabbed region selects no row:
+        no one row is what is in hand."""
         if payload == self._held:
             return
         self._held = payload
         self._show_state()
         if payload is not None:
-            self._select_row(payload.number)
+            if isinstance(payload, BackgroundTile):
+                self._select_row(payload.number)
             self.armed.emit(payload)
 
     def disarm(self) -> None:
@@ -151,6 +163,22 @@ class LevelPalette(QWidget):
         self._held = None
         self._list.clearSelection()
         self._list.setCurrentItem(None)
+        self._show_state()
+
+    def hold(self, payload: BackgroundTile | GridStamp | None) -> None:
+        """Put ``payload`` back in hand **without announcing it**, and put the
+        selection back on its row.
+
+        :meth:`disarm`'s opposite, and for the same kind of caller: one that
+        already knows, so announcing would be telling it what it just said.
+        What a **redraw** of the offer uses -- the same tiles in new colours --
+        since :meth:`set_tiles` drops the hand, which is right when the offer
+        itself changed and wrong when only its pixels did. A grabbed region
+        selects no row: no one row is what is in hand.
+        """
+        self._held = payload
+        if isinstance(payload, BackgroundTile):
+            self._select_row(payload.number)
         self._show_state()
 
     def pickup(self, payload: BackgroundTile) -> None:
@@ -170,10 +198,28 @@ class LevelPalette(QWidget):
     def _picked(self, item: QListWidgetItem) -> None:
         self.arm(BackgroundTile(item.data(Qt.ItemDataRole.UserRole)))
 
+    def _region_grabbed(
+        self, entries: list[tuple[int, int, int]], width: int, height: int
+    ) -> None:
+        """A right drag swept a rectangle of the offer: arm it whole, as the
+        stamp the same drag would grab off the pattern. A one-cell drag
+        never reaches here -- the grid degrades it to a pick."""
+        self.arm(
+            GridStamp(
+                tuple((dx, dy, BackgroundTile(number)) for dx, dy, number in entries),
+                width,
+                height,
+            )
+        )
+
     def _show_state(self) -> None:
         if self._list.count() == 0:
             self._hint.setText(NO_BACKGROUND)
         elif self._held is None:
             self._hint.setText(NOTHING_ARMED)
+        elif isinstance(self._held, GridStamp):
+            self._hint.setText(
+                ARMED_REGION.format(w=self._held.width, h=self._held.height)
+            )
         else:
             self._hint.setText(ARMED.format(number=hexnum(self._held.number)))

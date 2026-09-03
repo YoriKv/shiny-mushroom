@@ -51,13 +51,14 @@ from shiny_mushroom.project import (
     forget_readings,
 )
 from smw_tools import asm_codec, asm_regions, features, graphics_memory, rom_tables
+from smw_tools import music as music_tools
 from smw_tools.asm_room import Run, run_for
 from smw_tools.bases import DEFAULT_BASE, RomBase
 from smw_tools.bases import base as rom_base
 from smw_tools.build import build_rom, symbols_path
 from smw_tools.level_graphics import FRAGMENT as LEVEL_GRAPHICS_FRAGMENT
 from smw_tools.level_graphics import fragment_from_containers
-from smw_tools.paths import GLOBAL_DIR
+from smw_tools.paths import GLOBAL_DIR, asar_binary
 from smw_tools.rom_sizes import STOCK
 from smw_tools.symbols import SymbolTable, load_symbols, stale_sources
 
@@ -194,6 +195,7 @@ def build(
         # The log travels with it where the assembler left one: the message is
         # the first few error lines, and the file is the rest of what it said.
         raise BuildError(str(error), getattr(error, "log_path", None)) from error
+    _apply_music_runtime(project, result.output_path, on_progress)
     # Before the state is recorded: a build whose tables cannot be resolved
     # must not be remembered as current, or the next attempt would skip the
     # assembly and this check with it.
@@ -205,10 +207,10 @@ def build(
 def symbol_file(project: Project) -> Path:
     """Where ``project``'s build writes its symbol file, built or not.
 
-    One file for any base. On a patched one the main pass writes the source's
-    labels -- still the right addresses for pricing an asm region, since the
-    patch edits bytes in place and never moves one -- and the patch pass
-    merges its own labels in after them.
+    One file for any base. On ``sa1`` the main pass assembles the pack's tree
+    too, so its labels land in the same file beside the source's -- which stay
+    the right addresses for pricing an asm region, since nothing of the pack
+    moves one.
     """
     return symbols_path(
         rom_base(project.base_id), project.target, rom_path(project).parent
@@ -261,8 +263,15 @@ def defines_wanted(project: Project) -> tuple[tuple[str, str], ...]:
         banks = graphics_banks_wanted(project)
         if banks is not None:
             defines += (graphics_memory.bank_count_define(banks),)
+        music_banks = music_banks_wanted(project)
+        if music_banks is not None:
+            defines += (music_tools.bank_count_define(music_banks),)
         return defines
-    except (features.FeatureError, graphics_memory.GraphicsMemoryError) as error:
+    except (
+        features.FeatureError,
+        graphics_memory.GraphicsMemoryError,
+        music_tools.MusicError,
+    ) as error:
         raise BuildError(str(error)) from error
 
 
@@ -274,6 +283,20 @@ def graphics_banks_wanted(project: Project) -> int | None:
     if graphics_memory.FEATURE not in features_wanted(project):
         return None
     return project.graphics_banks
+
+
+def music_banks_wanted(project: Project) -> int | None:
+    """How many music banks the **next build** reserves, or ``None`` for a
+    build that reserves the config's own default -- no feature, or a project
+    that imported nothing. Priced from the blobs the fragment reads,
+    so an import that grows the soundtrack grows the reservation with it,
+    exactly as the graphics count above reaches the assembler."""
+    if features.CUSTOM_MUSIC.id not in features_wanted(project):
+        return None
+    total = project.imported_music_bytes()
+    if not total:
+        return None
+    return music_tools.banks_needed(total)
 
 
 def asm_room(
@@ -665,6 +688,7 @@ def _current(project: Project, fingerprint: str) -> bool:
         and state.get("rom_size", STOCK) == project.rom_size_id
         and _recorded_features(state) == features_wanted(project)
         and state.get("graphics_banks") == graphics_banks_wanted(project)
+        and state.get("music_banks") == music_banks_wanted(project)
         and state.get("fingerprint") == fingerprint
     )
 
@@ -689,6 +713,7 @@ def _record(project: Project, fingerprint: str) -> None:
         "rom_size": project.rom_size_id,
         "features": list(features_wanted(project)),
         "graphics_banks": graphics_banks_wanted(project),
+        "music_banks": music_banks_wanted(project),
         "fingerprint": fingerprint,
     }
     _state_file(project).write_text(json.dumps(state, indent=2) + "\n", "utf-8")
@@ -855,7 +880,7 @@ def _derive_code(project: Project, tree: Path) -> None:
     The files themselves are copied by :func:`_apply` like any other overlay
     entry; only the fragments naming them are written here.
     """
-    from shiny_mushroom import project_code
+    from shiny_mushroom import project_code, project_sprites
     from smw_tools import level_code
 
     game = tree / project.base.name
@@ -868,6 +893,11 @@ def _derive_code(project: Project, tree: Path) -> None:
         project_code.GLOBAL_DATA: None,
         project_code.LIBRARY_ROWS: None,
         project_code.MACROS_ROWS: None,
+        project_sprites.SPRITE_ROWS: None,
+        project_sprites.SPRITE_PROPERTIES: None,
+        project_sprites.SPRITE_DATA: None,
+        project_sprites.SPRITE_LIBRARY: None,
+        project_sprites.PIXI_ROUTINES: None,
     }
     # What a project's own asm cannot be is a build failure with a sentence
     # in it, not a traceback: the file is in the person's hands and the
@@ -885,6 +915,16 @@ def _derive_code(project: Project, tree: Path) -> None:
         derived[project_code.GLOBAL_DATA] = data
         derived[project_code.LIBRARY_ROWS] = project_code.library_fragment(project)
         derived[project_code.MACROS_ROWS] = project_code.macros_fragment(project)
+        rows, properties, data = project_sprites.sprite_fragments(project)
+        derived[project_sprites.SPRITE_ROWS] = rows
+        derived[project_sprites.SPRITE_PROPERTIES] = properties
+        derived[project_sprites.SPRITE_DATA] = data
+        derived[project_sprites.SPRITE_LIBRARY] = project_sprites.library_fragment(
+            project
+        )
+        derived[project_sprites.PIXI_ROUTINES] = project_sprites.routines_fragment(
+            project
+        )
     except (project_code.CodeError, level_code.LevelCodeError) as why:
         raise BuildError(str(why)) from None
 
@@ -1144,3 +1184,47 @@ def _apply(project: Project, tree: Path) -> dict[Path, tuple[int, int]]:
         stat = source.stat()
         applied[relative] = (stat.st_size, stat.st_mtime_ns)
     return applied
+
+
+def _apply_music_runtime(
+    project: Project,
+    rom: Path,
+    on_progress: Callable[[str], None] | None = None,
+) -> None:
+    """Assemble the sound driver's runtime into a freshly built cartridge.
+
+    **A pass of the build, not a tool let loose on the ROM.** What a project
+    imported is two halves from one run of AddmusicK: the songs and samples,
+    which the disassembly ``incbin``s where its own ROM map says, and the
+    runtime that plays them, which is an asm patch that tool generates. Only
+    the first can be assembled with the cartridge -- the second has to be
+    written over it, because it hijacks the game -- so it is rewritten to read
+    the data by the symbols this build just emitted and assembled here by the
+    same asar every other pass uses.
+
+    Nothing happens for a project with no imported music, or one built without
+    the feature: there is no runtime to write because there is nothing to play.
+
+    The checksum is deliberately left alone. The build's last pass wrote the
+    cartridge's own literal value, two of which are wrong on the shipped
+    releases, and a patch over the top has no more right to correct it than
+    that pass had.
+    """
+    if features.CUSTOM_MUSIC.id not in features_wanted(project):
+        return
+    blobs = project.overlaid(project.assets_base / music_tools.BLOB_DIR)
+    patch = blobs / music_tools.PATCH_DIR
+    if not (patch / music_tools.PATCH_ENTRY).is_file():
+        return
+    if on_progress:
+        on_progress("assembling the sound driver")
+    work = rom.parent / ".music-runtime"
+    shutil.rmtree(work, ignore_errors=True)
+    try:
+        music_tools.apply_patch(
+            patch, rom, load_symbols(symbol_file(project)), asar_binary(), work
+        )
+    except music_tools.MusicError as error:
+        raise BuildError(str(error)) from error
+    finally:
+        shutil.rmtree(work, ignore_errors=True)

@@ -30,7 +30,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 
-from shiny_mushroom.emu.supervisor import EmulatorSupervisor
+from shiny_mushroom.emu.supervisor import BrkError, EmulatorSupervisor
 from shiny_mushroom.project import cache_root
 
 _log = logging.getLogger(__name__)
@@ -126,6 +126,13 @@ class LevelLoader(SupervisorHost):
     #: unlocks either kind.
     overworld_loaded = Signal(object)
 
+    #: The cartridge hit one or more ``BRK``\ s while answering a request,
+    #: as a list of ``BrkReport``. Its own signal because it is orthogonal to
+    #: every other one here: the same load can come back with a snapshot *and*
+    #: an exception a custom sprite raised while being drawn, and the window
+    #: has to show both.
+    broke = Signal(object)
+
     def __init__(
         self,
         rom: Path,
@@ -154,6 +161,20 @@ class LevelLoader(SupervisorHost):
         )
         self._start()
 
+    def _note_brks(self, error: BaseException | None = None) -> None:
+        """Report whatever the request just answered ran into.
+
+        Called after every request, failed or not, which is the only place that
+        works: a ``BRK`` a load survived rides on the reply and one that
+        stopped it rides on the exception, and the window wants them on the
+        same signal either way.
+        """
+        reports = self._supervisor.taken_brks()
+        if isinstance(error, BrkError):
+            reports.append(error.report)
+        if reports:
+            self.broke.emit(reports)
+
     @Slot(int, object)
     def load(self, level: int, patches: dict[int, bytes] | None = None) -> None:
         """Load ``level``. Runs on the loader's thread, never on the caller's.
@@ -177,8 +198,10 @@ class LevelLoader(SupervisorHost):
                 level, patches or None, footprints=True
             )
         except Exception as error:  # noqa: BLE001 - a thread boundary reports everything
+            self._note_brks(error)
             self.failed.emit(str(error))
         else:
+            self._note_brks()
             self.loaded.emit(snapshot)
 
     @Slot(object)
@@ -190,8 +213,10 @@ class LevelLoader(SupervisorHost):
         try:
             snapshot = self._supervisor.load_overworld(patches=patches or None)
         except Exception as error:  # noqa: BLE001 - a thread boundary reports everything
+            self._note_brks(error)
             self.failed.emit(str(error))
         else:
+            self._note_brks()
             self.overworld_loaded.emit(snapshot)
 
     @Slot()
@@ -216,6 +241,7 @@ class LevelLoader(SupervisorHost):
         except Exception as error:  # noqa: BLE001 - a thread boundary reports everything
             _log.debug("no player artwork: %s", error)
             art = None
+        self._note_brks()
         self.player_art_ready.emit(art or None)
 
     @Slot(int, object)
@@ -241,8 +267,10 @@ class LevelLoader(SupervisorHost):
             # `None` rather than silence: the parent chains the batches, and a
             # reply that never came would stop the ones after this one too.
             _log.debug("no object catalogue previews: %s", error)
+            self._note_brks(error)
             self.catalog_probed.emit(None)
         else:
+            self._note_brks()
             self.catalog_probed.emit(snapshot)
 
     @Slot(object, int, object)
@@ -260,5 +288,7 @@ class LevelLoader(SupervisorHost):
             art = self._supervisor.sprite_artwork(numbers, level, header)
         except Exception as error:  # noqa: BLE001 - a thread boundary reports everything
             _log.debug("no sprite artwork for %s: %s", numbers, error)
+            self._note_brks(error)
         else:
+            self._note_brks()
             self.sprite_art_ready.emit(art)

@@ -1,4 +1,11 @@
-includeonce
+;--- Guarded by a define rather than `includeonce`: the main pass reaches this
+;--- file under two spellings -- `Config/Versions.asm` through
+;--- Misc_Defines_SMW.asm and `../SMW/Config/Versions.asm` through the SRAM
+;--- map's Global-side loader -- and `includeonce` keys on the spelling, so it
+;--- let the functions be defined twice. `defined()` does not care how the
+;--- file was reached.
+if not(defined("SMW_VersionPredicatesDefined"))
+!SMW_VersionPredicatesDefined = 1
 
 ;--- Version predicates.
 ;---
@@ -20,3 +27,4 @@ function ver_is_arcade(v) = notequal(v&(!ROM_SMW_ARCADE),$00)
 function ver_is_smasw_usa(v) = notequal(v&(!ROM_SMASW_U),$00)
 function ver_is_smasw_europe(v) = notequal(v&(!ROM_SMASW_E),$00)
 function ver_is_pal_rev0(v) = notequal(v&(!ROM_SMW_E1),$00)
+endif

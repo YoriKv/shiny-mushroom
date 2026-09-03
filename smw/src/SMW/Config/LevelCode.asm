@@ -65,10 +65,11 @@ includeonce
 ;# unchanged.
 ;#
 ;# The rows and the code they name are two incsrc'd fragments the editor
-;# regenerates (code/levels/). The rows are placed with the tables at the
-;# head of the ROM map, because their size is declared; the code at the
-;# other end, because its size is not -- and because a file that hijacks
-;# the game only lands if every bank has emitted first.
+;# regenerates (code/levels/). The rows are read with the defines and
+;# emitted with the tables in the level bank's packed head, because their
+;# size is declared; the code behind the packed head, because its size is
+;# not. Both from the level bank's one sequence, placed once every bank
+;# has emitted, so a file that hijacks the game lands.
 ;#
 ;# The define needs a cartridge assembled at 1 MB or larger, which the
 ;# bank's reservation says rather than letting the image quietly double.
@@ -97,19 +98,44 @@ endif
 ;#############################################################################################################
 
 ; One level's routine at one entry point, as the label a level's own file
-; defines. Placed at the level's own row of the named table, so the
-; fragment's lines may come in any order and a level the fragment names
-; twice keeps the later line. The row is a word: every routine is in this
+; defines. The line declares the row as a define keyed on the table and
+; the level number, and the placement below emits each table row by row
+; from those -- so the fragment's lines may come in any order, a level the
+; fragment names twice keeps the later line, and nothing is written
+; anywhere but in sequence. The row is a word: every routine is in this
 ; bank, and the stub supplies the bank byte. Naming a routine is what
-; plants the entry point's hook.
+; plants the entry point's hook. The level is evaluated first so the key is
+; one spelling whatever the line wrote.
 macro SMW_LevelCode(table, level, routine)
 	assert ((<level>)>>9) == 0, "A level code row names a level past $1FF. Check code/levels/level-code.asm."
-	assert ((<routine>)>>$10) == !Define_SMW_LevelBank, "A level's code is not in the level bank. Every routine the rows name is assembled into it, so the rows can be words. Check code/levels/."
+	assert defined("SMW_LevelCode_<table>Wanted"), "A level code row names an entry point that is not load, init, main or nmi. Check code/levels/level-code.asm."
 	!SMW_LevelCode_<table>Wanted #= !TRUE
-	pushpc
-	org !SMW_LevelCode_<table>At+((<level>)*$0002)
-	dw <routine>
-	pullpc
+	!SMW_LevelCodeKey #= <level>
+	!{SMW_LevelCodeRow_<table>_!{SMW_LevelCodeKey}} = <routine>
+endmacro
+
+; The rows fragment, code/levels/level-code.asm: one %SMW_LevelCode line
+; per level and entry point, each declaring its row and emitting nothing.
+; Read here, with the defines, because the hooks in Banks/ ask which entry
+; points are wanted long before the tables are placed.
+if !Define_SMW_LevelCode == !TRUE
+	incsrc "code/levels/level-code.asm"
+endif
+
+; One table, $200 words: each level's routine where the fragment named
+; one, zero where it did not. The bank check is made here rather than at
+; the line, because the routine's address is the level bank's to know.
+macro SMW_LevelCode_Rows(table)
+	!SMW_LevelCodeRow #= 0
+	while !SMW_LevelCodeRow < $0200
+		if defined("SMW_LevelCodeRow_<table>_!{SMW_LevelCodeRow}")
+			assert ((!{SMW_LevelCodeRow_<table>_!{SMW_LevelCodeRow}})>>$10) == !Define_SMW_LevelBank, "A level's code is not in the level bank. Every routine the rows name is assembled into it, so the rows can be words. Check code/levels/."
+			dw !{SMW_LevelCodeRow_<table>_!{SMW_LevelCodeRow}}
+		else
+			dw $0000
+		endif
+		!SMW_LevelCodeRow #= !SMW_LevelCodeRow+1
+	endwhile
 endmacro
 
 ;#############################################################################################################
@@ -138,15 +164,16 @@ endmacro
 
 ;#############################################################################################################
 ;# Where it goes: the four tables behind the level graphics' block, then the
-;# entry stubs, then the levels' own code. Placed from the top of each ROM
-;# map, between the level graphics' placement and the custom level
-;# palettes', because the palettes' blobs are the packed head's growing end
-;# and nothing may declare an address behind them.
+;# entry stubs, in the level bank's packed head (Config/LevelBank.asm),
+;# between the level graphics and the custom level palettes -- because the
+;# palettes' blobs are the packed head's growing end and nothing may
+;# declare an address behind them. The levels' own code goes behind the
+;# blobs, from a second placement.
 ;#############################################################################################################
 
-; Place the levels' own code, and whatever it hijacks. Called from the other
-; end of each ROM map, beside the relocated text, and that is the whole point
-; of it being a second placement:
+; Place the levels' own code, and whatever it hijacks. Called from
+; %SMW_PlaceLevelBank behind the palettes' blobs and the tool's dialect,
+; and that is the whole point of it being a second placement:
 ;
 ; - **It is variable-size, and the packed head is not.** The tables and the
 ;   stubs are a block this occupant declares, and the custom level palettes
@@ -155,21 +182,17 @@ endmacro
 ;   goes behind the palettes' blobs instead, and the packed level streams
 ;   open behind it.
 ; - **A hijack only survives if every bank has emitted.** A code file may org
-;   into the game, and written from the head of the map -- before any bank has
-;   emitted -- that write is made and then emitted over, silently. Here it
-;   sticks.
+;   into the game, and written before a bank has emitted that write is made
+;   and then emitted over, silently. The level bank is placed once every
+;   bank has, so here it sticks.
 ;
-; Read before the managed level banks close, so the packer sees the cursor
-; this leaves, and after every bank, so a hijack lands. Nothing is lifted out
-; of a file to make that work: a file's own pushpc/org/pullpc writes into a
-; bank that is already there, and comes back to the cursor by itself. What
-; is checked is that it came back: an org into the game with no bracket
-; around it would leave the rest of the file, and every placement after it,
-; assembling into the game's own banks.
+; Nothing is lifted out of a file to make that work: a file's own
+; pushpc/org/pullpc writes into a bank that is already there, and comes back
+; to the sequence by itself. What is checked is that it came back: an org
+; into the game with no bracket around it would leave the rest of the file,
+; and every placement after it, assembling into the game's own banks.
 macro SMW_PlaceLevelCodeData()
 if !Define_SMW_LevelCode == !TRUE
-	pushpc
-	org !SMW_LevelBankNext
 
 ; The levels' own routines, one label and incsrc per level that has any,
 ; growing towards whatever the bank's last occupant has left; the shipped
@@ -178,34 +201,26 @@ SMW_LevelCode_Data:
 	incsrc "code/levels/level-code-data.asm"
 	assert (pc()>>$10) == !Define_SMW_LevelBank, "A level's code file left the level bank: an org into the game needs a pushpc/pullpc bracket around it, or the rest of the file assembles over the game. Check code/levels/."
 	assert pc() <= !Loc_SMW_LevelBank_RunEnd, "The levels' code has outgrown the level bank: less fits in it than the editor was told. Check code/levels/."
-	!SMW_LevelBankNext #= pc()
-	pullpc
 endif
 endmacro
 
-; Place the tables and the stubs. Called from the head of each ROM map, and
-; bracketed with pushpc/pullpc like every placement there.
+; Place the tables and the stubs. Called from %SMW_PlaceLevelBank behind
+; the level graphics.
 macro SMW_PlaceLevelCode()
 if !Define_SMW_LevelCode == !TRUE
-	pushpc
-	org !SMW_LevelBankNext
 	assert pc() == !Loc_SMW_LevelBank_Code, "The per-level code must follow the level graphics, or lead the packed head: its rows have to sit at one address per cartridge."
 
-; One row per level number per entry point, every one of them zero -- no
-; level runs anything until a fragment line names a routine.
+; One row per level number per entry point: the routine where the fragment
+; named one, zero where it did not -- no level runs anything until a
+; fragment line names a routine.
 SMW_LevelCode_LoadRows:
-	!SMW_LevelCode_LoadAt #= pc()
-	fillbyte $00 : fill !Define_SMW_LevelCodeRowsBytes
+	%SMW_LevelCode_Rows(Load)
 SMW_LevelCode_InitRows:
-	!SMW_LevelCode_InitAt #= pc()
-	fillbyte $00 : fill !Define_SMW_LevelCodeRowsBytes
+	%SMW_LevelCode_Rows(Init)
 SMW_LevelCode_MainRows:
-	!SMW_LevelCode_MainAt #= pc()
-	fillbyte $00 : fill !Define_SMW_LevelCodeRowsBytes
+	%SMW_LevelCode_Rows(Main)
 SMW_LevelCode_NmiRows:
-	!SMW_LevelCode_NmiAt #= pc()
-	fillbyte $00 : fill !Define_SMW_LevelCodeRowsBytes
-	incsrc "code/levels/level-code.asm"
+	%SMW_LevelCode_Rows(Nmi)
 	assert pc() == SMW_LevelCode_LoadRows+($0004*!Define_SMW_LevelCodeRowsBytes), "The level code tables do not end where their four $200-row tables should. Check code/levels/level-code.asm."
 
 ; Enter one row's routine and come back. Entered by JSR with AXY 16-bit and
@@ -306,8 +321,5 @@ SMW_LevelCode_Nmi:
 	JML.l SMW_VBlankRoutine_NoMusicChange
 
 	assert pc() == SMW_LevelCode_LoadRows+!Define_SMW_Block_LevelCode, "The per-level code block is not the size Config/PackedRuns.asm states. The palettes behind it are read past the same figure, so pin the new figure in Define_SMW_Block_LevelCode."
-
-	!SMW_LevelBankNext #= pc()
-	pullpc
 endif
 endmacro

@@ -13,16 +13,20 @@ __all__ = ["EditorMode", "LevelEditing"]
 
 
 class EditorMode(Enum):
-    """What the central view is editing: a level, or the world map.
+    """What the central view is editing: a level, the world map, or the
+    Map16 tables.
 
-    Two members of the window's own state rather than a registry of views:
-    the canvas and the properties dock are shared, and this is the
+    Members of the window's own state rather than a registry of views: the
+    canvas and the properties dock are shared, and this is the
     discriminator the gesture dispatchers route by -- and the key each
-    toolbar is registered under in :attr:`MainWindow.toolbars`.
+    toolbar is registered under in :attr:`MainWindow.toolbars`. Every
+    transition between the two non-level modes routes through LEVEL, so no
+    pair of them ever has to know how to unwind the other's chrome.
     """
 
     LEVEL = auto()
     WORLD = auto()
+    MAP16 = auto()
 
 
 class LevelEditing(Enum):

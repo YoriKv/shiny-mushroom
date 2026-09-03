@@ -33,8 +33,10 @@ else
 	!LZ3 = 0
 	
 pushpc
+if !sa1_hijacks_external == 0
 ORG $0FFFEB
 	db $01
+endif
 pullpc
 endif
 	
@@ -50,9 +52,11 @@ macro ReadByte()
 endmacro
 
 pushpc
+if !sa1_hijacks_external == 0
 org $00B8E3
 	JSL CodeStart		;was JML before
 	RTS
+endif
 pullpc
 	
 CodeStart:

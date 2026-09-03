@@ -33,15 +33,15 @@ includeonce
 
 ; Whether anything wants the stash at all. Read after every reader's own
 ; file, which sets its switch.
-!Define_SMW_LevelNumberStashWanted #= !FALSE
+!SMW_LevelNumberStashWanted #= !FALSE
 if !Define_SMW_LevelCustomPalettes == !TRUE
-	!Define_SMW_LevelNumberStashWanted #= !TRUE
+	!SMW_LevelNumberStashWanted #= !TRUE
 endif
 if !Define_SMW_LevelGraphics == !TRUE
-	!Define_SMW_LevelNumberStashWanted #= !TRUE
+	!SMW_LevelNumberStashWanted #= !TRUE
 endif
 if !Define_SMW_LevelCode == !TRUE
-	!Define_SMW_LevelNumberStashWanted #= !TRUE
+	!SMW_LevelNumberStashWanted #= !TRUE
 endif
 
 ; The stash the bank $05 hijack lands on. A is 16-bit and holds the level
@@ -49,17 +49,12 @@ endif
 ; the store is long so the write lands in the mirror whatever the data bank
 ; is, and A doubles into Y exactly as the displaced ASL/TAY left it.
 ; Emitted once, by the occupant the file's top names.
-; Place it, at the level bank's fixed head. Called from the head of each ROM
-; map before every packed occupant's placement, and bracketed with
-; pushpc/pullpc like all of them.
+; Place it, at the level bank's fixed head. Called from %SMW_PlaceLevelBank
+; first of everything in the bank.
 macro SMW_PlaceLevelNumberStash()
-if !Define_SMW_LevelNumberStashWanted == !TRUE
-	pushpc
-	org !SMW_LevelBankNext
+if !SMW_LevelNumberStashWanted == !TRUE
 	assert pc() == !Loc_SMW_LevelBank_Stash, "The level number stash must be the level bank's first thing: every packed occupant behind it starts where it ends."
 	%SMW_LevelNumberStash_Stub()
-	!SMW_LevelBankNext #= pc()
-	pullpc
 endif
 endmacro
 

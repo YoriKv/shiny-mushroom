@@ -63,11 +63,12 @@ includeonce
 ;# the whole toolchain can name without a symbol, and bank $07 is the only
 ;# run every build of this feature has -- an expansion bank is room the
 ;# packing overflows into where the cartridge has one, so a tail kept there
-;# would have no address at 512 KB at all. SA-1 Pack
-;# rewrites every sprite list's header byte by following the pointer table
-;# with the loader's bank $07 literal, and under this define its patch pass
-;# reads the bank off this table instead -- by address, since that pass
-;# runs after this source has assembled and sees no symbol of ours. The
+;# would have no address at 512 KB at all. The sprite memory index a base
+;# sets (Config/SpriteMemoryIndex.asm) is written by following the pointer
+;# table with the loader's bank $07 literal, and under this define its walk
+;# reads the bank off this table instead -- by address, since the finalize
+;# pass it runs on includes no bank; SA-1 Pack's own copy of that walk reads
+;# it the same way when a pack run has it on. The
 ;# table's rows are levels/pointers/sprite-banks.asm, one `db <label>>>$10`
 ;# per level naming the label the sprite pointer table names in the same
 ;# row, so a level remapped in one is remapped in the other; the editor
@@ -84,11 +85,18 @@ includeonce
 ;# SNES_Macros_SMW.asm, which every insertion in banks $06 and $07 goes
 ;# through.
 ;#
+;# The packing is emitted as one sequence from the tail of the ROM map,
+;# %SMW_PlaceManagedLevels: the seven level macros are invoked again there
+;# in the map's order, and at their own map lines they emit nothing -- the
+;# runs the map gave them are holes, and every placement guard after them
+;# stays true. Once every bank has emitted, and after the level bank's own
+;# sequence, because the fourth run opens where that ended.
+;#
 ;# The level files a project adds are packed here too, after the banks' own
 ;# streams: levels/added/added-levels.asm is one %SMW_InsertLevelData per
 ;# added stream, under the labels the pointer tables spell (ShinyLevel_L1_*
 ;# and ShinyLevel_SP_*, unnamespaced because those tables spell them bare),
-;# read by %SMW_ManagedLevelMemory_Close before the runs are closed. Room
+;# read by %SMW_PlaceManagedLevels before the runs are closed. Room
 ;# for them is whatever the runs have left -- and what a deleted level gives
 ;# back: levels/deleted-levels.asm names the streams the project has deleted,
 ;# and %SMW_InsertLevelData inserts each as the empty level under its own
@@ -121,9 +129,10 @@ incsrc "levels/deleted-levels.asm"
 ;# $07 from its first level macro to the sprite routines the map places at
 ;# $07F000, and run 2 is the padding behind the last of those routines to
 ;# the end of the bank. Every ROM map places the same three boundaries.
-;# Run 3 is the level bank's, from the cursor the custom level palettes
-;# leave to the bank's end label: Config/LevelBank.asm states both, and
-;# there is no run 3 on a cartridge without that bank.
+;# Run 3 is the level bank's, from where the bank's own sequence ended --
+;# behind the palettes' blobs and the project's code -- to the bank's end
+;# label: Config/LevelBank.asm states both, and there is no run 3 on a
+;# cartridge without that bank.
 ;#
 ;# What the packing fills of run 2 stops at the tail this file fixes at the
 ;# top of bank $07 -- !Loc_SMW_ManagedLevelRun2_PackedEnd, the run's end for
@@ -153,46 +162,36 @@ incsrc "levels/deleted-levels.asm"
 !Loc_SMW_ManagedLevelTail_At	#= !Loc_SMW_ManagedLevelRun2_End-!Define_SMW_ManagedLevelTail
 !Loc_SMW_ManagedLevelRun2_PackedEnd	#= !Loc_SMW_ManagedLevelTail_At
 
-; Where the packing has got to. Reset here, which is once per assembler
-; pass, because this file is read at the start of each of them.
+; Where the packing has got to, and whether the packing is what is being
+; emitted. Reset here, which is once per assembler pass, because this file
+; is read at the start of each of them.
 !SMW_ManagedLevelRun	#= 0
 !SMW_ManagedLevelNext	#= !Loc_SMW_ManagedLevelRun0_Start
 !SMW_ManagedLevelEnd	#= !Loc_SMW_ManagedLevelRun0_End
-!SMW_ManagedLevelPacking = !FALSE
+!SMW_ManagedLevelEmit = !FALSE
 !SMW_ManagedLevelHeadEmitted = !FALSE
 
 ;#############################################################################################################
 
-; Open a level macro's placement: at <StockAddress> when the banks are
-; stock, and wherever the packing has got to when they are managed. The
-; managed case brackets the emission with pushpc/pullpc after an org to the
-; stock address, exactly as %SMW_RelocatableTableStart does, so the ROM
-; map's own position carries on from the front of the run the macro used
-; to fill and every warnpc after it stays true. The first placement also
-; emits the run's head: the Chocolate Island 2 hook and its bank table,
-; before any stream, so the stub keeps one address whatever the streams do.
-macro SMW_ManagedLevelRunStart(StockAddress)
-if !Define_SMW_ManagedLevelMemory == !TRUE
-	org <StockAddress>
-	pushpc
-	org !SMW_ManagedLevelNext
+; A level macro's slot in the ROM map, or its turn in the packing. The
+; seven macros are invoked twice under the define: from their ROM map lines,
+; where each orgs to its stock address as ever and emits nothing -- the run
+; the map gave it is a hole, and every placement guard after it stays true
+; -- and again from %SMW_PlaceManagedLevels, in map order, where each emits
+; its streams wherever the packing has got to. !SMW_ManagedLevelEmit says
+; which; %SMW_InsertLevelData reads the same flag. The first turn in the
+; packing also emits the run's head: the Chocolate Island 2 hook and its
+; bank table, before any stream, so the stub keeps one address whatever the
+; streams do.
+macro SMW_ManagedLevelSlot(StockAddress)
+if !Define_SMW_ManagedLevelMemory == !TRUE && !SMW_ManagedLevelEmit == !TRUE
 	if !SMW_ManagedLevelHeadEmitted == !FALSE
+		assert pc() == !Loc_SMW_ManagedLevelRun0_Start, "The level packing must open at the first run's start. Check %SMW_PlaceManagedLevels."
 		%SMW_ManagedLevelMemory_Head()
 		!SMW_ManagedLevelHeadEmitted = !TRUE
 	endif
-	!SMW_ManagedLevelPacking = !TRUE
 else
 	%InsertMacroAtXPosition(<StockAddress>)
-endif
-endmacro
-
-; Close the placement %SMW_ManagedLevelRunStart opened: carry the packing
-; forward and put the ROM map's position back.
-macro SMW_ManagedLevelRunEnd()
-if !Define_SMW_ManagedLevelMemory == !TRUE
-	!SMW_ManagedLevelPacking = !FALSE
-	!SMW_ManagedLevelNext #= pc()
-	pullpc
 endif
 endmacro
 
@@ -200,10 +199,11 @@ endmacro
 ; cartridge as $FF. Four runs on a cartridge with a level bank and three
 ; without, so a stream is offered at most three moves before the banks are
 ; full, and the error says so by name rather than leaving asar to report a
-; position. The fourth opens at the cursor the custom level palettes left
-; in the level bank -- the run's head when they are off -- and ends at the
-; tail below; where there is no such bank the packing has run 2's tail as
-; its last bytes and the error names the cartridge as a way out.
+; position. The fourth opens where the level bank's own sequence ended --
+; behind the palettes' blobs and the project's code, or at the run's head
+; when none of them is on -- and ends at the bank's end; where there is no
+; such bank the packing has run 2's tail as its last bytes and the error
+; names the cartridge as a way out.
 macro SMW_ManagedLevelAdvance()
 	if pc() < !SMW_ManagedLevelEnd
 		fillbyte $FF : fill !SMW_ManagedLevelEnd-pc()
@@ -216,7 +216,7 @@ macro SMW_ManagedLevelAdvance()
 		!SMW_ManagedLevelNext #= !Loc_SMW_ManagedLevelRun2_Start
 		!SMW_ManagedLevelEnd #= !Loc_SMW_ManagedLevelRun2_PackedEnd
 	elseif !SMW_ManagedLevelRun == 3 && !Define_SMW_LevelBankExists == !TRUE
-		!SMW_ManagedLevelNext #= !SMW_LevelBankNext
+		!SMW_ManagedLevelNext #= !SMW_LevelBank_StreamsAt
 		!SMW_ManagedLevelEnd #= !Loc_SMW_LevelBank_RunEnd
 	elseif !Define_SMW_LevelBankExists == !TRUE
 		error "The level banks are full: the level streams no longer fit banks $06 and $07 and the level bank end to end. Take bytes out of a level."
@@ -236,10 +236,10 @@ macro SMW_ManagedLevelNeedsMove(Size)
 endmacro
 
 ; Find the stream of <Size> bytes about to be inserted a run it fits, before
-; its label is placed. Called by %SMW_InsertLevelData while a level macro is
-; open and the banks are managed. A sprite list has no bank to keep: the
-; loader reads each list's bank off the tail's table, so it goes wherever
-; the packing has got to like any other stream.
+; its label is placed. Called by %SMW_InsertLevelData while the packing is
+; being emitted. A sprite list has no bank to keep: the loader reads each
+; list's bank off the tail's table, so it goes wherever the packing has got
+; to like any other stream.
 macro SMW_ManagedLevelFit(Size)
 	%SMW_ManagedLevelNeedsMove(<Size>)
 	if !SMW_ManagedLevelMove == !TRUE
@@ -265,10 +265,10 @@ endmacro
 ; found it. Direct page is the bank $05 routine's own, so the stores land
 ; where the displaced one did.
 ;
-; Emitted from inside a level macro, every one of which has opened the SMW
-; namespace its labels are read under; the namespace is closed around the
-; stub so its labels are spelled here exactly as the hook names them, and
-; reopened for the streams that follow.
+; Emitted from inside a level macro's turn in the packing, every one of
+; which has opened the SMW namespace its labels are read under; the
+; namespace is closed around the stub so its labels are spelled here
+; exactly as the hook names them, and reopened for the streams that follow.
 macro SMW_ManagedLevelMemory_Head()
 namespace off
 SMW_ManagedLevelMemory_Start:
@@ -296,24 +296,37 @@ SMW_ManagedLevelMemory_Streams:
 namespace SMW
 endmacro
 
-; Close the packing: pack the level files the project adds after the banks'
-; own streams, label where the streams end, and fill what the run they
-; ended in has left with $FF, then every run of the stock banks the packing
+; The packing itself, as one sequence: one org at the first run's start,
+; then the seven level macros in the ROM map's order -- their turn in the
+; packing, each inserting its streams where the packing has got to and
+; moving it on a run when one would not fit -- then the level files the
+; project adds, a label where the streams end, and the fills: what the run
+; they ended in has left, then every run of the stock banks the packing
 ; never reached -- the stock fills those runs held emit nothing under the
 ; define, and a run the assembler never wrote is zeroes otherwise. The
 ; level bank's rest is the reservation's, and stays as the reservation
-; left it. Called once from each ROM map after every bank has emitted,
-; beside the other features' placements; the whole of it is bracketed with
-; pushpc/pullpc like every placement there, and the added fragment's labels
-; are spelled bare because the map calls this outside any namespace.
-macro SMW_ManagedLevelMemory_Close()
+; left it. Then bank $07's tail, the sprite-bank stub and its table, at its
+; fixed address.
+;
+; Called once from each ROM map after every bank has emitted and after the
+; level bank's own sequence, whose end is where the fourth run opens. The
+; added fragment's labels are spelled bare because the map calls this
+; outside any namespace. Nothing after the ROM map reads the position this
+; leaves.
+macro SMW_PlaceManagedLevels()
 if !Define_SMW_ManagedLevelMemory == !TRUE
-	pushpc
-	org !SMW_ManagedLevelNext
-	!SMW_ManagedLevelPacking = !TRUE
+	!SMW_ManagedLevelEmit = !TRUE
+	org !Loc_SMW_ManagedLevelRun0_Start
+	%DATATABLE_RT00_SMW_LevelData(NULLROM)
+	%DATATABLE_RT01_SMW_LevelData(NULLROM)
+	%DATATABLE_RT02_SMW_LevelData(NULLROM)
+	%DATATABLE_RT03_SMW_LevelData(NULLROM)
+	%DATATABLE_RT04_SMW_LevelData(NULLROM)
+	%DATATABLE_RT05_SMW_LevelData(NULLROM)
+	%DATATABLE_RT06_SMW_LevelData(NULLROM)
 SMW_ManagedLevelMemory_Added:
 	incsrc "levels/added/added-levels.asm"
-	!SMW_ManagedLevelPacking = !FALSE
+	!SMW_ManagedLevelEmit = !FALSE
 SMW_ManagedLevelMemory_Free:
 	if !SMW_ManagedLevelRun < 3
 		if pc() < !SMW_ManagedLevelEnd
@@ -328,16 +341,15 @@ SMW_ManagedLevelMemory_Free:
 		org !Loc_SMW_ManagedLevelRun2_Start
 		fillbyte $FF : fill !Loc_SMW_ManagedLevelRun2_PackedEnd-!Loc_SMW_ManagedLevelRun2_Start
 	endif
-	pullpc
+	%SMW_ManagedLevelMemory_Tail()
 endif
 endmacro
 
-; Bank $07's tail: the sprite-bank stub and its table. Called from each ROM
-; map after the close, beside the level bank's reservation, and bracketed
-; with pushpc/pullpc like every placement there.
+; Bank $07's tail: the sprite-bank stub and its table, at the fixed address
+; the top of this file states. Called from %SMW_PlaceManagedLevels once the
+; packing has closed.
 macro SMW_ManagedLevelMemory_Tail()
 if !Define_SMW_ManagedLevelMemory == !TRUE
-	pushpc
 	org !Loc_SMW_ManagedLevelTail_At
 SMW_ManagedLevelMemory_Tail:
 ; The sprite-list bank, per level. The hook in Banks/Bank05.asm lands here
@@ -368,6 +380,5 @@ SMW_ManagedLevelMemory_SpriteBanks:
 	incsrc "levels/pointers/sprite-banks.asm"
 	assert pc() == SMW_ManagedLevelMemory_SpriteBanks+$0200, "The sprite-bank table must hold one byte for each of the $200 levels. Check levels/pointers/sprite-banks.asm."
 	assert pc() == !Loc_SMW_ManagedLevelRun2_End, "The managed level banks' tail does not end at the end of bank $07."
-	pullpc
 endif
 endmacro

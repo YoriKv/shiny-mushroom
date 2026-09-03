@@ -11,12 +11,15 @@ are mixed into.
 from __future__ import annotations
 
 __all__ = [
+    "BUILD_ONLY",
     "DISASSEMBLY",
     "LEVEL_PALETTE",
     "LEVEL_PARTS",
     "MISSING_LABEL",
+    "MUSIC",
     "POINTER_PARTS",
     "SOURCE_FILES",
+    "STRINGS",
     "WORLD_PARTS",
     "WORLD_TABLES",
     "_rebuild_detail",
@@ -40,6 +43,28 @@ LEVEL_PALETTE = "level palette"
 #: see :meth:`MainWindow._check_source_files`. Not a gatherer like the others:
 #: nothing skipped it, it simply is not in the cartridge yet.
 SOURCE_FILES = "source files"
+#: The project's raw graphics files, changed on disk since it was last built --
+#: the other half of what :meth:`MainWindow._check_source_files` notices,
+#: whether a tile editor or the editor's own save wrote them. A build is owed
+#: for the shipped cartridge, so they arm Rebuild and the title like
+#: :data:`SOURCE_FILES`; unlike those, every run carries them
+#: (:func:`shiny_mushroom.source_files.carried_by_a_run`), so the run's notice
+#: never names them.
+RAW_FILES = "raw files"
+
+#: Subjects the editor can save that **no patch can carry** into a running
+#: cartridge: they reach it only through a build. Not a gatherer's reading like
+#: the ones above -- nothing skipped them, and there is nothing in
+#: :mod:`shiny_mushroom.cart_patches` that could, because what they save is
+#: assembler text rather than bytes at a known offset. Without this they are
+#: the one kind of saved edit a test run is silently missing instead of
+#: reporting: the reading mechanism can only ever name subjects a gatherer
+#: speaks for, and these have no gatherer at all. One key for all of them,
+#: since two can be saved before one build; the build clears it.
+BUILD_ONLY = "build only"
+#: What that key names, as the title says them.
+STRINGS = "strings"
+MUSIC = "music"
 
 #: The disassembly under the project, moved on since the cartridge was built --
 #: see :meth:`MainWindow._check_disassembly`. Filed beside :data:`SOURCE_FILES`

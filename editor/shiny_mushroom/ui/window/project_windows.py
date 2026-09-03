@@ -1,10 +1,12 @@
 """The Project menu's windows: the tables and text that belong to no level.
 
-The Map16 editor, the Secondary Entrances window, the Strings window and the
-memory map. Each is a window over the open **project** rather than over the
+The Secondary Entrances window, the Strings window, the memory map and the
+audio. Each is a window over the open **project** rather than over the
 level on the canvas, so none of them follows a level switch, and each is kept
 and brought forward rather than rebuilt -- the work in one outlives a trip to
-another level or to the world map.
+another level or to the world map. The Map16 tables are not here any more:
+they are an editing environment of their own -- see
+:mod:`shiny_mushroom.ui.map16_mode`.
 
 The cartridge's arrival tables are read here too, because a screen exit marked
 Secondary entrance is read against them wherever it is shown.
@@ -12,6 +14,7 @@ Secondary entrance is read against them wherever it is shown.
 
 from __future__ import annotations
 
+import shutil
 from collections.abc import Callable
 
 from shiny_mushroom import level_names, secondary_entrances, strings
@@ -22,49 +25,33 @@ from shiny_mushroom.build import (
     asm_runs,
     asm_shared_rooms,
     features_wanted,
+    rom_path,
 )
+from shiny_mushroom.external_emulator import LaunchError, launch
 from shiny_mushroom.hexnum import hexnum
 from shiny_mushroom.memory_map import MemoryMap, memory_map
 from shiny_mushroom.music_tables import MusicTableError
-from shiny_mushroom.project import HandEditedRegion, ProjectError
+from shiny_mushroom.project import OUTPUT_DIR, HandEditedRegion, ProjectError
+from shiny_mushroom.project_music import custom_track_value
 from shiny_mushroom.rom_patches import secondary_entrance_rows
 from shiny_mushroom.ui.audio_dialog import AudioDialog
-from shiny_mushroom.ui.map16_dialog import Map16Dialog
 from shiny_mushroom.ui.memory_map_dialog import MemoryMapDialog
 from shiny_mushroom.ui.secondary_entrances_dialog import SecondaryEntrancesDialog
+from shiny_mushroom.ui.settings_dialog import addmusick_tool, external_emulator
 from shiny_mushroom.ui.strings_window import StringsWindow
-from shiny_mushroom.ui.window.parts import _rebuild_detail
+from shiny_mushroom.ui.window.parts import MUSIC, STRINGS, _rebuild_detail
 from smw_tools.asm_codec import AsmRegionError, AsmRegionFull
 from smw_tools.asm_regions import region_for
 from smw_tools.audio import AudioError
-from smw_tools.features import STRING_TABLES_RELOCATED, FeatureError
+from smw_tools.features import CUSTOM_MUSIC, STRING_TABLES_RELOCATED, FeatureError
+from smw_tools.music import MusicError
+from smw_tools.paths import asar_binary
 
 __all__ = ["ProjectWindows"]
 
 
 class ProjectWindows:
     """:class:`~shiny_mushroom.ui.main_window.MainWindow`'s project windows."""
-
-    def edit_map16(self) -> None:
-        """Open the Map16 editor over the level on the canvas, or bring it
-        forward -- see :mod:`shiny_mushroom.ui.map16_dialog`. Kept like the
-        Strings window; a save there reloads the level through
-        :meth:`_refresh_picture`, which is where the saved patch is seen."""
-        if self._project is None or self._snapshot is None:
-            return
-        if self._map16 is None:
-            self._map16 = Map16Dialog(self._project, self._refresh_picture, self)
-        self._map16.show_snapshot(self._snapshot)
-        self._map16.show()
-        self._map16.raise_()
-        self._map16.activateWindow()
-
-    def _close_map16(self) -> None:
-        """Put the editor away with the project whose tables it holds."""
-        if self._map16 is not None:
-            self._map16.close()
-            self._map16.deleteLater()
-            self._map16 = None
 
     # -- the cartridge's arrivals ----------------------------------------------
 
@@ -317,7 +304,13 @@ class ProjectWindows:
             )
             return False
         self._strings.set_saved(document)
-        self._status_message("Strings saved", 4000)
+        # Nothing patches the strings into a running cartridge -- they are
+        # assembler text, not bytes at an offset -- so a test run shows the
+        # built ones until a build carries these.
+        self._note_build_only(STRINGS)
+        self._status_message(
+            "Strings saved -- Project > Rebuild (Ctrl+B) to see it", 8000
+        )
         self._refresh_memory_map()
         return True
 
@@ -446,8 +439,11 @@ class ProjectWindows:
             self._audio = AudioDialog(self)
             self._audio.repoint_asked.connect(self._repoint_music)
             self._audio.track_asked.connect(self._set_level_music)
+            self._audio.import_asked.connect(self._import_music)
+            self._audio.preview_asked.connect(self._preview_song)
             self._adopt_shortcuts(self._audio)
         self._audio.show_audio(read)
+        self._show_songs()
         self._audio.show()
         self._audio.raise_()
         self._audio.activateWindow()
@@ -490,6 +486,94 @@ class ProjectWindows:
             read = self._audio_read()
             if read is not None:
                 self._audio.show_audio(read)
+            self._show_songs()
+
+    def _show_songs(self) -> None:
+        """Hand the Songs tab what the project carries.
+
+        Read from the overlay rather than from the cartridge, like the two
+        editable tables and for the same reason: an import has to show at once,
+        standing over a build that does not have it yet.
+        """
+        if self._audio is None or self._project is None:
+            return
+        self._audio.show_songs(
+            self._project.imported_music(),
+            self._project.music_folder,
+            addmusick_tool() is not None,
+            CUSTOM_MUSIC.id in features_wanted(self._project),
+        )
+
+    def _import_music(self) -> None:
+        """Compile the project's songs into its cartridge.
+
+        **The tool is the person's own and is never written to.** A run is
+        staged into a directory of its own under the project's cache, because
+        AddmusicK works in its working directory -- it rewrites its song list
+        and fills its own output folders -- so running in an installation would
+        edit it every time somebody imported, and two projects importing at
+        once would race over one file.
+
+        The cartridge is read by the tool and not written: it decides a
+        freespace layout for a patch that is thrown away, since where anything
+        goes is the disassembly's to say.
+        """
+        if self._project is None:
+            return
+        tool = addmusick_tool()
+        if tool is None:
+            self._alert(
+                "No AddmusicK is set.",
+                detail="Songs are compiled by AddmusicK, which is not part of "
+                "this editor. File > Settings is where to point at your own "
+                "copy.",
+            )
+            return
+        # The songs reach the cartridge through the custom-music feature, so
+        # importing is the flow that offers it -- the same offer a custom
+        # palette or an overgrown string makes. A no still imports: the songs
+        # are data the overlay keeps either way, and the note on the tab says
+        # a build carries none of them until the switch is thrown.
+        wanted = self._want_feature(CUSTOM_MUSIC.id)
+        if self._project is None:
+            return
+        cartridge = rom_path(self._project)
+        if not cartridge.is_file():
+            self._alert(
+                "The project has not been built yet.",
+                detail="AddmusicK reads a cartridge to compile against, so "
+                "Project > Rebuild (Ctrl+B) comes first.",
+            )
+            return
+        work = self._project.root / OUTPUT_DIR / ".addmusick"
+        try:
+            shutil.rmtree(work, ignore_errors=True)
+            found, _moved = self._project.import_music(
+                tool, cartridge, work, asar_binary()
+            )
+        except (MusicError, ProjectError, OSError) as error:
+            self._alert("The music could not be compiled.", detail=str(error))
+            return
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+        self._show_songs()
+        # The songs land in the overlay as a fragment and its blobs, which no
+        # patch can carry into a running cartridge -- the same reading the two
+        # tables record in `_music_saved`, so an import owns up to it too.
+        self._note_build_only(MUSIC)
+        self._sync_rebuild_action()
+        count = len(found.custom_songs)
+        said = (
+            f"{count} song{'' if count == 1 else 's'} compiled beside the "
+            f"stock soundtrack, {found.rom_bytes:,} bytes"
+        )
+        self._status_message(
+            f"{said} -- Project > Rebuild (Ctrl+B) to hear them"
+            if wanted
+            else f"{said} -- kept, but a build carries none until custom "
+            f"music is turned on",
+            8000,
+        )
 
     def _repoint_music(self, blob: str, value: int, label: str) -> None:
         """Point one music value at another of its bank's songs.
@@ -511,7 +595,25 @@ class ProjectWindows:
         self._music_saved(f"Music value {hexnum(value, 2)} now plays {label}")
 
     def _set_level_music(self, setting: int, define: str) -> None:
-        """Give one of the header's eight music settings another track."""
+        """Give one of the header's eight music settings another track.
+
+        A stock track is a token move and nothing else. An imported song is
+        reached through the custom-music feature, so picking one offers the
+        switch first -- the table would otherwise name a define only the
+        feature states, which is a build refused later for a reason given
+        here.
+        """
+        if self._project is None:
+            return
+        if custom_track_value(define) is not None and not self._want_feature(
+            CUSTOM_MUSIC.id
+        ):
+            self._alert(
+                "The setting was left as it was.",
+                detail="An imported song is reached through the custom-music "
+                "feature, which was not turned on.",
+            )
+            return
         if self._project is None:
             return
         try:
@@ -520,6 +622,42 @@ class ProjectWindows:
             self._alert("The music setting could not be changed.", detail=str(error))
             return
         self._music_saved(f"Music setting {setting} changed")
+
+    def _preview_song(self, value: int) -> None:
+        """Open one imported song's audition file in the external emulator.
+
+        AddmusicK writes a playable ``.spc`` beside every song it compiles and
+        the import keeps it, so hearing a song costs no rebuild and no SPC700
+        core of our own: the emulator the person already uses opens the file.
+        Nothing is patched or waited for, exactly as Test ROM Externally.
+        """
+        if self._project is None:
+            return
+        emulator = external_emulator()
+        if emulator is None:
+            self._alert(
+                "No external emulator is set.",
+                detail="A preview opens the song's .spc in the emulator named "
+                "in File > Settings.",
+            )
+            return
+        spc = self._project.imported_spc(value)
+        if spc is None:
+            self._alert(
+                "This song has no audition file.",
+                detail="Its compile predates song previews. Import again and "
+                "one is kept beside every song.",
+            )
+            return
+        try:
+            launch(emulator, spc)
+        except LaunchError as error:
+            self._alert(
+                f"{emulator.name} could not be started.",
+                detail=f"{error} File > Settings is where the emulator is set.",
+            )
+            return
+        self._status_message(f"Opened {spc.name} in {emulator.name}", 8000)
 
     def _music_saved(self, said: str) -> None:
         """After either audio table is written: show it, and arm Rebuild.
@@ -530,6 +668,9 @@ class ProjectWindows:
         the honest picture, and the status line says which half is which.
         """
         self._refresh_audio()
+        # The tables are assembler defines, which no patch can carry: the
+        # cartridge plays the built ones until a build carries these.
+        self._note_build_only(MUSIC)
         self._sync_rebuild_action()
         self._status_message(f"{said} -- Project > Rebuild (Ctrl+B) to hear it", 8000)
 

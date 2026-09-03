@@ -2,8 +2,8 @@ includeonce
 
 ;#############################################################################################################
 ;# The second bank an expanded cartridge reserves: the level bank, shared by
-;# the level graphics, the custom level palettes and the managed level
-;# banks.
+;# the level graphics, the per-level code, the custom level palettes, the
+;# project's own code and the managed level banks.
 ;#
 ;# The growable features' run (Config/ReservedBank.asm) holds tables the
 ;# game reads with the data bank pointed at them, and is priced as one pool
@@ -14,27 +14,39 @@ includeonce
 ;# room fungible: a level that grew into the bank pays for it out of what
 ;# the palettes did not take, and the other way round.
 ;#
-;# Three occupants, and the order is fixed by what each needs:
+;# Five occupants, and the order is fixed by what each needs:
 ;#
 ;# - The level graphics, at the head (Config/LevelGraphics.asm): $200 rows
 ;#   of eight bytes at the run's fixed start, so their address is the same
 ;#   on every cartridge this bank is, then their stubs -- one block of one
-;#   size, whatever else is on. Placed from the top of each ROM map, before
-;#   any bank emits.
-;# - The custom level palettes, after them (Config/LevelCustomPalettes.asm):
-;#   the pointer table at the run's start, or that one fixed size behind
-;#   it, so its address is one number per cartridge, then the stubs, then
-;#   the blobs. Placed from the top of each ROM map too.
-;# - The managed level banks, after those (Config/ManagedLevelMemory.asm):
+;#   size, whatever else is on.
+;# - The per-level code's tables and stubs behind them (Config/LevelCode.asm),
+;#   one block of one size too.
+;# - The custom level palettes, after those (Config/LevelCustomPalettes.asm):
+;#   the pointer table at the run's start, or the fixed sizes behind it, so
+;#   its address is one number per cartridge, then the stubs, then the
+;#   blobs -- the packed head's growing end.
+;# - The project's own code behind the blobs: the tool's dialect and library
+;#   (Config/UberASM.asm), the levels' routines (Config/LevelCode.asm), the
+;#   game modes' (Config/GameModeCode.asm) and the global ones
+;#   (Config/GlobalCode.asm), each whatever length the project's files come
+;#   to.
+;# - The managed level banks, last (Config/ManagedLevelMemory.asm):
 ;#   the level streams that reached the end of banks $06 and $07 are packed
 ;#   from where the occupants before them ended, and the level files the
 ;#   project adds after those. The feature's sprite-bank stub and its per-level table
 ;#   sit at the top of bank $07 rather than in this bank at all, where the
-;#   loader's hook and SA-1 Pack's patch pass can both find the table
-;#   without a symbol on every cartridge. That occupant is the one this
+;#   loader's hook and SA-1 Pack's sprite-memory rewrite can both find the
+;#   table without a symbol on every cartridge. That occupant is the one this
 ;#   bank is optional for: it wants the room and can do without it, so on a
 ;#   cartridge with no expansion bank it packs into what the two level
 ;#   banks leave -- !Define_SMW_LevelBankExists is what it reads.
+;#
+;# The bank is emitted as one sequence, %SMW_PlaceLevelBank below: one org
+;# at its head, then the occupants one after another, so where each lands
+;# is where the assembler has got to and nothing carries a position between
+;# them. Once every bank has emitted, because the project's code may hijack
+;# the game.
 ;#
 ;# The run is the whole bank behind one RATS tag, for the reserved run's
 ;# reason: asar's freespace search takes any long enough run of $00, and a
@@ -54,10 +66,10 @@ includeonce
 ;# was given.
 ;#
 ;# The reservation needs a cartridge assembled at 1 MB or larger, and says so
-;# rather than letting the image quietly double -- for the two occupants that
-;# have nowhere else to go. The third asks whether the bank is there and does
-;# without where it is not, so a 512 KB build with only that one on reserves
-;# nothing and gains no RATS tag.
+;# rather than letting the image quietly double -- for the occupants that
+;# have nowhere else to go. The managed level banks ask whether the bank is
+;# there and do without where it is not, so a 512 KB build with only that
+;# occupant on reserves nothing and gains no RATS tag.
 ;#############################################################################################################
 
 ; The bank. %SMW_ReserveLevelBank asserts that the run landed in it.
@@ -73,34 +85,39 @@ endif
 %SMW_ExpansionBankExists(!Define_SMW_LevelBank)
 !Define_SMW_LevelBankExists #= !SMW_ExpansionBankExists
 
-; Whether anything wants the bank at all. A build with none of the three
-; on reserves nothing, so a stock cartridge gains no RATS tag and no
-; symbol. The level graphics and the custom level palettes have nowhere
-; else to put their tables, so each wants the bank whatever the cartridge
-; is and the reservation refuses a cartridge without one; the managed level
-; banks want it only where it exists.
-!Define_SMW_LevelBankWanted #= !FALSE
+; Whether anything wants the bank at all. A build with none of its
+; occupants on reserves nothing, so a stock cartridge gains no RATS tag and
+; no symbol. The level graphics, the code features and the custom level
+; palettes have nowhere else to put their tables, so each wants the bank
+; whatever the cartridge is and the reservation refuses a cartridge without
+; one; the managed level banks want it only where it exists.
+!SMW_LevelBankWanted #= !FALSE
 if !Define_SMW_LevelGraphics == !TRUE
-	!Define_SMW_LevelBankWanted #= !TRUE
+	!SMW_LevelBankWanted #= !TRUE
 endif
 if !Define_SMW_LevelCustomPalettes == !TRUE
-	!Define_SMW_LevelBankWanted #= !TRUE
+	!SMW_LevelBankWanted #= !TRUE
 endif
 if !Define_SMW_LevelCode == !TRUE
-	!Define_SMW_LevelBankWanted #= !TRUE
+	!SMW_LevelBankWanted #= !TRUE
 endif
 if !Define_SMW_GameModeCode == !TRUE
-	!Define_SMW_LevelBankWanted #= !TRUE
+	!SMW_LevelBankWanted #= !TRUE
 endif
 if !Define_SMW_GlobalCode == !TRUE
-	!Define_SMW_LevelBankWanted #= !TRUE
+	!SMW_LevelBankWanted #= !TRUE
 endif
 if !Define_SMW_UberASM == !TRUE
-	!Define_SMW_LevelBankWanted #= !TRUE
+	!SMW_LevelBankWanted #= !TRUE
+endif
+; The frame stub lives here too, and the custom music wants it without
+; wanting anything else of this bank's (Config/GlobalCode.asm).
+if !SMW_FrameHookWanted == !TRUE
+	!SMW_LevelBankWanted #= !TRUE
 endif
 if !Define_SMW_ManagedLevelMemory == !TRUE
 	if !Define_SMW_LevelBankExists == !TRUE
-		!Define_SMW_LevelBankWanted #= !TRUE
+		!SMW_LevelBankWanted #= !TRUE
 	endif
 endif
 
@@ -113,7 +130,7 @@ endif
 ; (Config/LevelNumberStash.asm), so no occupant's block depends on which
 ; others the cartridge has and a new reader of the stash costs nothing but
 ; its own switch.
-if !Define_SMW_LevelNumberStashWanted == !TRUE
+if !SMW_LevelNumberStashWanted == !TRUE
 	!Loc_SMW_LevelBank_Packed	#= !Loc_SMW_LevelBank_Stash+!Define_SMW_Block_LevelNumberStash
 else
 	!Loc_SMW_LevelBank_Packed	#= !Loc_SMW_LevelBank_Stash
@@ -146,12 +163,12 @@ else
 	!Loc_SMW_LevelBank_Palettes	#= !Loc_SMW_LevelBank_Code
 endif
 
-; Where the run has got to: the cursor the level graphics and the palettes
-; pack at and carry forward, and the packer opens its fourth run from.
-; Reset here, which is once per assembler pass, because this file is read
-; at the start of each of them. It opens at the fixed head, which the stash
-; is placed at and carries forward from.
-!SMW_LevelBankNext #= !Loc_SMW_LevelBank_Stash
+; Where the bank's sequence ended, and so where the packer opens its
+; fourth run: set by %SMW_PlaceLevelBank below once every occupant has
+; emitted, and read by %SMW_ManagedLevelAdvance. Reset here, which is once
+; per assembler pass, because this file is read at the start of each of
+; them.
+!SMW_LevelBank_StreamsAt #= !Loc_SMW_LevelBank_Stash
 
 ; The reservation (Config/ExpansionBanks.asm), and the one thing this bank has
 ; to be that the others do not: not the bank the growable features were
@@ -163,8 +180,8 @@ endif
 ; same bytes again, which is where the end label the editor prices against
 ; comes from.
 macro SMW_ReserveLevelBank()
-if !Define_SMW_LevelBankWanted == !TRUE
-	if !Define_SMW_ReservedBankWanted == !TRUE
+if !SMW_LevelBankWanted == !TRUE
+	if !SMW_ReservedBankWanted == !TRUE
 		if !Define_SMW_LevelBank == !Define_SMW_ReservedBank
 			error "The level bank and the growable features are being reserved the same bank, and each reservation is the whole of one. Check the two bank defines."
 		endif
@@ -176,8 +193,43 @@ endif
 endmacro
 
 ; The same reservation, laid down in the initialize pass -- see the macro.
-if !Define_SMW_LevelBankWanted == !TRUE
+if !SMW_LevelBankWanted == !TRUE
 	if !FileType == !FileType_InitializeROM
 		%SMW_ReserveLevelBank()
 	endif
 endif
+
+; The bank itself, as one sequence: one org at its head, then every
+; occupant in the order the top of this file states, each emitting nothing
+; where its feature is off so the ones behind close up -- the stash, the
+; fixed-size blocks the packed head is made of, the palettes' blobs, the
+; tool's dialect and library, then the project's own code: a level's, a
+; game mode's, the global routines. The packed level streams open where
+; that ended, which is the one position handed on rather than read off the
+; assembler, because the packing fills banks $06 and $07 first and reaches
+; this bank from a different org.
+;
+; Called from the tail of each ROM map after the reservation, once every
+; bank has emitted: the project's code may hijack the game, and a write into
+; a bank that has not emitted yet is emitted over in silence. Nothing after
+; the ROM map reads the position this leaves.
+macro SMW_PlaceLevelBank()
+if !SMW_LevelBankWanted == !TRUE
+	org !Loc_SMW_LevelBank_Stash
+	%SMW_PlaceLevelNumberStash()
+	%SMW_PlaceLevelGraphics()
+	%SMW_PlaceLevelCode()
+	%SMW_PlaceLevelCustomPalettes()
+; Where the project's own code begins and where it ends -- and so where the
+; packed streams open. Two labels the build's symbol file carries and
+; nothing else reads, so the editor prices the streams behind the code's
+; assembled length rather than guess at it; they cost no bytes.
+SMW_LevelBank_Code:
+	%SMW_PlaceUberASM()
+	%SMW_PlaceLevelCodeData()
+	%SMW_PlaceGameModeCode()
+	%SMW_PlaceGlobalCode()
+SMW_LevelBank_Streams:
+	!SMW_LevelBank_StreamsAt #= pc()
+endif
+endmacro

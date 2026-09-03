@@ -34,11 +34,17 @@ it is what the level loader uses.
 **A core can also be asked for pictures and sound**, which is what
 :mod:`shiny_mushroom.emu.play` needs and what ``video=`` and ``audio=`` are for.
 Both require a non-NULL handle, because ``InitializeEmu`` builds nothing at all
-when either handle is NULL -- so a placeholder is passed. The software renderer
-ignores it, the mouse manager that would use it is never built (``noInput``), and
-Windows' DirectSound takes it only to set a cooperative level, which it grants;
-measured on Windows, sound plays and logs no error. Handing it a real window
-belonging to another process would be undefined rather than better.
+when either handle is NULL. The software renderer ignores what it is given and
+the mouse manager that would use it is never built (``noInput``), so on Linux
+and macOS -- where the sound manager is SDL's and ignores it too -- a number
+that is merely non-NULL is enough.
+
+**Windows needs a window that really exists, or the sound is silent.**
+``SoundManager`` hands the handle to ``IDirectSound8::SetCooperativeLevel``,
+which accepts an invalid one without failing: the buffers are created, written
+and played, no ``[Audio]`` line is logged, and nothing comes out of the
+speakers. So the core makes its own -- :func:`_own_window`, a message-only
+window belonging to this process, alive for exactly as long as the core is.
 
 **Sound needs a config pushed, or it is a crash rather than silence.** Mesen's
 own front end always sets one; this package sets exactly the one field that has
@@ -116,14 +122,53 @@ FLAG_CONSOLE_MODE = 0x10
 #: are not plausible and says so if none ever arrives.
 NOTIFY_REFRESH_SOFTWARE_RENDERER = 22
 
+#: ``ConsoleNotificationType::CodeBreak`` and ``DebuggerResumed``, the sixth and
+#: seventh entries of the same enum :data:`NOTIFY_REFRESH_SOFTWARE_RENDERER`
+#: counts along. A break is how the editor learns a cartridge hit a ``BRK``:
+#: with the debugger on, Mesen stops the machine *before* the instruction
+#: executes and sends this, which is what makes the registers in
+#: :class:`shiny_mushroom.brk.BrkReport` the ones the ``BRK`` was reached with.
+NOTIFY_CODE_BREAK = 5
+NOTIFY_DEBUGGER_RESUMED = 6
+
+#: ``BreakSource``, from ``Core/Debugger/DebugTypes.h``, and only the one entry
+#: that matters here. Every other source is something the editor itself asked
+#: for -- a pause, a frame step, the debugger starting -- and is ignored, which
+#: is why the source is checked rather than the notification alone.
+BREAK_SOURCE_BRK = 7
+
+#: ``DebuggerFlags``. Per processor, and both are set: on a cartridge with an
+#: SA-1 the game's own code -- a custom sprite's included -- runs on the
+#: coprocessor, and ``SnesDebugger`` checks the flag for whichever CPU it is
+#: serving. A cartridge without one is unharmed by the second flag.
+DEBUGGER_FLAG_SNES = 1 << 0
+DEBUGGER_FLAG_SA1 = 1 << 2
+
+#: How long a ``BRK`` is: the opcode and the exception number after it. What
+#: :meth:`MesenCore.let_break_go` moves the program counter by to step over one.
+BRK_LENGTH = 2
+
+#: How many times :meth:`MesenCore.let_break_go` will let a machine go before
+#: leaving it. Each pass is a resume and a halt of a cartridge that has already
+#: raised an exception; one is what a healthy recovery costs, and the bound is
+#: here so that a cartridge breaking on every instruction cannot hold a worker
+#: in the loop.
+BREAK_RELEASES = 8
+
 #: A picture no SNES ever produced. Mesen's own SNES frames are 256 or 512 wide;
 #: this is a bound on what will be believed, not a format.
 MAX_FRAME_DIMENSION = 4096
 
-#: Stands in for a window handle when the core is asked for video or sound.
-#: ``InitializeEmu`` treats a NULL handle as "build nothing", so something has to
-#: be passed -- see the module docstring for why a fake one is safe.
+#: Stands in for a window handle where nothing ever dereferences one: every
+#: platform but Windows, and Windows itself if it could not make the window
+#: :func:`_own_window` builds. ``InitializeEmu`` treats a NULL handle as "build
+#: nothing", so something has to be passed -- see the module docstring.
 PLACEHOLDER_WINDOW_HANDLE = 1
+
+#: ``CreateWindowEx``'s parent for a message-only window: no broadcast reaches
+#: one and it is not enumerated with the top-level windows, which is what keeps
+#: a window nobody pumps messages for from holding up the rest of the desktop.
+HWND_MESSAGE = -3
 
 #: ``void(int type, void* parameter)``. ``__stdcall`` in the header and ignored
 #: on x86-64, where Windows and SysV agree.
@@ -426,6 +471,107 @@ class CpuState(ctypes.Structure):
         )
 
 
+class DebugConfig(ctypes.Structure):
+    """Mesen's ``DebugConfig``, mirrored field for field.
+
+    Transcribed from ``Core/Shared/SettingTypes.h`` in **the pinned revision**,
+    on the same basis as :class:`CpuState` and :class:`SnesConfig`: the core is
+    one commit, every vendored build is that commit, and a header only
+    describes a binary when it is the binary's own source.
+
+    Every field is a ``bool`` but one, and the whole struct is passed by value
+    to ``SetDebugConfig`` -- so a field left out here would not shift one
+    setting, it would shift every setting after it. Only
+    :attr:`snes_break_on_brk` is ever set; the rest are transcribed to get that
+    one to the right offset and to leave the others at the defaults a fresh
+    struct already holds.
+    """
+
+    _fields_ = [
+        (name, ctypes.c_bool)
+        for name in (
+            "break_on_uninit_read",
+            "show_jump_labels",
+            "draw_partial_frame",
+            "show_verified_data",
+            "disassemble_verified_data",
+            "show_unidentified_data",
+            "disassemble_unidentified_data",
+            "use_lower_case_disassembly",
+            "show_memory_values",
+            "auto_reset_cdl",
+            "use_predictive_breakpoints",
+            "single_breakpoint_per_instruction",
+            "snes_break_on_brk",
+            "snes_break_on_cop",
+            "snes_break_on_wdm",
+            "snes_break_on_stp",
+            "snes_break_on_invalid_ppu_access",
+            "snes_break_on_read_during_auto_joy",
+            "snes_use_alt_spc_op_names",
+            "snes_ignore_dsp_read_writes",
+            "spc_break_on_brk",
+            "spc_break_on_stp_sleep",
+            "gb_break_on_invalid_oam_access",
+            "gb_break_on_invalid_vram_access",
+            "gb_break_on_disable_lcd_outside_vblank",
+            "gb_break_on_invalid_op_code",
+            "gb_break_on_nop_load",
+            "gb_break_on_oam_corruption",
+            "nes_break_on_brk",
+            "nes_break_on_unofficial_op_code",
+            "nes_break_on_unstable_op_code",
+            "nes_break_on_cpu_crash",
+            "nes_break_on_bus_conflict",
+            "nes_break_on_decayed_oam_read",
+            "nes_break_on_ppu_scroll_glitch",
+            "nes_break_on_ext_output_mode",
+            "nes_break_on_invalid_vram_access",
+            "nes_break_on_invalid_oam_write",
+            "nes_break_on_dma_input_read",
+            "pce_break_on_brk",
+            "pce_break_on_unofficial_op_code",
+            "pce_break_on_invalid_vram_address",
+            "sms_break_on_nop_load",
+            "gba_break_on_nop_load",
+            "gba_break_on_invalid_op_code",
+            "gba_break_on_unaligned_mem_access",
+        )
+    ] + [
+        ("gba_disassembly_mode", ctypes.c_uint8),
+        ("ws_break_on_invalid_op_code", ctypes.c_bool),
+        ("script_allow_io_os_access", ctypes.c_bool),
+        ("script_allow_network_access", ctypes.c_bool),
+        ("script_timeout", ctypes.c_uint32),
+    ]
+
+
+class MemoryOperationInfo(ctypes.Structure):
+    """Mesen's ``MemoryOperationInfo``, which a break event carries by value.
+
+    Not read for anything: it is here so :class:`BreakEvent`'s later fields sit
+    where the core put them.
+    """
+
+    _fields_ = (
+        ("address", ctypes.c_uint32),
+        ("value", ctypes.c_int32),
+        ("type", ctypes.c_uint8),
+        ("memory_type", ctypes.c_uint8),
+    )
+
+
+class BreakEvent(ctypes.Structure):
+    """What ``CodeBreak`` points at: why the machine stopped, and which CPU."""
+
+    _fields_ = (
+        ("source", ctypes.c_int32),
+        ("source_cpu", ctypes.c_int32),
+        ("operation", MemoryOperationInfo),
+        ("breakpoint_id", ctypes.c_int32),
+    )
+
+
 class SoftwareRendererSurface(ctypes.Structure):
     """One of the three layers ``RefreshSoftwareRenderer`` hands out.
 
@@ -702,6 +848,27 @@ class StepType(IntEnum):
     PPU_FRAME = 6
 
 
+class CoreBroke(RuntimeError):
+    """The debugger stopped the machine at a ``BRK``, and it is stopped still.
+
+    Raised by whatever was waiting for the machine to do something -- a call
+    that will now never return, a game mode that will never change -- so that a
+    request fails at the moment of the ``BRK`` rather than at the far end of a
+    timeout.
+
+    :attr:`evidence` is whatever :attr:`MesenCore.on_break` gathered while the
+    machine was still stopped, which is the only moment the registers and the
+    stack are the ``BRK``'s own. Nothing here decides what that is: the core
+    knows a machine and not a cartridge, and it is
+    :class:`shiny_mushroom.emu.smw.CartSession` that turns one into a
+    :class:`shiny_mushroom.brk.BrkReport`.
+    """
+
+    def __init__(self, message: str, evidence: object = None) -> None:
+        super().__init__(message)
+        self.evidence = evidence
+
+
 class EmulatorUnavailable(RuntimeError):
     """No usable emulator core -- not vendored for this platform, or unloadable.
 
@@ -793,6 +960,69 @@ def library_path() -> Path:
     return path
 
 
+def _own_window() -> int | None:
+    """A window of this process's own for the sound manager to hold, on Windows.
+
+    ``None`` everywhere else, and ``None`` on a Windows that would not make one:
+    both mean "pass :data:`PLACEHOLDER_WINDOW_HANDLE`", which is what every
+    other platform's core wants anyway.
+
+    **Message-only** (:data:`HWND_MESSAGE` as its parent) rather than a hidden
+    top-level one. DirectSound only stores the handle, so what the window costs
+    is what the desktop can ask of it -- and nothing in this process ever pumps
+    a message loop, so a window that broadcasts could reach would stall whoever
+    sent one until it timed out. A message-only window is not enumerated with
+    the top-level windows and receives no broadcast at all.
+
+    ``STATIC`` rather than a class of ours, because registering one means a
+    window procedure that has to outlive every window made from it -- a
+    ctypes callback held for the life of the process to answer messages that
+    never arrive.
+    """
+    if sys.platform != "win32":
+        return None
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.CreateWindowExW.restype = ctypes.c_void_p
+    user32.CreateWindowExW.argtypes = [
+        ctypes.c_uint32,  # dwExStyle
+        ctypes.c_wchar_p,  # lpClassName
+        ctypes.c_wchar_p,  # lpWindowName
+        ctypes.c_uint32,  # dwStyle
+        ctypes.c_int,  # X
+        ctypes.c_int,  # Y
+        ctypes.c_int,  # nWidth
+        ctypes.c_int,  # nHeight
+        ctypes.c_void_p,  # hWndParent
+        ctypes.c_void_p,  # hMenu
+        ctypes.c_void_p,  # hInstance
+        ctypes.c_void_p,  # lpParam
+    ]
+    window = user32.CreateWindowExW(
+        0,
+        "STATIC",
+        "Shiny Mushroom sound",
+        0,
+        0,
+        0,
+        0,
+        0,
+        ctypes.c_void_p(HWND_MESSAGE),
+        None,
+        None,
+        None,
+    )
+    # A core that plays quietly is worth more than one that will not start, so
+    # a window that could not be made is a fallback rather than a failure.
+    return window or None
+
+
+def _close_window(window: int) -> None:
+    """Destroy what :func:`_own_window` made. Only ever called with one."""
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.DestroyWindow.argtypes = [ctypes.c_void_p]
+    user32.DestroyWindow(ctypes.c_void_p(window))
+
+
 class MesenCore:
     """One loaded, initialised, headless emulator core.
 
@@ -846,10 +1076,13 @@ class MesenCore:
 
         # NULL for both handles means "build nothing" -- no renderer, no sound
         # manager, no key manager -- which is what a loader wants. Asking for
-        # either means passing something non-NULL; see the module docstring for
-        # why a placeholder is enough.
+        # either means passing something non-NULL, and on Windows something the
+        # window manager will agree exists: see the module docstring.
+        self._window = _own_window() if (video or audio) else None
         handle = (
-            ctypes.c_void_p(PLACEHOLDER_WINDOW_HANDLE) if (video or audio) else None
+            ctypes.c_void_p(self._window or PLACEHOLDER_WINDOW_HANDLE)
+            if (video or audio)
+            else None
         )
         self._lib.InitDll()
         self._lib.InitializeEmu(
@@ -877,6 +1110,20 @@ class MesenCore:
         # unregistering is not enough to make one collectable.
         self._retired_trampolines: list[object] = []
         self._video_sink = None
+        # The debugger's half of the same arrangement -- see
+        # :meth:`watch_for_brk`. The break is written by the emulation thread
+        # from inside the notification and read by whichever thread is waiting
+        # for the machine, which is what a single assignment of an immutable
+        # tuple is safe for.
+        self._break_trampoline: object | None = None
+        self._break_listener: int | None = None
+        self._break: tuple[int, int] | None = None
+        self._watching_brk = False
+        #: Called with ``(source, cpu)`` while the machine is still stopped at
+        #: a break, and whatever it returns is carried on :class:`CoreBroke`.
+        #: The core gathers nothing itself: what is worth reading off a stopped
+        #: SMW cartridge is not a fact about a Mesen core.
+        self.on_break: Callable[[int, int], object] | None = None
 
     def _bind(self) -> None:
         """Declare argument and return types for everything we call.
@@ -932,6 +1179,19 @@ class MesenCore:
             fn = getattr(lib, name)
             fn.restype = None
             fn.argtypes = [c.POINTER(CpuState), c.c_int32]
+
+        # The debugger, which is how a BRK is noticed. Three primitives and
+        # one by-value struct -- see DebugConfig -- against a debugger the
+        # editor never single-steps: what it is turned on for is the one thing
+        # it does without being asked, which is to stop at a BRK.
+        lib.SetDebuggerFlag.restype = None
+        lib.SetDebuggerFlag.argtypes = [c.c_int32, c.c_bool]
+        lib.SetDebugConfig.restype = None
+        lib.SetDebugConfig.argtypes = [DebugConfig]
+        lib.ResumeExecution.restype = None
+        lib.ResumeExecution.argtypes = []
+        lib.IsDebuggerRunning.restype = c.c_bool
+        lib.IsDebuggerRunning.argtypes = []
 
         # The trace logger, which is how the editor learns which code wrote
         # what -- see TraceLoggerOptions. Passed by value, as the export takes
@@ -1081,17 +1341,203 @@ class MesenCore:
         """
         if self._lib is None:
             return
+        # A machine stopped at a break has its emulation thread blocked inside
+        # it, and Release stops and joins that thread -- so it is let go first,
+        # whatever anybody was going to do with the break.
+        if self._break is not None:
+            self._break = None
+            self._lib.ResumeExecution()
         # Before Release: the render thread is still calling the trampoline
         # until the listener is taken down.
         self._stop_video()
+        self._stop_breaks()
         self._lib.Release()
         # Only here, and never before Release has returned. Release stops the
         # emulation and render threads and joins them, so this is the first
         # moment at which nothing native can still be inside a trampoline.
         self._retired_trampolines.clear()
         self._lib = None
+        # After ``Release``, which is what takes the sound manager -- and the
+        # handle it is still holding -- down.
+        if self._window is not None:
+            _close_window(self._window)
+            self._window = None
         if self._owns_home:
             shutil.rmtree(self._home, ignore_errors=True)
+
+    # -- breaks ------------------------------------------------------------
+
+    def watch_for_brk(self) -> None:
+        """Stop the machine at every ``BRK``, and notice when it happens.
+
+        Three things, once per core: the debugger is started, both SNES
+        processors are told to run it, and ``SnesBreakOnBrk`` is set. From then
+        on a ``BRK`` anywhere in the cartridge -- the game's own code, a hack's,
+        a custom sprite's -- stops the machine **before the instruction
+        executes** and sends ``CodeBreak``. That ordering is the whole value of
+        it: the registers, the stack pointer and the status byte are the ones
+        the ``BRK`` was reached with, where a handler running *after* it can
+        only report what it managed to preserve.
+
+        **Measured at about 2.5%**: 300 frames at maximum speed run at 193 fps
+        with the debugger off and 188 with it on, which is why this is on for
+        every worker rather than something a person turns on when they suspect
+        a crash -- by which time the crash has already happened.
+
+        Starting the debugger stops the machine once, on its own account
+        (``BreakSource::Pause``), so this ends by letting it go again.
+        """
+        if self._watching_brk:
+            return
+        lib = self._lib
+
+        def notified(kind: int, parameter: int) -> None:
+            # On the emulation thread, which then blocks until something calls
+            # ResumeExecution -- so this does as little as a thread that has
+            # stopped a machine mid-instruction should.
+            if kind != NOTIFY_CODE_BREAK or not parameter:
+                return
+            event = ctypes.cast(parameter, ctypes.POINTER(BreakEvent)).contents
+            if event.source == BREAK_SOURCE_BRK:
+                self._break = (event.source, event.source_cpu)
+
+        trampoline = NOTIFICATION_CALLBACK(notified)
+        self._break_trampoline = trampoline
+        self._break_listener = lib.RegisterNotificationCallback(trampoline)
+        self.arm_brk(True)
+        lib.SetDebuggerFlag(DEBUGGER_FLAG_SNES, True)
+        lib.SetDebuggerFlag(DEBUGGER_FLAG_SA1, True)
+        lib.InitializeDebugger()
+        lib.ResumeExecution()
+        self._watching_brk = True
+
+    def _stop_breaks(self) -> None:
+        """Take the break listener down, the way :meth:`_stop_video` does.
+
+        Retired rather than dropped: the library holds the pointer until
+        ``Release`` has joined its threads, so a trampoline collected here
+        would be freed memory an emulation thread is still calling.
+        """
+        if self._break_listener is None:
+            return
+        self._lib.UnregisterNotificationCallback(ctypes.c_void_p(self._break_listener))
+        self._break_listener = None
+        self._retired_trampolines.append(self._break_trampoline)
+        self._break_trampoline = None
+        self._watching_brk = False
+
+    def arm_brk(self, armed: bool) -> None:
+        """Turn breaking at a ``BRK`` on or off, leaving the debugger running.
+
+        Off is how a machine gets *past* the ``BRK`` it is stopped at without
+        stopping at the same instruction again a cycle later, and how a
+        runaway that BRKs in a loop is kept from breaking on every pass while
+        the recovery runs.
+        """
+        config = DebugConfig()
+        config.snes_break_on_brk = bool(armed)
+        self._lib.SetDebugConfig(config)
+
+    @property
+    def broke_on_brk(self) -> bool:
+        """Whether the machine is stopped at a ``BRK`` right now."""
+        return self._break is not None
+
+    def peek_break(self) -> object:
+        """Gather what the break is worth and **leave the machine stopped**.
+
+        :meth:`take_break` without the ending, for the one caller that has
+        somebody to ask: a test run's player is about to be shown the report
+        and offered the choice between :meth:`resume_break` and
+        :meth:`let_break_go`, and neither can be made for them here.
+
+        The machine stays stopped in the meantime, which is what "the run
+        froze at a ``BRK``" looks like from the window: no frames arrive,
+        because none are being drawn.
+        """
+        if self._break is None or self.on_break is None:
+            return None
+        return self.on_break(*self._break)
+
+    def take_break(self) -> object:
+        """Gather what the break is worth, let the machine go, and forget it.
+
+        In that order, and the order is the point. :attr:`on_break` reads the
+        stopped machine -- the only moment at which it is the ``BRK``'s own --
+        and only then is the ``BRK`` stepped past: resuming first would leave a
+        cartridge with no handler running into whatever its ``BRK`` vector
+        points at, over the very bytes the report is made of.
+
+        Breaking is disarmed for the resume and armed again after it, so the
+        instruction the machine is sitting on does not stop it a second time.
+        """
+        source, cpu = self._break or (BREAK_SOURCE_BRK, CPU_TYPE_SNES)
+        evidence = None
+        if self.on_break is not None:
+            evidence = self.on_break(source, cpu)
+        self.let_break_go()
+        return evidence
+
+    def let_break_go(self) -> None:
+        """Unblock a machine stopped at a break, without executing the ``BRK``.
+
+        The emulation thread is *inside* the break until something resumes it,
+        so this is what every other request in the worker's life waits on --
+        and the machine has to come out of it in a state the next request can
+        use.
+
+        **The instruction is stepped over rather than run**, which is the
+        difference between a recovery and a second crash. A ``BRK`` executed on
+        a cartridge with no handler vectors through ``$00FFE6`` -- ``$FFFF`` on
+        a stock image -- and the runaway that follows walks into more of them:
+        measured, letting one go produced a fresh break inside the game's own
+        code within the same frame, and then another, each of which blocked the
+        thread again and would have been handed to the next request as though
+        its cartridge had raised it. Moving the program counter past the two
+        bytes leaves the machine standing at the instruction after the
+        exception, which is a machine that stops when it is told to. Nobody
+        reads it either way: every caller restores a savestate or reports a
+        failure.
+
+        **Looped, and not because a ``BRK`` can break twice.** Breaking is
+        disarmed for the resume, so the instruction stepped over cannot stop
+        the machine again -- but the frame the halt takes to land is a frame of
+        a cartridge whose code has just raised an exception, and a break that
+        arrives in it leaves the emulation thread blocked again. One left
+        pending would be handed to the next request as though its cartridge had
+        raised it; one left *blocked* would stop the worker answering at all.
+
+        :meth:`resume_break` is the other ending, and the one that *does*
+        execute it -- for a run whose player asked to carry on.
+        """
+        for _ in range(BREAK_RELEASES):
+            if self._break is None:
+                break
+            _, cpu = self._break
+            self._break = None
+            self.arm_brk(False)
+            state = self.cpu_state(cpu)
+            state.pc = (state.pc + BRK_LENGTH) & 0xFFFF
+            self.set_cpu_state(state, cpu)
+            self._lib.ResumeExecution()
+            self.halt()
+        self.arm_brk(True)
+
+    def resume_break(self) -> None:
+        """Let a machine stopped at a ``BRK`` carry on running past it.
+
+        :meth:`let_break_go`'s other ending, for the one caller that has
+        somebody watching: a test run whose player has read the report and
+        asked to carry on. The cartridge executes the ``BRK`` and goes wherever
+        its vector says, which is the run they asked to keep.
+        """
+        if self._break is None:
+            return
+        self._break = None
+        self.arm_brk(False)
+        self._lib.ResumeExecution()
+        self.start()
+        self.arm_brk(True)
 
     # -- pictures ----------------------------------------------------------
 
@@ -1399,21 +1845,27 @@ class MesenCore:
 
     # -- CPU state ---------------------------------------------------------
 
-    def cpu_state(self) -> CpuState:
-        """The 65816's registers."""
+    def cpu_state(self, cpu: int = CPU_TYPE_SNES) -> CpuState:
+        """The registers of ``cpu``, the main 65816 unless told otherwise.
+
+        ``cpu`` is for a cartridge with a coprocessor, where the code that
+        matters may be running on the other one: the SA-1 is a 65816 too and
+        answers this same structure. Everything but a break report asks about
+        the main CPU, which is the one this package drives.
+        """
         state = CpuState()
-        self._lib.GetCpuState(ctypes.byref(state), CPU_TYPE_SNES)
+        self._lib.GetCpuState(ctypes.byref(state), cpu)
         return state
 
-    def set_cpu_state(self, state: CpuState) -> None:
-        """Write registers back.
+    def set_cpu_state(self, state: CpuState, cpu: int = CPU_TYPE_SNES) -> None:
+        """Write registers back, to ``cpu``'s.
 
         Every field the struct has is written, including the internal
         interrupt state -- which is why they are all modelled rather than
         skipped. Read one, change what you mean to, write it back, and nothing
         else moves.
         """
-        self._lib.SetCpuState(ctypes.byref(state), CPU_TYPE_SNES)
+        self._lib.SetCpuState(ctypes.byref(state), cpu)
 
     # -- calling a cartridge routine ---------------------------------------
 
@@ -1535,6 +1987,13 @@ class MesenCore:
             while True:
                 if self.finished(CALL_DONE):
                     return
+                if self.broke_on_brk:
+                    # A routine that hit a BRK is not slow, it is stopped --
+                    # and the evidence is gathered here, before the `finally`
+                    # below puts the caller's registers back over it.
+                    raise CoreBroke(
+                        f"{hexnum(address, 6)} hit a BRK", self.take_break()
+                    )
                 now = time.monotonic()
                 if now - checked >= CALL_PROGRESS_CHECK:
                     checked = now
@@ -1831,7 +2290,7 @@ class MesenCore:
         slower overall. ``GetExecutionTrace`` reads the same rows from memory
         instead of a file, and is not offered here for the same reason plus one
         worse: its ring holds 30,000 rows, which this trace overflows. The
-        numbers are in `docs/editor/emulated-loader.md`.
+        numbers are in `docs/editor/emulator-worker.md`.
         """
         options = TraceLoggerOptions()
         options.enabled = True

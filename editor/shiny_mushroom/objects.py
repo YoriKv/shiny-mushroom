@@ -55,8 +55,10 @@ from enum import Enum
 
 from shiny_mushroom import metadata
 from shiny_mushroom.fields import (
+    Action,
     Field,
     Number,
+    Switch,
     choices,
     pairs,
     position_rows,
@@ -88,6 +90,11 @@ EXTENDED_OBJECT = 0x00
 #: screen number and a destination.
 SCREEN_EXIT = 0x00
 SCREEN_JUMP = 0x01
+
+#: The key a screen exit's Open Level button arrives on -- an
+#: :class:`~shiny_mushroom.fields.Action` the window dispatches on, since the
+#: window owns the document the destination level would replace.
+OPEN_DESTINATION = "open-destination"
 
 #: The extended objects the game cannot dispatch, from
 #: :attr:`~shiny_mushroom.metadata.ObjectMetadata.crashes` -- the settings bytes
@@ -539,11 +546,17 @@ class LevelObject:
                 Field(
                     key="secondary",
                     label="Secondary entrance",
-                    kind=choices(((0, "No"), (1, "Yes"))),
+                    kind=Switch(),
                     read=lambda obj: (obj.data[1] >> 1) & 0x01,
                     write=_write_secondary,
                     hint="Arrive through the destination's secondary entrance "
                     "instead of its main one.",
+                ),
+                Field(
+                    key=OPEN_DESTINATION,
+                    label="Open",
+                    kind=Action("Open Level"),
+                    hint="Leave this level and edit the one the exit leads to.",
                 ),
             ]
         rows += record_rows("Object")

@@ -796,7 +796,7 @@ class GraphicsFiles:
         **The raw file is still the add**, and deleting it is still the
         delete: this is a directory read of the set's raw folder, every
         ``.bin`` in it whose length is one an added file decompresses to
-        (:func:`smw_tools.packed.format_for_size`). What is *recorded* is the
+        (:func:`smw_tools.packed.shape_for_size`). What is *recorded* is the
         one thing a file's bytes cannot say -- which slot it packs into
         (:data:`ADDED_GRAPHICS_KEY` in ``project.json``) -- and that record is
         the editor's alone: the cartridge only ever sees ``GFXnn``, since the
@@ -891,7 +891,7 @@ class GraphicsFiles:
 
         The slots are :meth:`added_graphics_slots`' and the layout is read
         off the one fact a file's bytes carry, its length
-        (:func:`smw_tools.packed.format_for_size`). Two of the three shapes
+        (:func:`smw_tools.packed.shape_for_size`). Two of the three shapes
         a file may be are the same layout in different lengths, so a caller
         that needs to know which file it has asks
         :meth:`added_graphics_sizes` instead.

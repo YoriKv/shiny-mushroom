@@ -27,13 +27,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QComboBox, QLabel, QToolBar, QWidget
+from PySide6.QtWidgets import QComboBox, QLabel, QWidget
 
 from shiny_mushroom.hexnum import hexnum
 from shiny_mushroom.level_files import ContainerNames
 from shiny_mushroom.rom_patches import REQUESTABLE_LEVELS, needs_direct_request
+from shiny_mushroom.ui.icons import Icon
 from shiny_mushroom.ui.searchable_combo import SearchableComboBox, fill_sections
-from shiny_mushroom.ui.toolbars import add_action
+from shiny_mushroom.ui.toolbars import IconBar
 
 #: Where the picker starts, and therefore the level a freshly opened cart is
 #: shown as: opening a ROM loads this one without being asked, so it is the
@@ -67,7 +68,7 @@ PICKER_CHARACTERS = 6
 EDITING_ROWS = ("Layer 1 & Sprites", "Layer 2")
 
 
-class LevelBar(QToolBar):
+class LevelBar(IconBar):
     """Picks a level and asks for it. Owns no snapshot and no emulator."""
 
     #: The user asked for this level. Whoever is listening decides what that
@@ -111,9 +112,11 @@ class LevelBar(QToolBar):
 
         self.addWidget(QLabel("Level "))
         self.addWidget(self._levels)
-        self._previous = add_action(self, "&Previous", lambda: self._step(-1))
-        self._next = add_action(self, "&Next", lambda: self._step(+1))
-        self._reload = add_action(self, "&Load", self.request)
+        self._previous = self.add_icon_action(
+            Icon.PREVIOUS, "&Previous", lambda: self._step(-1)
+        )
+        self._next = self.add_icon_action(Icon.NEXT, "&Next", lambda: self._step(+1))
+        self._reload = self.add_icon_action(Icon.RELOAD, "&Load", self.request)
         self.addWidget(QLabel(" Editing "))
         self.addWidget(self._editing)
         self._update_steps()

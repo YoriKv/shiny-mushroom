@@ -1,7 +1,7 @@
 cleartable
-table "../tables/fonts/standard.txt"
+incsrc "../tables/fonts/standard.asm"
 
-;--- One file per message. The cleartable/table directives above set the
+;--- One file per message. The cleartable and font incsrc above set the
 ;--- text encoding these strings assemble against and must stay in force.
 
 incsrc "messages/SMW_J/LevelMsg00.asm"

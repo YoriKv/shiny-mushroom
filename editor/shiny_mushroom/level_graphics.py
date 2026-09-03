@@ -188,6 +188,23 @@ SPRITE_ROW = 8
 #: this module reads a capture by.
 SLOT_WORDS: tuple[int, ...] = tuple(at // 2 for at in SLOT_VRAM)
 
+#: What the console keeps in the VRAM the eight slots leave between them, as
+#: ``(word address, what is there)``. The slots are words ``$0000``-``$1FFF``
+#: and ``$6000``-``$7FFF``; the tilemaps and the 2bpp Layer 3 tiles fill the
+#: gap, which is why a panel that shows the slots alone steps from ``$1800``
+#: to ``$6000``. Named rather than drawn: none of it is a slot's 128 4bpp
+#: tiles, and a tilemap is not a picture at all. The map is the
+#: ``!Define_SMW_Layer*VRAMLocation`` values in ``SMW/Misc_Defines_SMW.asm``,
+#: turned into word addresses by ``SMW/Memory/WRAM_Extended.asm``
+#: (``docs/smw/graphics-loading.md``).
+OTHER_VRAM: tuple[tuple[int, str], ...] = (
+    (0x2000, "Layer 1 tilemap, 64×64"),
+    (0x3000, "Layer 2 tilemap, 64×64"),
+    (0x4000, "Layer 3 tiles, 2bpp (GFX28-GFX2B)"),
+    (0x5000, "Layer 3 tilemap, 64×64"),
+    (0x5800, "Mode 7 bosses' Layer 1 tilemap"),
+)
+
 
 #: Where the game DMAs a block of animated tiles, as VRAM *word* addresses:
 #: ``DATA_05B93B`` (``SMW/Banks/Bank05.asm``), three destinations per animation

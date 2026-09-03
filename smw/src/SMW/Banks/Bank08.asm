@@ -75,16 +75,18 @@ endmacro
 ;off for the length of the table and restored after it. It is restored with
 ;`full` and not `on` -- they mean the same thing, but `on` is deprecated, and in
 ;asar 1.91 it is also a silent no-op: it warns and never clears the flag, so
-;every bank after this one would keep wrapping its position and the warnpc at
-;the end of each would fail. See docs/smw/building.md.
+;every bank after this one would keep wrapping its position and the end guard
+;of each would fail. See docs/smw/building.md.
 ; Under !Define_SMW_ManagedGraphicsMemory the placement is the first run of
-; a packing instead: each file is fitted before its label is placed, one
-; that would run past bank $0B is placed in the graphics bank, and the fill
-; behind the files emits nothing -- Config/ManagedGraphicsMemory.asm.
+; a packing instead, emitted from the tail of the ROM map: at this line the
+; macro emits nothing, and invoked again from there each file is fitted
+; before its label is placed, one that would run past bank $0B is placed
+; in the graphics bank, and the fill behind the files emits nothing --
+; Config/ManagedGraphicsMemory.asm.
 macro DATATABLE_SMW_CompressedGraphics(Address)
 check bankcross off
 %InsertMacroAtXPosition(<Address>)
-%SMW_ManagedGraphicsRunStart()
+%SMW_ManagedGraphicsSlot()
 
 	%SMW_INCGFX(GFX32)	:	%SMW_INCGFX(GFX33)	:	%SMW_INCGFX(GFX00)	:	%SMW_INCGFX(GFX01)
 	%SMW_INCGFX(GFX02)	:	%SMW_INCGFX(GFX03)	:	%SMW_INCGFX(GFX04)	:	%SMW_INCGFX(GFX05)
@@ -99,7 +101,6 @@ check bankcross off
 	%SMW_INCGFX(GFX26)	:	%SMW_INCGFX(GFX27)	:	%SMW_INCGFX(GFX28)	:	%SMW_INCGFX(GFX29)
 	%SMW_INCGFX(GFX2A)	:	%SMW_INCGFX(GFX2B)	:	%SMW_INCGFX(GFX2C)	:	%SMW_INCGFX(GFX2D)
 	%SMW_INCGFX(GFX2E)	:	%SMW_INCGFX(GFX2F)	:	%SMW_INCGFX(GFX30)	:	%SMW_INCGFX(GFX31)
-%SMW_ManagedGraphicsRunEnd()
 check bankcross full
 endmacro
 

@@ -63,6 +63,25 @@ SA1_PACK = "https://github.com/VitorVilela7/SMW-SA1-Pack"
 # & Sprites, where the selection is records out of the object and sprite
 # streams, and Layer 2, where it is blocks of a pattern. Which one is up is the
 # question this section exists to answer.
+PIXEL_EDITOR: tuple[tuple[str, str], ...] = (
+    ("Pan the view", "Hold Space + drag"),
+    ("Pick a tool", "1 to 9, top to bottom of the rail"),
+    ("Paint, draw or fill with the tool", "Drag or click"),
+    ("Take the colour under the pointer", "Right-click, with any tool"),
+    ("Select a rectangle; a square", "Drag with Select; Shift + drag"),
+    ("Select the whole tile", "Double-click with Select"),
+    ("Move the selected pixels", "Drag from inside the selection"),
+    ("Land moved pixels, or drop the selection", "Esc, or click away"),
+    ("Cut, copy, paste, delete, select all", "Ctrl+X, Ctrl+C, Ctrl+V, Del, Ctrl+A"),
+    ("Flip the selection", "H, V"),
+    ("Rotate a square selection", "C, X"),
+    ("Undo, redo a stroke", "Ctrl+Z, Ctrl+Y"),
+    ("Zoom, anchored on the pointer", "Ctrl + Scroll, Ctrl+=, Ctrl+-"),
+    ("Grid: none, tiles, pixels", "G"),
+    ("Change the selected colour", "Double-click a swatch"),
+    ("Write the picture into its tiles", "Ctrl+S"),
+)
+
 LEVEL_CANVAS: tuple[tuple[str, str], ...] = (
     ("Pan the view", "Hold Space + drag"),
     ("Zoom, anchored on the pointer", "Ctrl + Scroll"),
@@ -74,18 +93,24 @@ LEVEL_CANVAS: tuple[tuple[str, str], ...] = (
     ("Resize the held object", "Drag its right or bottom edge"),
     ("Nudge the selection a block", "Arrow keys"),
     ("Resize the held object a block", "Shift + arrows"),
+    ("Cycle the held object's variant, forward or back", "V, Shift + V"),
+    # Both also shape what the Create panel armed: the ghost is what the
+    # next click places, so the keys that would shape it placed shape it
+    # in hand.
+    ("Resize or re-variant what is in hand", "Shift + arrows, V, Shift + V"),
     ("Bring forward / send back", "+ / -"),
     ("Delete the selection", "Del or Backspace"),
     # One key, several things to put down, and the order is the order they were
     # picked up in -- see `MainWindow._edit_keys`.
     ("Put down what is in hand, or the selection", "Esc"),
-    ("Pick up the record under the pointer", "Alt + click"),
+    # The eyedropper: over a record it arms the Create panel, over the Layer 2
+    # pattern the tile. On the surround -- or over nothing it can pick -- the
+    # same button puts the tool down instead.
+    ("Pick up what is under the pointer", "Right-click or Alt + click"),
+    ("Put the tool down", "Esc, or right-click over nothing"),
     ("Place what the Create panel armed", "Click"),
     ("Place it and keep the tool armed", "Shift + click"),
-    ("Cancel a placement", "Right-click"),
-    # The same button with nothing in hand: the rows are the gestures above,
-    # found under the pointer -- see docs/editor/context-menu.md.
-    ("Open the menu for what is under the pointer", "Right-click"),
+    ("Open the level a held screen exit leads to", "Double-click"),
     # Not the canvas's own gesture in the sense the rest are: it names where a
     # test run starts rather than editing anything, and the same click on the
     # marked block takes the override away again.
@@ -96,7 +121,6 @@ LEVEL_CANVAS: tuple[tuple[str, str], ...] = (
     # cannot show them (see `MainWindow.mousePressEvent`).
     ("Back / forward along the trail", "Mouse 4 / Mouse 5"),
     ("Paint with the armed tile (Layer 2)", "Click or drag"),
-    ("Pick up the tile under the pointer (Layer 2)", "Alt + click"),
 )
 
 # The world map's canvas. Its selection is a row of one of the map's tables --
@@ -114,11 +138,28 @@ WORLD_CANVAS: tuple[tuple[str, str], ...] = (
     ("Delete the selection", "Del or Backspace"),
     ("Put down what is in hand, or the selection", "Esc"),
     ("Place what the Tiles panel armed", "Click or drag"),
-    ("Pick up the tile under the pointer", "Alt + click"),
-    ("Cancel a placement", "Right-click"),
-    ("Open the menu for what is under the pointer", "Right-click"),
+    ("Flip the selected Layer 2 block: mirrored as one picture", "H, V"),
+    ("Flip each selected Layer 2 tile where it stands", "Shift + H, Shift + V"),
+    ("Pick up what is under the pointer", "Right-click or Alt + click"),
+    ("Put the tool down", "Esc, or right-click over nothing"),
+    ("Open the level a held tile loads", "Double-click"),
     ("Set or clear where a test run starts", "Middle-click"),
     ("Cycle a level's completion for the test run", "Ctrl + middle-click"),
+)
+
+# The Tilemap editor's canvas: its gestures over the sheet's two grids,
+# with the VRAM dock holding what a click draws.
+MAP16_CANVAS: tuple[tuple[str, str], ...] = (
+    ("Select a tile or cell", "Click"),
+    ("Box a rectangle of them", "Drag"),
+    ("Edit whole tiles, or their 8x8 cells", "1, 2"),
+    ("Flip the selected block: mirrored as one picture", "H, V"),
+    ("Flip each selected tile where it stands", "Shift + H, Shift + V"),
+    ("Delete the selection", "Del or Backspace"),
+    ("Put down what is in hand, or the selection", "Esc"),
+    ("Draw with what is in hand", "Click or drag"),
+    ("Pick up the cell's word or the whole tile", "Right-click or Alt + click"),
+    ("Grab a region as a stamp -- the VRAM grid too", "Right-drag"),
 )
 
 # Keys a focused widget claims for itself, which is why they are not on the menu
@@ -131,6 +172,10 @@ PANEL_KEYS: tuple[tuple[str, str], ...] = (
     ("Step the level picker's list", "Up / Down, PgUp / PgDn"),
     ("Give the picture back the keyboard", "Esc"),
     ("Close a table editor", "Esc"),
+    # The one bare key the canvas shares: a tool in hand is on the picture
+    # whoever has the keyboard, so the key that puts it down works from any
+    # widget in the window -- see `KeyRouting.eventFilter`.
+    ("Put down what is in hand, wherever the keyboard is", "Esc"),
 )
 
 # The test window's own keys. It is a second top-level window with a toolbar
@@ -247,7 +292,9 @@ def shortcut_sections(window) -> list[tuple[str, list[tuple[str, str]]]]:  # noq
             sections.append((_label_text(action), entries))
     sections.append(("Level Canvas", list(LEVEL_CANVAS)))
     sections.append(("World Map Canvas", list(WORLD_CANVAS)))
+    sections.append(("Tilemap Canvas", list(MAP16_CANVAS)))
     sections.append(("Panels (while focused)", list(PANEL_KEYS)))
+    sections.append(("Mushroom Paint", list(PIXEL_EDITOR)))
     sections.append(("Test Window", [*TEST_WINDOW, *_pad_keys()]))
     return sections
 
@@ -387,6 +434,10 @@ class AboutDialog(QDialog):
             "<p>An SA-1 project is built with <b>SA-1 Pack</b> by Vitor Vilela"
             " and contributors, used here with the author's permission.<br>"
             f"<a href='{SA1_PACK}'>{SA1_PACK}</a></p>"
+            "<p>The interface icons are <b>Material Symbols</b> by Google,"
+            " under the Apache License 2.0, and the controller marks are"
+            " <b>PromptFont</b> by Yukari Hafner, under the SIL Open Font"
+            " License.</p>"
             "<p>Released under the GPLv3. Built on Python and Qt via PySide6,"
             " which is licensed under the LGPLv3; levels are loaded and tested"
             " on the Mesen SNES core, which is GPLv3. Super Mario World is"

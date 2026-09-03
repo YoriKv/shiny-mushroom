@@ -197,19 +197,6 @@ class WorldBar(QToolBar):
         if 0 <= index < self._palettes.count():
             self._palettes.setCurrentIndex(index)
 
-    def set_map_reach(self, on: bool) -> None:
-        """Enable the boxes that describe the *map*, or grey them.
-
-        Off while a stamp sheet holds the canvas: the map is untouched
-        behind it and every box comes back saying what it said, but a pick
-        would move a picture nobody can see. The Editing box stays live --
-        picking another layer is how the sheet is left -- and so does the
-        Palette box, which colours the sheet as it colours the map.
-        """
-        for box in (self._submaps, self._events):
-            box.setEnabled(on)
-        self._auto.setEnabled(on)
-
     def set_layer(self, tab: PaletteTab) -> None:
         """Show ``tab``'s row as the layer being edited, without asking
         for it."""

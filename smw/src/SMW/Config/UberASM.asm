@@ -9,10 +9,10 @@ includeonce
 ;# routines in the wild expect, a macro library of the project's own, and a
 ;# shared library they may call into. All of it is what UberASM Tool
 ;# provides its own files, so a routine written for that tool assembles
-;# here unchanged -- which is the whole of what this feature is for, and
-;# why it is switched separately from the code that runs it. A project
-;# writing its level code in this source's own idiom wants none of it, and
-;# should not have !addr and !14C8 defined over its head.
+;# here unchanged. The define is the dialect's own, apart from the three
+;# code defines, so a source build can assemble a project's code without
+;# !addr and !14C8 defined over its head; the editor's one feature,
+;# UberASM Support, throws all four defines together.
 ;#
 ;# Three fragments under code/uberasm/, all the editor's:
 ;#
@@ -54,7 +54,7 @@ endif
 
 ; What a level's code is read through, in front of the levels' own
 ; routines: the tool's defines and macros, the project's own, then the
-; library they may call into. Placed from the end of each ROM map, ahead of
+; library they may call into. Placed from %SMW_PlaceLevelBank ahead of
 ; every kind of project code -- a level's, a game mode's, the global
 ; routines -- because all three are assembled after this and all three may
 ; be written in this dialect. Its own placement rather than a call from one
@@ -62,8 +62,6 @@ endif
 ; host it.
 macro SMW_PlaceUberASM()
 if !Define_SMW_UberASM == !TRUE
-	pushpc
-	org !SMW_LevelBankNext
 	incsrc "code/uberasm/defines.asm"
 	incsrc "code/uberasm/macros.asm"
 
@@ -72,7 +70,5 @@ SMW_UberASM_Library:
 	incsrc "code/uberasm/lib.asm"
 	assert (pc()>>$10) == !Define_SMW_LevelBank, "A library file left the level bank: an org into the game needs a pushpc/pullpc bracket around it, or the rest of the file assembles over the game. Check code/uberasm/lib/."
 	assert pc() <= !Loc_SMW_LevelBank_RunEnd, "The shared library has outgrown the level bank: less fits in it than the editor was told. Check code/uberasm/lib/."
-	!SMW_LevelBankNext #= pc()
-	pullpc
 endif
 endmacro

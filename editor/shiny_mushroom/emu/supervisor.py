@@ -31,6 +31,7 @@ from pathlib import Path
 
 from shiny_mushroom import worker_protocol as protocol
 from shiny_mushroom.addresses import PIPE_TABLES
+from shiny_mushroom.brk import BrkReport
 from shiny_mushroom.emu import player_cache
 from shiny_mushroom.hexnum import hexnum
 from shiny_mushroom.level_snapshot import LevelSnapshot
@@ -49,6 +50,22 @@ CLOSE_GRACE = 1.0
 
 class EmulatorError(RuntimeError):
     """A request to the emulator failed and could not be recovered by retrying."""
+
+
+class BrkError(EmulatorError):
+    """The request failed because the cartridge hit a ``BRK``.
+
+    An :class:`EmulatorError` first and foremost, so every caller that already
+    handles a failed request keeps working and none of them has to learn about
+    exceptions to carry on -- a sprite that will not draw is still a sprite
+    that will not draw. What the ones that *do* care get is
+    :attr:`report`: the registers, the stack and the exception number, ready
+    for :mod:`shiny_mushroom.ui.brk_dialog`.
+    """
+
+    def __init__(self, message: str, report: BrkReport) -> None:
+        super().__init__(message)
+        self.report = report
 
 
 #: Windows reports a native fault as its NTSTATUS rather than as a signal, and
@@ -217,6 +234,17 @@ class EmulatorSupervisor:
         #: second death in a session is a different report from a first.
         self._served = 0
         self._deaths = 0
+        #: ``BRK``\ s the worker met and carried on past, waiting for whoever
+        #: asked to collect them -- see :meth:`taken_brks`. Kept here rather
+        #: than raised because the request they happened during *succeeded*:
+        #: the level loaded, and one of its sprites raised an exception.
+        self._brks: list[BrkReport] = []
+
+    def taken_brks(self) -> list[BrkReport]:
+        """Every ``BRK`` reported since this was last asked, and forget them."""
+        with self._lock:
+            taken, self._brks = self._brks, []
+        return taken
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -303,6 +331,10 @@ class EmulatorSupervisor:
             sprite_art={
                 int(number): decode_tiles(tiles)
                 for number, tiles in header.get("sprite_art", {}).items()
+            },
+            extra_counts={
+                int(number): int(count)
+                for number, count in header.get("extra_counts", {}).items()
             },
             screen_mode=header["screen_mode"],
             back_area_color=header["back_area_color"],
@@ -570,12 +602,19 @@ class EmulatorSupervisor:
         protocol.write_message(self._process.stdin, request)
         header, blobs = self._read_with_deadline()
         self._served += 1
+        # Kept whichever way the reply goes: a BRK the request survived rides
+        # on the success, and one that stopped it rides on the error below.
+        self._brks.extend(
+            BrkReport.from_dict(entry) for entry in header.get("brks", ())
+        )
         if not header.get("ok"):
             # A clean error from the worker: the request was bad, or the load
             # failed. The process is fine, so do not restart it.
-            raise EmulatorError(
-                header.get("error", "the emulator reported an unknown error")
-            )
+            message = header.get("error", "the emulator reported an unknown error")
+            brk = header.get("brk")
+            if isinstance(brk, dict):
+                raise BrkError(message, BrkReport.from_dict(brk))
+            raise EmulatorError(message)
         return header, blobs
 
     def _read_with_deadline(self) -> tuple[dict, list[bytes]]:
@@ -823,6 +862,27 @@ class PlaySupervisor(EmulatorSupervisor):
             }
         )
         return header
+
+    def enter_cartridge(self) -> dict:
+        """Run the cartridge itself, from its title screen and with no edits.
+
+        The third kind of run, and the one that asks for nothing: no level, no
+        map, no patches -- see
+        :meth:`~shiny_mushroom.emu.play.PlaySession.enter_cartridge`. Returns
+        the reply header: what it cost and the game mode it left.
+        """
+        header, _ = self._request({"op": "enter_cartridge"})
+        return header
+
+    def carry_on_past_brk(self) -> None:
+        """Execute the ``BRK`` this run is stopped at and let it carry on.
+
+        The other answer to a report -- see
+        :meth:`~shiny_mushroom.emu.play.PlaySession.carry_on_past_brk`. Nothing
+        is asked of the machine first: it is stopped *at* the instruction, and
+        the next thing it does is execute it.
+        """
+        self._request({"op": "carry_on_past_brk"})
 
     def beat_level(self, secret: bool = False) -> dict:
         """Beat the level the player stands on, so its map event plays.

@@ -1,3 +1,5 @@
+includeonce
+
 ; The project's own macro library: one incsrc per file in macros/ beside
 ; this one, read once, in front of every routine and of the shared library.
 ; asar's macros and defines are global, so a file of them included from two

@@ -4,16 +4,16 @@ Two axes, and conflating them is the mistake this module exists to prevent:
 
 **A base** is the assembly and assets a cartridge is built from -- a source tree,
 the game folder inside it, and the framework settings that decide the ROM's
-shape. There is one today, ``vanilla``: the disassembly under ``smw/src``.
+shape. There are two today: ``vanilla``, the disassembly under ``smw/src``, and
+``sa1``, the same tree declaring an SA-1 cartridge.
 
 **A target** is a variant *within* a base, selected by ``--define ROMID``. The
-vanilla base has five, and they are the five shipped releases.
+vanilla base has five, and they are the five shipped releases; ``sa1`` has one.
 
-So a build is named ``<base>/<target>`` -- ``vanilla/U`` -- and a bare ``U`` means
-the default base's target of that name. Nothing in the repository writes the long
-form yet, because there is one base to write it about.
+So a build is named ``<base>/<target>`` -- ``vanilla/U``, ``sa1/U`` -- and a bare
+``U`` means the default base's target of that name.
 
-## Why the axis is worth separating before there is a second base
+## Why the axis was worth separating before there was a second base
 
 The framework already has the seam. ``SMW/RomMap/ROM_Map_SMW_<ROMID>.asm`` is a
 base declaration in all but name: it carries the cartridge header
@@ -52,6 +52,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar
 
+from . import pack
 from .extract import GFX_SETS
 from .paths import (
     ASSETS_DIR,
@@ -417,44 +418,27 @@ class Sa1LoRom(AddressMap):
 
 
 @dataclass(frozen=True)
-class PostBuildPatch:
-    """A base assembled as another target, then patched by a third-party tree.
+class VendoredPack:
+    """A third-party tree assembled inside the base's own build.
 
-    The patch is **a pass of the build**, not a bolt-on after it: the pass
-    sequence ends with one more asar invocation, entered through
-    :attr:`pass_entry` -- a wrapper in the game folder that includes the
-    patch's tree when :attr:`define` is set -- and that invocation emits the
-    patch's own labels, which the build merges into the target's symbol file
-    (:func:`~smw_tools.symbols.merge_pack_labels`). One symbol table then
-    describes the whole cartridge: the source's labels, which the patch edits
-    in place and never moves, and the patch's, where its code landed.
+    The tree is **vendored and pinned** under ``smw/vendor/``, with an env
+    override so a newer upstream can be built against without touching the
+    repository -- which is how an upgrade is checked for moved bytes before it
+    is taken. :meth:`locate` is where that order is read, through
+    :func:`~smw_tools.paths.find_vendored_tree`. The ROM passes put the tree
+    on the include path, and a ``Config/`` file of the game folder
+    ``incsrc``'s its entry from the end of the ROM map when :attr:`define` is
+    set -- the same define the base carries in :attr:`source_defines`, so any
+    source file can ask which base it is in by one name.
 
-    It can never fold into the main pass, and the wrapper is where that is
-    written down: asar's ``read1()`` sees the image as it was before the
-    running pass began -- measured, not assumed -- so inside the main pass the
-    patch's clean-ROM guards would read pass 0's empty image and every one
-    would fail open.
-
-    The tree is **vendored and pinned** under ``smw/vendor/``, with
-    ``$SA1_PACK_PATH`` overriding it so a newer upstream can be built against
-    without touching the repository -- which is how an upgrade is checked for
-    moved bytes before it is taken. :meth:`locate` is where that order is
-    read, through :func:`~smw_tools.paths.find_vendored_tree`.
-
-    What makes it work at all is the byte gate: the patch's guards probe bytes
-    only a clean cartridge has, and our build of the source target is
-    byte-identical to one. If that stopped being true the guards would **fail
-    open** -- a guard that does not match skips its block and reports nothing --
-    so the patch would apply partially, assemble cleanly, and produce a broken
-    ROM. The gate is what stands between this base and that.
+    Nothing runs after the build.
     """
 
-    #: Which target of this base's own tree is assembled first.
+    #: Which target of this base's own tree is assembled.
     source_target: str
 
-    #: The patch's entry point, relative to its checkout root. The wrapper is
-    #: what includes it, and :meth:`locate` is what checks a candidate tree
-    #: actually carries it.
+    #: The tree's entry point, relative to its checkout root, which
+    #: :meth:`locate` checks a candidate tree actually carries.
     entry: str
 
     #: How to find the checkout, and what to tell someone who has not got one.
@@ -465,50 +449,33 @@ class PostBuildPatch:
     #: :meth:`locate` looks once the env override has not answered.
     vendor_dir: str
 
-    #: The source define that switches the patch on. The wrapper applies the
-    #: patch only when it is set, and the base carries it in
-    #: :attr:`source_defines` too, so the same name answers "which base is
-    #: this?" from any source file of the assemble.
+    #: The source define that switches the tree on: the ``Config/`` file
+    #: includes it only when this is set, and the base carries it in
+    #: :attr:`source_defines` too.
     define: str
 
-    #: The wrapper that applies the patch: a file in the game folder, so it is
-    #: part of every merged tree an editor project assembles. It reaches the
-    #: patch's tree through the include path the build passes
-    #: (:meth:`locate`), never by a path of its own, so an env override and a
-    #: staged copy both work without editing it.
-    pass_entry: str
-
     #: Directory names a sibling checkout of this tree might have, searched only
-    #: when neither the override nor the vendored copy answered -- which is what
-    #: a working tree looked like before the tree was committed.
+    #: when neither the override nor the vendored copy answered.
     fallback_names: tuple[str, ...] = ()
 
-    #: ``--define`` pairs for the **assemble** that precedes the patch. This is
-    #: how a base moves work RAM at source level: the memory map's hooks are
-    #: guarded on ``defined(...)``, so a command-line define wins over the
-    #: default without any file being edited.
+    #: ``--define`` pairs for the assemble. This is how a base moves work RAM
+    #: at source level: the memory map's hooks are guarded on
+    #: ``defined(...)``, so a command-line define wins over the default
+    #: without any file being edited.
     source_defines: tuple[tuple[str, str], ...] = ()
 
-    #: ``--define`` pairs for the **patch**. Switching off a remap the source has
-    #: taken over goes here. It has to be explicit rather than left to the
-    #: patch's own guards: those read bytes only a clean ROM has, and a source
-    #: rebase moves some of them, so the guard would skip a block half-applied
-    #: and report nothing.
-    patch_defines: tuple[tuple[str, str], ...] = ()
+    @property
+    def pin_path(self) -> Path:
+        """The pin beside the vendored tree: its revision and its hash."""
+        return VENDOR_DIR / f"{self.vendor_dir}-pin.json"
 
-    #: Further entry points, by ROM size id, for sizes the **patch** provides
-    #: rather than the assembler -- run over the main entry's output.
-    #:
-    #: SA-1 Pack ships ``asm/6mb.asm`` and ``asm/8mb.asm``, and they do three
-    #: things the source could not: pad the image, rewrite the Super MMC bank
-    #: switch at ``$00:8A60``, and mirror the cartridge header to ``$407FC0``,
-    #: where a ROM past 4 MB needs a second copy of it. Anything at or below
-    #: 4 MB is reached by expanding the source instead, so it is absent here.
-    size_entries: tuple[tuple[str, str], ...] = ()
-
-    def entry_for(self, size_id: str) -> str | None:
-        """The extra patch this size needs, if it is one the patch provides."""
-        return dict(self.size_entries).get(size_id)
+    def tree(self) -> pack.PackTree | None:
+        """The tree's sites and guards, read from the located tree without
+        assembling it; ``None`` if there is no tree to read."""
+        root = self.locate()
+        if root is None:
+            return None
+        return pack.read_tree(root, self.entry)
 
     def locate(self) -> Path | None:
         """The checkout: the env override first, the vendored tree second, and
@@ -683,9 +650,9 @@ class RomBase:
     label_bound_scans: tuple[str, ...] = ()
 
     #: How this base is produced, when it is not simply assembled. ``None`` for
-    #: a base asar builds outright; a :class:`PostBuildPatch` for one that is
-    #: another target with a third-party patch applied over it.
-    patch: PostBuildPatch | None = None
+    #: a base asar builds outright; a :class:`VendoredPack` for one that
+    #: assembles a third-party tree inside its own build.
+    pack: VendoredPack | None = None
 
     #: Which bits of every level's **sprite-stream header byte** this base's
     #: build sets for itself, so the editor can tell a difference it made from
@@ -727,11 +694,11 @@ class RomBase:
     #: adds one on top is not applied twice, and so a feature that needs
     #: another under it can be satisfied by the base having it.
     #:
-    #: Empty on both bases today, because the registry is: a base naming a
-    #: feature nothing declares would refuse every project opened against it.
-    #: ``sa1`` is where the first entry lands -- its pack's 22-slot sprite
-    #: engine is already inside :attr:`ram_map`, and naming it here is what
-    #: would let a project refuse a patch that adds it a second time.
+    #: Empty on both bases today: nothing a base builds in is declared as a
+    #: registry feature yet. ``sa1`` is where the first entry lands -- its
+    #: pack's 22-slot sprite engine is already inside :attr:`ram_map`, and
+    #: naming it here is what would let a project refuse a patch that adds
+    #: it a second time.
     features: tuple[str, ...] = ()
 
     #: The first expansion bank this base's cartridge has free, as a bank
@@ -740,10 +707,11 @@ class RomBase:
     #: :data:`RESERVATION_BANK` on a plain build, and that is the useful bank
     #: to have: the first one an expanded image adds, so it is at the same
     #: address at every size from 1 MB up, and below ``$40``, so the work RAM
-    #: mirror is still under it. ``sa1`` answers ``$11``, because SA-1 Pack
-    #: runs *after* this tree assembles and lands its own code in ``$10`` --
-    #: reserving that bank would take it out from under the pack, and the pack
-    #: would then be somewhere no build of this base has ever put it.
+    #: mirror is still under it. ``sa1`` answers ``$11``, because SA-1 Pack's
+    #: freespace search runs at the end of the main pass and lands its code
+    #: in ``$10`` -- reserving that bank would take it out from under the
+    #: pack, and the pack would then be somewhere no build of this base has
+    #: ever put it.
     #:
     #: A fact about the cartridge rather than about the feature, which is why
     #: it is declared here: a feature that named one bank would be wrong on
@@ -754,10 +722,10 @@ class RomBase:
     #: ids into :data:`~rom_sizes.ROM_SIZES`.
     #:
     #: A base's own list, not the module's: what is reachable depends on the
-    #: memory map the source assembles under and on what any patch adds after
-    #: it. ``vanilla`` stops at 4 MB where plain LoROM does; ``sa1`` starts at
-    #: 1 MB, because SA-1 Pack needs freespace and cannot produce a 512 KB
-    #: cartridge, and reaches 6 and 8 MB through the patch's own pair of files.
+    #: memory map the source assembles under. ``vanilla`` stops at 4 MB where
+    #: plain LoROM does; ``sa1`` starts at 1 MB, because SA-1 Pack needs
+    #: freespace and cannot fit a 512 KB cartridge, and reaches 6 and 8 MB
+    #: through the framework's own SA-1 sizes.
     #:
     #: The first entry is the **stock** size: the one a build assembles when
     #: nobody has said, and the only one a target's pinned hash describes.
@@ -808,7 +776,7 @@ class RomBase:
         are read from here because a base that carried its own would have them
         read the same way.
         """
-        return self.patch.source_defines if self.patch else ()
+        return self.pack.source_defines if self.pack else ()
 
     @property
     def expandable(self) -> bool:
@@ -958,7 +926,7 @@ VANILLA = RomBase(
     address_map=LoRom(),
     ram_map=WorkRam(),
     tables=VANILLA_TABLES,
-    patch=None,
+    pack=None,
     # Every rung the framework's `%GetROMSize()` offers that plain LoROM can
     # address. Past 4 MB the map runs out, not the table.
     sizes=("512kb", "1mb", "1.5mb", "2mb", "2.5mb", "3mb", "3.5mb", "4mb"),
@@ -985,16 +953,16 @@ VANILLA = RomBase(
     },
 )
 
-#: SA-1: the same tree, assembled as U and then patched by SA-1 Pack.
+#: SA-1: the same tree, assembled as U under ``Define_SMW_SA1`` with the
+#: vendored SA-1 Pack in-pass.
 #:
 #: **It shares vanilla's source root**, which is the whole point of a base being
-#: a declaration rather than a copy. Nothing about the assembly differs -- the
-#: same ROM map places the same routines at the same addresses -- so its tables
-#: are vanilla's tables, unmoved. What differs is what happens after the
-#: assembler, and the cartridge that comes out: 1 MB, SA-1, and an address map
-#: that stops mirroring at bank $3F.
+#: a declaration rather than a copy. The same ROM map places the same routines
+#: at the same addresses -- so its tables are vanilla's tables, unmoved. What
+#: differs is what the define switches on, and the cartridge that comes out:
+#: 1 MB, SA-1, and an address map that stops mirroring at bank $3F.
 #:
-#: The patch tree is **not** distributed here. See :class:`PostBuildPatch`.
+#: The pack's tree is vendored under smw/vendor/. See :class:`VendoredPack`.
 #:
 #: One target, because SA-1 Pack applies to the USA release and nothing else.
 #: ``sa1/U`` beside ``vanilla/U`` reads oddly and is exactly right: same
@@ -1016,44 +984,60 @@ SA1 = RomBase(
     # on. All three are measured, so this base declares nothing off and takes
     # `DrivenPaths`' defaults; what each measurement was is written there.
     driven=DrivenPaths(),
-    # The pack rewrites every level's sprite-memory index on its way into the
-    # image, so those five bits are the cartridge's and not the project's.
+    # The build rewrites every eligible level's sprite-memory index on the
+    # cartridge's way out (Config/SpriteMemoryIndex.asm, under
+    # Define_SMW_SpriteMemoryIndex below), so those five bits are the
+    # cartridge's and not the project's.
     sprite_header_build_owned=0x1F,
-    patch=PostBuildPatch(
+    pack=VendoredPack(
         source_target="U",
         entry=SA1_PACK_ENTRY,
         env_var=SA1_PACK_ENV,
         label="SA-1 Pack",
         vendor_dir="sa1-pack",
-        define="Define_SMW_SA1Pack",
-        pass_entry="SA1_Pack_SMW.asm",
+        define="Define_SMW_SA1",
         fallback_names=tuple(SA1_PACK_NAMES),
-        # The base's own switch first -- the wrapper applies the pack on it,
-        # and the source sees it on every pass. Then both halves of the
-        # work-RAM remap, placed by *our* source, so the patch's copies are
-        # switched off. Each remap pair must move together: a source rebase
-        # changes bytes those blocks' own guards probe, so leaving one on
-        # would have it skip half its work and say nothing.
+        # The base's own switch first -- Config/SA1Pack.asm includes the
+        # pack on it, and the source sees it on every pass. Then every
+        # region the memory map places where the pack would have moved it;
+        # the pack's own copies of that work are switched off beside the
+        # include, in Config/SA1Pack.asm.
         source_defines=(
-            ("Define_SMW_SA1Pack", "1"),
+            ("Define_SMW_SA1", "1"),
             ("Define_SMW_DirectPageLocation", "$3000"),
             ("Define_SMW_LowRAMLocation", "$6000"),
+            # The pack's smaller remaps, placed by the source the same way:
+            # the Map16 tables in BW-RAM, the save files in BW-RAM, and the
+            # V-blank uploads folded onto DMA channel 2 with the window on
+            # HDMA channel 1, which the pack keeps 0 and 1 free for.
+            ("Define_SMW_Map16Location", "$40C800"),
+            ("Define_SMW_SaveDataLocation", "$41C000"),
+            ("Define_SMW_OAMUploadDMAChannel", "$02"),
+            ("Define_SMW_TilemapUploadDMAChannel", "$02"),
+            ("Define_SMW_WindowHDMAChannel", "$01"),
+            # Every eligible level's sprite memory index set to $08, the one
+            # the pack's 22-slot sprite memory is keyed on, as each list is
+            # emitted -- the pack's own exclusions included.
+            ("Define_SMW_SpriteMemoryIndex", "$08"),
+            # More Sprites' 22 slots, and its tables where the pack keeps
+            # them: the memory map's SA-1 layout block, selected by the
+            # pack's define, places every table the pack's non_dp and
+            # dp_trivial tables used to move.
+            ("Define_SMW_MaxNormalSpriteSlot", "$15"),
         ),
-        patch_defines=(("remap_dp", "0"), ("remap_addr", "0")),
-        size_entries=(("6mb", "asm/6mb.asm"), ("8mb", "asm/8mb.asm")),
     ),
     #: Bank $11, not the $10 a plain build reserves. The pack allocates its
-    #: own ~18 KB with asar's freespace search, and that search runs over the
-    #: *patched* image after this tree has assembled -- so $10 is where the
-    #: pack has always landed, and a reservation there would push it into a
-    #: bank no build of this base has put it in. One bank up costs nothing:
+    #: own ~18 KB with asar's freespace search, and that search runs at the
+    #: end of the main pass, after every bank has emitted -- so $10 is where
+    #: the pack has always landed, and a reservation there would push it into
+    #: a bank no build of this base has put it in. One bank up costs nothing:
     #: $11 is the same address at every size from 1 MB and still under the
     #: work RAM mirror.
     reservation_bank=0x11,
     #: Whole megabytes only, because that is the grain the Super MMC maps ROM
-    #: in. 1 MB is the floor rather than a choice: the patch needs freespace,
-    #: and a 512 KB input is one asar expands to a megabyte to find some. 5 and
-    #: 7 are missing because the pack ships two files, not five.
+    #: in. 1 MB is the floor rather than a choice: the pack's own code needs
+    #: the expansion. 5 and 7 are missing because the framework declares 6
+    #: and 8 past the LoROM banks and nothing between.
     sizes=("1mb", "2mb", "3mb", "4mb", "6mb", "8mb"),
     targets={
         "U": BuildTarget(
@@ -1065,15 +1049,16 @@ SA1 = RomBase(
             # Not a cartridge anyone shipped, so it cannot claim a No-Intro
             # hash. What it claims is that this base still assembles to what it
             # assembled to before -- and that it differs from SA-1 Pack applied
-            # to a real USA cartridge by exactly four enumerated bytes, all in
-            # a routine with no callers, where our relocation is the correct
-            # one and the patch's is not. See the pin file for the list.
+            # to a real USA cartridge by exactly seven enumerated bytes: five
+            # in two routines with no callers, where our reading is the correct
+            # one and the patch's is not, and two of dead padding. See the pin
+            # file for the list.
             #
             # It moves when SA-1 Pack is upgraded, which is the point: a
             # `Reproducible` pin over a dependency nobody here controls is what
             # notices that the dependency changed.
             expectation=Reproducible(
-                sha1="15405bd3ef79b1ec539abc8d2e968534bbb65e93",
+                sha1="d6bbf6ad7b267bc15d4bd6d63f59f51a74016427",
                 size=1048576,
             ),
         )

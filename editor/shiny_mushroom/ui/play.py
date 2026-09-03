@@ -44,6 +44,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, Signal, Slot
 
+from shiny_mushroom.brk import BrkReport
 from shiny_mushroom.emu.supervisor import PlaySupervisor
 from shiny_mushroom.ui.emulator import SupervisorHost
 
@@ -91,6 +92,12 @@ class PlayController(SupervisorHost):
     #: :class:`~shiny_mushroom.emu.supervisor.PlaySupervisor`.
     failed = Signal(str)
 
+    #: The run hit a ``BRK`` and is stopped at it. Carries the
+    #: ``BrkReport``, and the machine stays stopped until the window answers
+    #: with :meth:`carry_on_past_brk` or with another run -- which is what
+    #: makes the choice the player's rather than this thread's.
+    broke = Signal(object)
+
     # -- requests, crossed to the play thread --------------------------------
     #
     # The window calls the plain methods below on the UI thread; each emits
@@ -105,11 +112,13 @@ class PlayController(SupervisorHost):
     _boot_requested = Signal()
     _enter_requested = Signal(int, object, object)
     _overworld_requested = Signal(int, int, int, object, object, object)
+    _cartridge_requested = Signal()
     _beat_requested = Signal(bool)
     _buttons_requested = Signal(int)
     _paused_requested = Signal(bool)
     _loadout_requested = Signal(object)
     _idle_requested = Signal()
+    _carry_on_requested = Signal()
 
     def __init__(
         self,
@@ -142,9 +151,15 @@ class PlayController(SupervisorHost):
         self._rate_at = 0.0
         self._rate_from = 0
         self._fps = 0.0
+        #: The address of the ``BRK`` this session has already reported, so a
+        #: machine that stays stopped at it -- which is exactly what it does
+        #: while somebody reads the dialog -- is reported once.
+        self._reported_brk: int | None = None
         self._boot_requested.connect(self._boot)
         self._enter_requested.connect(self._enter)
         self._overworld_requested.connect(self._enter_overworld)
+        self._cartridge_requested.connect(self._enter_cartridge)
+        self._carry_on_requested.connect(self._carry_on_past_brk)
         self._beat_requested.connect(self._beat_level)
         self._buttons_requested.connect(self._set_buttons)
         self._paused_requested.connect(self._set_paused)
@@ -197,6 +212,13 @@ class PlayController(SupervisorHost):
             submap, x, y, tile_settings, event_flags, patches
         )
 
+    def enter_cartridge(self) -> None:
+        """Ask for the cartridge itself, at its title screen and unpatched.
+
+        Returns at once; the reply is :attr:`entered`.
+        """
+        self._cartridge_requested.emit()
+
     def beat_level(self, secret: bool) -> None:
         """Ask to beat the level underfoot. The reply is :attr:`beaten`."""
         self._beat_requested.emit(bool(secret))
@@ -211,6 +233,15 @@ class PlayController(SupervisorHost):
     def set_loadout(self, player: Mapping[str, object]) -> None:
         """Change the powerup and the rest without reloading the level."""
         self._loadout_requested.emit(dict(player))
+
+    def carry_on_past_brk(self) -> None:
+        """Execute the ``BRK`` the run is stopped at and let it run on.
+
+        What the window sends when somebody has read the report and chosen to
+        keep the run. Returns at once; the pump starts delivering frames again
+        as soon as the machine draws any.
+        """
+        self._carry_on_requested.emit()
 
     def idle(self) -> None:
         """Stop pumping and leave the machine paused, still booted.
@@ -269,6 +300,8 @@ class PlayController(SupervisorHost):
         # whatever its number.
         self._seen = 0
         self._paused = False
+        # A new run is the answer to whatever the last one ended at.
+        self._reported_brk = None
         self.entered.emit(entry)
         self._start_timer()
 
@@ -298,7 +331,43 @@ class PlayController(SupervisorHost):
             return
         self._seen = 0
         self._paused = False
+        # A new run is the answer to whatever the last one ended at.
+        self._reported_brk = None
         self.entered.emit(entry)
+        self._start_timer()
+
+    @Slot()
+    def _enter_cartridge(self) -> None:
+        """Put the cartridge back to its title screen and start pumping.
+
+        :meth:`_enter`'s third sibling, and the same replacement path: this
+        run replaces whatever was running, level or map.
+        """
+        if self._stopped:
+            return
+        try:
+            entry = self._supervisor.enter_cartridge()
+        except Exception as error:  # noqa: BLE001 - a thread boundary reports everything
+            self.failed.emit(str(error))
+            return
+        self._seen = 0
+        self._paused = False
+        # A new run is the answer to whatever the last one ended at.
+        self._reported_brk = None
+        self.entered.emit(entry)
+        self._start_timer()
+
+    @Slot()
+    def _carry_on_past_brk(self) -> None:
+        """Let the stopped run go, and report it dead if it will not."""
+        if self._stopped:
+            return
+        try:
+            self._supervisor.carry_on_past_brk()
+        except Exception as error:  # noqa: BLE001 - a thread boundary reports everything
+            self.failed.emit(str(error))
+            return
+        self._reported_brk = None
         self._start_timer()
 
     @Slot(bool)
@@ -382,6 +451,18 @@ class PlayController(SupervisorHost):
             self._halt()
             self.failed.emit(str(error))
             return
+        # Before the frame and the status, because there may be neither: a run
+        # stopped at a BRK draws nothing, and this pump is what tells the
+        # window why the picture stopped moving. Reported once per break --
+        # the pump keeps carrying it while the machine is stopped, and a
+        # dialog per frame is not a report, it is a fight.
+        brk = header.get("brk")
+        if isinstance(brk, dict):
+            if self._reported_brk != brk.get("address"):
+                self._reported_brk = brk.get("address")
+                self._stop_timer()
+                self.broke.emit(BrkReport.from_dict(brk))
+                return
         sequence = int(header.get("sequence", self._seen))
         if pixels is not None:
             self._seen = sequence

@@ -14,30 +14,33 @@ includeonce
 ;#
 ;# Setting !Define_SMW_RelocateOverworldTables to !TRUE moves eight of the
 ;# overworld's eleven editable table fragments into the reserved bank --
-;# twenty-two tables, in nine placements, the Layer 2 event pointers and
-;# entries being placed separately -- packed into the run there, and leaves a
-;# hole where each one used to be. The tables are named by
-;# label everywhere they are read, so most of the code follows them untouched;
-;# the twelve sites that read one with a 16-bit address and an index in Y have
-;# no long-addressed form and point the data bank at the run instead. Those
-;# are written out under this same define in Banks/Bank04.asm.
+;# twenty-two tables, in nine slots, the Layer 2 event pointers and
+;# entries being placed separately -- emitted back to back into the run
+;# there, and leaves a hole where each one used to be. The tables are named
+;# by label everywhere they are read, so most of the code follows them
+;# untouched; the twelve sites that read one with a 16-bit address and an
+;# index in Y have no long-addressed form and point the data bank at the run
+;# instead. Those are written out under this same define in Banks/Bank04.asm.
 ;#
-;# The bank, the RATS tag over it and the cursor the fragments pack at are
+;# The bank, the RATS tag over it and the run's sequence are
 ;# Config/ReservedBank.asm's, and are shared with the other growable features.
 ;# This file emits the second of that run's three occupants, so a fragment
 ;# here lands after the translevel remap table when that feature is on and at
-;# the run's head when it is not.
+;# the run's head when it is not. Each bank keeps its table macro and its
+;# ROM map slot; the slot leaves a labelled hole, and the run emits the
+;# table from the same macro in the same order -- so the tables are one
+;# contiguous occupant whatever the map has between their slots.
 ;#
 ;# They go in back to back, with nothing between them. A fragment's room is
 ;# the distance to the next thing that cannot move, so padding between two
 ;# relocated fragments is not room for either of them -- it is room for
-;# nobody. Packed, they push each other along and the assembler recomputes
-;# every address after the one that grew, which is the same thing the tables
-;# inside a single fragment already do. What bounds them is the end of the
-;# run, and everything in it shares that bound: whatever these fragments do
-;# not use, the relocated strings may. The addresses a build lands on are read
-;# back off its own symbol file, so a fragment that grew and pushed the rest
-;# along is read where it ended up.
+;# nobody. Emitted in sequence, they push each other along and the assembler
+;# recomputes every address after the one that grew, which is the same thing
+;# the tables inside a single fragment already do. What bounds them is the
+;# end of the run, and everything in it shares that bound: whatever these
+;# fragments do not use, the relocated strings may. The addresses a build
+;# lands on are read back off its own symbol file, so a fragment that grew
+;# and pushed the rest along is read where it ended up.
 ;#
 ;# Three of the overworld's tables deliberately stay in bank $04:
 ;#
@@ -78,12 +81,12 @@ endif
 ;# run with nothing in it. A reader looking for somewhere to put a routine would
 ;# have to know which tables moved to know the room is there at all.
 ;#
-;# So each hole is named. %SMW_RelocatableTableEnd drops a label on it, which is
+;# So each hole is named. %SMW_RelocatableTableSlot drops a label on it, which is
 ;# what makes it findable: by anyone reading a symbol file, and by the editor's
-;# memory map, which shows it as free space (docs/editor/memory-map.md). The
+;# memory map, which shows it as free space. The
 ;# label is emitted only when the tables have moved, so a stock build gains no
 ;# symbol -- and a symbol above a fragment is a symbol that shortens the room
-;# smw_tools.asm_regions.room measures for it.
+;# the editor measures for it.
 ;#
 ;# Two of the holes are spent again immediately: %SMW_RelocatedRoutineStart
 ;# starts the routine the table was cut out of at the table's old address,
@@ -107,57 +110,46 @@ endif
 
 ;#############################################################################################################
 
-; Open a table's placement: after whatever went into the run last when the
-; tables have moved, and at <StockAddress> otherwise. The relocated case brackets the emission with
-; pushpc/pullpc, so the bank the table came out of carries on from where it left
-; off -- a hole the size of the table, and every warnpc after it still true.
+; A relocatable table's slot in the bank it came out of. The ROM map orgs
+; here either way: on a stock build the table macro follows and fills it,
+; and on a relocated build the table is emitted from
+; %SMW_PlaceRelocatedOverworldTables instead and the slot is a hole the size
+; of the table, labelled where the vacancy map says nothing reclaims it.
+; Called outside the table's namespace, so the label is spelled as written
+; -- SMW_Layer2EventData_SMW_VacatedOverworldTable_Layer2EventPtrs is not a
+; name anything can look for.
 ;
-; It is a plain org rather than %InsertMacroAtXPosition because asar refuses a
-; warnpc between a pushpc and its pullpc; %SMW_RelocatableTableEnd asserts the
-; slot instead, which is an error rather than a warning and so the stronger
-; check. Every %SMW_RelocatableTableStart must be closed by one.
-;
-; Both branches record where the table sat, because a routine the table was cut
-; out of gets that address back -- see %SMW_RelocatedRoutineStart.
-;
-; The relocated branch orgs to <StockAddress> before it pushes, so the PC its
-; pullpc restores is the front of the hole rather than wherever the last macro
-; happened to stop. Two relocated placements in a row would otherwise both come
-; back to the address of whatever preceded the pair -- which is the PC every
-; later warnpc is measured against, and the address %SMW_RelocatableTableEnd
-; puts the vacancy label on.
-macro SMW_RelocatableTableStart(StockAddress, Slot)
+; Both cases record where the table sat, because a routine the table was
+; cut out of gets that address back -- see %SMW_RelocatedRoutineStart.
+macro SMW_RelocatableTableSlot(StockAddress, Slot)
 !Vac_SMW_<Slot> #= <StockAddress>
+%InsertMacroAtXPosition(<StockAddress>)
 if !Define_SMW_RelocateOverworldTables == !TRUE
-	org <StockAddress>
-	pushpc
-	org !SMW_ReservedBankNext
-else
-	%InsertMacroAtXPosition(<StockAddress>)
-endif
-endmacro
-
-; Close the placement %SMW_RelocatableTableStart opened: price what went in,
-; carry the packed run's position forward, and name the run the move left empty.
-;
-; <Slot> again rather than a define carried over from the Start: the two macros
-; then share no state at all, and an End that names a different slot from its
-; Start is a mismatch the reader can see rather than one that silently prices a
-; fragment against somebody else's room.
-;
-; The label goes here rather than beside the org in the Start because a bank
-; macro turns its namespace off before closing -- and a namespaced label would
-; be SMW_Layer2EventData_SMW_VacatedOverworldTable_Layer2EventPtrs, which is
-; not a name anything can look for. pullpc has put the PC on the front of the
-; hole by now, so this is the same address either way.
-macro SMW_RelocatableTableEnd(Slot)
-if !Define_SMW_RelocateOverworldTables == !TRUE
-	assert pc() <= !Loc_SMW_ReservedBank_End, "The relocated overworld tables have outgrown the reserved run: less fits in it than the editor was told. Check overworld/tables/."
-	!SMW_ReservedBankNext #= pc()
-	pullpc
 	if !Vacancy_SMW_<Slot> == !TRUE
 SMW_VacatedOverworldTable_<Slot>:
 	endif
+endif
+endmacro
+
+; The whole of the relocated tables, one after another in the order their
+; slots have in the ROM map, at the position the reserved run has got to.
+; Called from %SMW_PlaceReservedRun after the translevel remap table and
+; before the relocated text; the tables come out of the same macros the
+; stock build emits in place (Banks/Bank04.asm), so the bytes are the
+; bank's own either way and only where they land differs. The run's end
+; bounds them, and the assert says so by name.
+macro SMW_PlaceRelocatedOverworldTables()
+if !Define_SMW_RelocateOverworldTables == !TRUE
+	%SMW_OverworldTable_StarPipeWarps()
+	%SMW_OverworldTable_PathExits()
+	%SMW_OverworldTable_WalkDirections()
+	%SMW_OverworldTable_Layer1EventLocations()
+	%SMW_OverworldTable_Layer1EventSwaps()
+	%SMW_OverworldTable_Layer2EventEntries()
+	%SMW_OverworldTable_Layer2EventPtrs()
+	%SMW_OverworldTable_DestroyedTiles()
+	%SMW_OverworldTable_SilentTiles()
+	assert pc() <= !Loc_SMW_ReservedBank_End, "The relocated overworld tables have outgrown the reserved run: less fits in it than the editor was told. Check overworld/tables/."
 endif
 endmacro
 

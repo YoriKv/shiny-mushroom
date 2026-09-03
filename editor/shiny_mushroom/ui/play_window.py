@@ -44,6 +44,7 @@ from shiny_mushroom.hexnum import hexnum
 from shiny_mushroom.overworld_snapshot import MODE_OVERWORLD
 from shiny_mushroom.pads import PadReader, open_pads
 from shiny_mushroom.play_request import Buttons, PlayerState
+from shiny_mushroom.ui.brk_dialog import show_brk
 from shiny_mushroom.ui.controls_dialog import bindings as stored_bindings
 from shiny_mushroom.ui.controls_dialog import deadzone as stored_deadzone
 from shiny_mushroom.ui.dialogs import warn
@@ -108,6 +109,7 @@ class PlayWindow(QMainWindow):
         parent: QWidget | None = None,
         *,
         overworld: OverworldRun | None = None,
+        cartridge: bool = False,
     ) -> None:
         super().__init__(parent)
         self._rom = rom
@@ -119,6 +121,10 @@ class PlayWindow(QMainWindow):
         #: When set, the window is testing the world map rather than a level;
         #: :meth:`test` and :meth:`test_overworld` switch it either way.
         self._overworld = overworld
+        #: And when *this* is set, neither: the run is the cartridge itself,
+        #: at its title screen with nothing patched into it. The three are
+        #: exclusive, and every ``test_*`` below sets all of them.
+        self._cartridge = cartridge
         #: What the pad is currently told to hold, and the two sources it is
         #: computed from: the Mesen codes held on the keyboard, and the ones
         #: the last gamepad poll found. Kept apart so that letting go of the
@@ -166,6 +172,7 @@ class PlayWindow(QMainWindow):
         self._controller.status.connect(self._show_status)
         self._controller.beaten.connect(self._beaten)
         self._controller.failed.connect(self._failed)
+        self._controller.broke.connect(self._broke)
         # Through the same door a Restart goes through, and saying the same
         # thing: the window no longer starts an emulator, so there is no
         # starting-one to report -- what is being waited for is the level,
@@ -173,8 +180,15 @@ class PlayWindow(QMainWindow):
         self.restart()
 
     def _title(self) -> str:
-        what = "the world map" if self._overworld else hexnum(self._level, 3)
-        return f"Testing {what} - {self._rom.name} - {APP_NAME}"
+        return f"Testing {self._what()} - {self._rom.name} - {APP_NAME}"
+
+    def _what(self) -> str:
+        """This run, as the title and the status line name it."""
+        if self._cartridge:
+            return "the cartridge"
+        if self._overworld:
+            return "the world map"
+        return f"level {hexnum(self._level, 3)}"
 
     # -- construction -------------------------------------------------------
 
@@ -230,10 +244,17 @@ class PlayWindow(QMainWindow):
         return combo
 
     def _apply_run_chrome(self) -> None:
-        """Show the controls that mean something for this kind of run."""
+        """Show the controls that mean something for this kind of run.
+
+        A cartridge run gets neither half: the loadout is written into a level
+        the game is not in, and there is no map underfoot to beat a level on.
+        What it has is Restart and Pause, which is what running a cartridge
+        from its title screen can be asked for.
+        """
+        level = self._overworld is None and not self._cartridge
         world = self._overworld is not None
         for action in self._loadout_actions:
-            action.setVisible(not world)
+            action.setVisible(level)
         self._complete_action.setVisible(world)
         self._secret_action.setVisible(world)
 
@@ -276,6 +297,7 @@ class PlayWindow(QMainWindow):
         self._level = level
         self._patches = dict(patches)
         self._overworld = None
+        self._cartridge = False
         self._apply_run_chrome()
         self.setWindowTitle(self._title())
         self.restart()
@@ -284,20 +306,32 @@ class PlayWindow(QMainWindow):
         """Walk the world map as ``run`` describes it, replacing whatever is
         running -- :meth:`test`'s sibling for the other kind of run."""
         self._overworld = run
+        self._cartridge = False
+        self._apply_run_chrome()
+        self.setWindowTitle(self._title())
+        self.restart()
+
+    def test_cartridge(self) -> None:
+        """Play the cartridge itself from its title screen, replacing whatever
+        is running -- :meth:`test`'s sibling for the third kind of run."""
+        self._overworld = None
+        self._cartridge = True
         self._apply_run_chrome()
         self.setWindowTitle(self._title())
         self.restart()
 
     def restart(self) -> None:
         """Load the run again, with whatever edits are held now."""
-        what = "the world map" if self._overworld else f"level {hexnum(self._level, 3)}"
-        self.statusBar().showMessage(f"Loading {what}...")
+        self.statusBar().showMessage(f"Loading {self._what()}...")
         self._request()
 
     def _request(self) -> None:
         self._pause_action.setChecked(False)
         self._release_keys()
         self._sync_pads()
+        if self._cartridge:
+            self._controller.enter_cartridge()
+            return
         if self._overworld is not None:
             run = self._overworld
             self._controller.enter_overworld(
@@ -317,11 +351,12 @@ class PlayWindow(QMainWindow):
 
     def _entered(self, entry: dict) -> None:
         how = "restored" if entry.get("reused") else "loaded"
-        what = (
-            "World map"
-            if self._overworld
-            else f"Level {hexnum(entry.get('level', self._level), 3)}"
-        )
+        if self._cartridge:
+            what, how = "Cartridge", "started"
+        elif self._overworld:
+            what = "World map"
+        else:
+            what = f"Level {hexnum(entry.get('level', self._level), 3)}"
         self.statusBar().showMessage(
             f"{what} {how} in {entry.get('duration', 0.0) * 1000:.0f} ms",
             4000,
@@ -366,7 +401,7 @@ class PlayWindow(QMainWindow):
         # for -- so both of its steady states get said by name.
         if mode == PLAYING_MODE:
             where = "in the level"
-        elif self._overworld and mode == MODE_OVERWORLD:
+        elif mode == MODE_OVERWORLD and (self._overworld or self._cartridge):
             where = "on the map"
         else:
             where = f"game mode {hexnum(mode)}"
@@ -374,14 +409,45 @@ class PlayWindow(QMainWindow):
         state = "paused" if status.get("paused") else f"{rate:.0f} fps"
         self._status.setText(f"{where}    {state}")
 
+    def _broke(self, report) -> None:
+        """The run is stopped at a ``BRK``. Show it, and do what is asked.
+
+        The one place in the editor where a report comes with a choice, and it
+        is the player's: the machine is stopped *at* the instruction with the
+        registers still the ones that reached it, and it stays that way until
+        this returns. Carrying on executes the ``BRK`` and lands wherever the
+        cartridge's vector points; stopping leaves the run where it is, which
+        is what the handler patch's own ``STP`` does, and Restart is still
+        there for whoever wants another go.
+
+        Not a failure: the window stays open either way. What has stopped is
+        the cartridge, and closing the window over it would take away the
+        report and the choice at once.
+        """
+        self.statusBar().showMessage(
+            f"BRK {hexnum(report.signature)} at {hexnum(report.address, 6)}"
+        )
+        if show_brk(self, report.about(self._what()), resumable=True):
+            self._controller.carry_on_past_brk()
+            self.statusBar().showMessage("Carried on past the BRK.", 4000)
+            return
+        self.set_notice(
+            f"Stopped at BRK {hexnum(report.signature)}",
+            f"The cartridge raised exception {hexnum(report.signature)} at "
+            f"{hexnum(report.address, 6)} and the run is stopped there. "
+            f"Restart (Ctrl+R) starts it again.",
+        )
+
     def _failed(self, message: str) -> None:
         if self._closing:
             # Shutting down races the pump; a worker that goes away while the
             # window is closing is the window closing, not a failure.
             return
         self.statusBar().clearMessage()
-        what = "world map" if self._overworld else "level"
-        self._alert(f"The {what} could not be tested.", detail=message)
+        # Capitalised by hand: ``str.capitalize`` would lower-case the rest,
+        # and the rest can be a hex number with letters in it.
+        what = self._what()
+        self._alert(f"{what[0].upper()}{what[1:]} could not be tested.", detail=message)
         self.close()
 
     # -- the keyboard and the pad -------------------------------------------

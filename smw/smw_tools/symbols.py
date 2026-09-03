@@ -17,10 +17,11 @@ from pathlib import Path
 
 WLA_LINE = re.compile(r"^([0-9A-Fa-f]{2}):([0-9A-Fa-f]{4})\s+(\S+)")
 
-#: What :func:`merge_pack_labels` writes before a patch pass's labels, and what
-#: the parser uses to tell them from the assemble's own. One comment line
-#: inside ``[labels]``; every label after it is the patch's.
-PACK_MARKER = "merged by smw_tools.symbols.merge_pack_labels"
+#: A source file the assembler read from outside the tree: asar records
+#: paths as it saw them from the game folder, so anything two levels up is
+#: neither the game's nor the framework's -- a vendored tree's. Its labels
+#: are what a consumer means by "the pack's own code".
+_FOREIGN = "../../"
 
 
 def _default_root() -> Path:
@@ -35,9 +36,10 @@ class Symbol:
     #: 24-bit SNES address.
     addr: int
     name: str
-    #: Whether a patch pass placed it, rather than the assemble -- read off
-    #: :data:`PACK_MARKER` in the file, so a consumer can ask where the patch's
-    #: own code landed without a declaration saying so beside the base.
+    #: Whether a vendored tree's own file emitted it, rather than the tree
+    #: under ``src/`` -- read off the file's ``[addr-to-line mapping]``, so a
+    #: consumer can ask where the pack's code landed without a declaration
+    #: saying so beside the base.
     pack: bool = False
 
 
@@ -49,31 +51,50 @@ class SymbolTable:
 
 
 def parse_wla_symbols(text: str) -> list[Symbol]:
+    """Every label in a WLA symbol file, flagged when a foreign file emitted it.
+
+    The ``[labels]`` section carries no file; the ``[addr-to-line mapping]``
+    does, through ``[source files]``, so the two are read first and a label's
+    address looked up -- a label an ``incsrc``'d vendored tree placed maps to
+    a path outside the source tree.
+    """
+    files: dict[str, str] = {}
+    foreign_addrs: set[int] = set()
+    mode = ""
+    for raw in text.split("\n"):
+        line = raw.strip()
+        if line.startswith("["):
+            mode = line.lower()
+            continue
+        if mode == "[source files]":
+            parts = line.split(None, 2)
+            if len(parts) == 3:
+                files[parts[0].lower()] = parts[2]
+        elif mode == "[addr-to-line mapping]":
+            parts = line.split()
+            if len(parts) == 2 and ":" in parts[0] and ":" in parts[1]:
+                bank, off = parts[0].split(":")
+                file_id = parts[1].split(":")[0].lower()
+                try:
+                    addr = (int(bank, 16) << 16) | int(off, 16)
+                except ValueError:
+                    continue
+                if files.get(file_id, "").replace("\\", "/").startswith(_FOREIGN):
+                    foreign_addrs.add(addr)
     out: list[Symbol] = []
     in_labels = False
-    pack = False
     for raw in text.split("\n"):
         line = raw.strip()
         if line.startswith("["):
             in_labels = line.lower() == "[labels]"
-            pack = False
             continue
-        if not in_labels or not line:
-            continue
-        if line.startswith(";"):
-            if PACK_MARKER in line:
-                pack = True
+        if not in_labels or not line or line.startswith(";"):
             continue
         m = WLA_LINE.match(line)
         if not m:
             continue
-        out.append(
-            Symbol(
-                addr=(int(m.group(1), 16) << 16) | int(m.group(2), 16),
-                name=m.group(3),
-                pack=pack,
-            )
-        )
+        addr = (int(m.group(1), 16) << 16) | int(m.group(2), 16)
+        out.append(Symbol(addr=addr, name=m.group(3), pack=addr in foreign_addrs))
     return out
 
 
@@ -89,67 +110,6 @@ def load_symbols(sym_path: Path | str) -> SymbolTable:
         table.by_name.setdefault(s.name, s)
     table.by_addr = sorted(syms, key=lambda s: s.addr)
     return table
-
-
-def merge_pack_labels(main_sym: Path, pack_sym: Path, provenance: str) -> None:
-    """Fold a patch pass's labels into ``main_sym``'s ``[labels]`` section.
-
-    The main pass's symbol file describes the source assemble, whose labels the
-    patch edits in place and never moves; the patch pass's describes only what
-    the patch itself placed. Merged, one file describes the whole cartridge,
-    which is what lets a patched base have a symbol table of its own instead of
-    borrowing its source's.
-
-    Anonymous labels -- asar's ``:pos_*``/``:neg_*`` and macro-local names, all
-    prefixed ``:`` -- are dropped from the patch's contribution: they are
-    meaningless outside the file that assembled them and collide with the main
-    pass's own by construction. A *named* collision is an error rather than a
-    shadowing, because either file's answer would be wrong for the other's
-    address and nothing downstream could tell.
-    """
-    added = [
-        s for s in parse_wla_symbols(pack_sym.read_text(encoding="latin-1"))
-        if not s.name.startswith(":")
-    ]
-    lines = main_sym.read_text(encoding="latin-1").split("\n")
-    named = {
-        s.name
-        for s in parse_wla_symbols("\n".join(lines))
-        if not s.name.startswith(":")
-    }
-    clash = sorted({s.name for s in added} & named)
-    if clash:
-        raise ValueError(
-            f"{provenance} defines {len(clash)} label(s) the assemble also "
-            f"defines, starting with {clash[0]} -- the merged symbol file "
-            f"cannot say which address such a name means"
-        )
-
-    # Into the section, not onto the file: WLA files carry more sections after
-    # [labels], so appending at the end would file the labels under whichever
-    # section happens to be last.
-    end = len(lines)
-    in_labels = False
-    for i, raw in enumerate(lines):
-        line = raw.strip()
-        if line.startswith("["):
-            if in_labels:
-                end = i
-                break
-            in_labels = line.lower() == "[labels]"
-    if not in_labels and end == len(lines):
-        raise ValueError(f"{main_sym} has no [labels] section to merge into")
-
-    merged = [
-        *lines[:end],
-        f"; {provenance} -- {PACK_MARKER}",
-        *(
-            f"{s.addr >> 16:02X}:{s.addr & 0xFFFF:04X} {s.name}"
-            for s in sorted(added, key=lambda s: s.addr)
-        ),
-        *lines[end:],
-    ]
-    main_sym.write_text("\n".join(merged), encoding="latin-1", newline="\n")
 
 
 def stale_sources(

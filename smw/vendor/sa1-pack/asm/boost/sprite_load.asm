@@ -4,6 +4,7 @@ pushpc
 
 ; Make most of the sprite cleanup routine run on SA-1 CPU now.
 
+if !sa1_hijacks_external == 0
 org $058098
 	JSL Sprite_Load_Reset
 	
@@ -139,6 +140,12 @@ org $038712
 org $03B8BA
 	JSL CODE_01AC9C
 	NOP
+else
+Haxor = $02A8E6
+NSprite_FixY_Back = $02A8E7
+NSprite_FixY2_Back = $02A93A
+Label3_J = $02ABF6
+endif
 	
 pullpc
 

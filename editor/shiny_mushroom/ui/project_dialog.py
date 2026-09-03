@@ -127,14 +127,14 @@ def target_unavailable(base: RomBase, target_id: str) -> str:
 def base_unavailable(base: RomBase) -> str:
     """Why a project cannot be made on ``base`` yet, or an empty string.
 
-    One case today, and it is not a fault: a base built by running a third-party
-    patch over the assembled ROM needs that patch's tree, which is the user's own
-    checkout because it ships no licence this repository could redistribute --
-    see :class:`~smw_tools.bases.PostBuildPatch`. Asked here rather than
+    One case today, and it is not a fault: a base that assembles a vendored
+    third-party tree needs that tree, which the build locates through its
+    own override before the vendored copy -- see
+    :class:`~smw_tools.bases.VendoredPack`. Asked here rather than
     discovered at build time, so the answer is "this base needs something you
     have not got" and not "asar failed" half a minute in.
     """
-    patch = base.patch
+    patch = base.pack
     if patch is not None and patch.locate() is None:
         return patch.missing_message()
     return ""

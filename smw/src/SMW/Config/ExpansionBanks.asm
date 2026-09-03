@@ -56,6 +56,9 @@ macro SMW_ReserveExpansionBank(Name, BankDefine, Bank, StartLabel, EndLabel)
 		error "<Name> needs a cartridge it exists in, and this one ends below it -- no expansion bank exists at all in 512 KB. Assemble with --rom-size 1mb or larger."
 	endif
 	org ((<Bank>)<<$10)|$8000
+	; The tag is a db string, and a character table left in force by
+	; whatever emitted last would map its "STAR" through the font.
+	cleartable
 	%RATSTagStart(<StartLabel>, <EndLabel>)
 	org ((<Bank>)<<$10)|$FFFF
 	%RATSTagEnd(<EndLabel>)

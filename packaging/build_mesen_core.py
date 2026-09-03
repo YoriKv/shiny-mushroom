@@ -23,9 +23,12 @@ Build dependencies:
 - **macOS** -- ``brew install sdl2``.
 - **Windows** -- Visual Studio 2022 build tools; the build runs through MSBuild.
 
-SDL is linked but never called: the editor initialises the core with NULL window
-handles, which skips the renderer, sound manager and key manager entirely, so
-nothing needs a display at runtime.
+SDL's renderer and key manager are linked but never called: the editor passes a
+software renderer and ``noInput``, so nothing needs a display at runtime. Its
+sound manager is what a play worker's audio comes out of on Linux and macOS --
+``uv run pytest`` opens no device at all
+(``shiny_mushroom.emu.core.MesenCore.NO_AUDIO_ENV``), which is what keeps the
+suite silent on a developer's machine and runnable on a CI box with no card.
 
 **Licence.** Mesen is GPLv3 and so is this repository, so bundling it is
 permitted; what it obliges is offering Mesen's corresponding source alongside any

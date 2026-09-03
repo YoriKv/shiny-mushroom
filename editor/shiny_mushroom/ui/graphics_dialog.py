@@ -2,7 +2,7 @@
 drawn under a palette row, and the things that can be done to a file --
 export it as a PNG, import one back, copy it to the clipboard, paste one
 over it, revert it -- and to the set: add a file of the project's own,
-duplicate one, name it, move it to another slot, and delete it again.
+clone one, name it, move it to another slot, and delete it again.
 
 The overlay is the state and this is a view of it, exactly as the Source
 Files dialog is (:mod:`shiny_mushroom.ui.source_files_dialog`): a save writes
@@ -104,13 +104,13 @@ HINT = (
     "Each row is a graphics file the build reads. Export one to a PNG and "
     "import it back, copy and paste through the clipboard, or edit the "
     "project's copy in place through Open Folder. Add File adds a file of the "
-    "project's own; Duplicate File copies the one on show."
+    "project's own; Clone File copies the one on show."
 )
 
 #: The gestures that need the managed graphics banks, as
 #: :attr:`GraphicsDialog.feature_needed` names them.
 ADD = "add"
-DUPLICATE = "duplicate"
+CLONE = "clone"
 DELETE = "delete"
 
 COLUMNS = ("File", "Purpose", "Format", "Tiles", "Status")
@@ -259,21 +259,69 @@ def image_tiles(
     )
 
 
-def duplicate_note(row: GraphicsFile) -> str:
-    """What a copy of ``row`` is not, in a sentence, or ``""`` where the copy
-    is the file: an added file is one of the shapes a project may add
-    (:func:`copied_shape`), so a file that is none of them is copied as much
-    of it as the nearest one fits."""
-    shape = copied_shape(row.format, row.tiles)
+def clone_note(fmt: TileFormat, tiles: int) -> str:
+    """What a copy of a file of ``tiles`` in ``fmt`` is not, in a sentence,
+    or ``""`` where the copy is the file: an added file is one of the shapes
+    a project may add (:func:`copied_shape`), so a file that is none of them
+    is copied as much of it as the nearest one fits."""
+    shape = copied_shape(fmt, tiles)
     count = shape.tiles
     said = []
-    if shape.format is not row.format:
+    if shape.format is not fmt:
         said.append(f"as a {format_name(shape.format)} file")
-    if row.tiles > count:
-        said.append(f"as its first {count} tiles of {row.tiles}")
-    elif row.tiles < count:
-        said.append(f"as {count} tiles, the {count - row.tiles} behind it blank")
+    if tiles > count:
+        said.append(f"as its first {count} tiles of {tiles}")
+    elif tiles < count:
+        said.append(f"as {count} tiles, the {count - tiles} behind it blank")
     return f"The copy is added {' and '.join(said)}." if said else ""
+
+
+def clone_file(
+    project: Project, number: int, parent: QWidget | None
+) -> GraphicsSaved | None:
+    """Bring file ``number``'s tiles in again as a new added file, its number
+    asked for over ``parent``; ``None`` when the ask was declined.
+
+    The copy is an add and is priced and refused as one; what it saves the
+    reader is painting a file that is nearly another one. Any file may be
+    copied, the game's own included, and the copy keeps the source's shape
+    wherever a project may add it -- the animated tiles' 384 as well as a
+    slot's 128 (:func:`copied_shape`). Where the source is a shape a project
+    cannot add, :func:`clone_note` says up front where the two part. A
+    :class:`GraphicsError` is the refusal, worded for a message box; the
+    project must already have the managed graphics banks.
+
+    A function rather than a method, because the Level Graphics dialog
+    clones a slot's file into the slot without the Graphics window open.
+    """
+    source = _name(number)
+    try:
+        taken = project.added_graphics()
+        held = graphics.tiles(project, number)
+        fmt = graphics.file_format(project, number)
+        shape = copied_shape(fmt, len(held))
+        tiles = fitted_tiles(held, shape)
+    except (packed.PackedError, ProjectError, OSError) as error:
+        raise GraphicsError(str(error)) from error
+    note = clone_note(fmt, len(held))
+    dialog = FileNumberDialog(
+        "Clone file",
+        f"{source} is copied into the number typed here."
+        + (f" {note}" if note else ""),
+        taken,
+        parent,
+    )
+    to = answered(dialog, lambda: dialog.chosen_number)
+    if to is None:
+        return None
+    try:
+        return project.add_graphics(
+            to, codec.encode_tiles(shape.format, tiles), shape.format
+        )
+    except GraphicsBanksFull as error:
+        raise GraphicsError(f"GFX{to:02X} was not added: {error}.") from error
+    except (packed.PackedError, ProjectError, OSError) as error:
+        raise GraphicsError(f"GFX{to:02X} could not be added: {error}") from error
 
 
 class GraphicsDialog(QDialog):
@@ -287,7 +335,7 @@ class GraphicsDialog(QDialog):
     overlay_changed = Signal()
 
     #: A gesture needs the managed graphics banks and the project has not
-    #: got them: :data:`ADD`, :data:`DUPLICATE` or :data:`DELETE`, and the
+    #: got them: :data:`ADD`, :data:`CLONE` or :data:`DELETE`, and the
     #: file number it was about -- the one to copy or delete, ``-1`` for an
     #: add. The dialog stops there; the window offers the feature and
     #: finishes the gesture on the dialog it reopens
@@ -309,6 +357,7 @@ class GraphicsDialog(QDialog):
         self._stamps: dict[Path, tuple[int, int]] = {}
         #: The level on screen's CGRAM, or ``None`` with no level open.
         self._cgram: bytes | None = None
+        self._blob: bytes | None = None
         #: The file on show and its tiles, decoded once per selection.
         self._number: int | None = None
         self._tiles: list[bytes] = []
@@ -445,15 +494,15 @@ class GraphicsDialog(QDialog):
         )
         self._add.clicked.connect(self.add_file)
         row.addWidget(self._add)
-        self._duplicate = QPushButton("D&uplicate File...")
-        self._duplicate.setToolTip(
+        self._clone = QPushButton("Cl&one File...")
+        self._clone.setToolTip(
             wrap_tip(
                 "Copy the file on show into a number of the project's own. Needs "
                 "Growable graphics."
             )
         )
-        self._duplicate.clicked.connect(self._duplicate_file)
-        row.addWidget(self._duplicate)
+        self._clone.clicked.connect(self._clone_file)
+        row.addWidget(self._clone)
         row.addStretch()
         self._revert = QPushButton("&Revert")
         self._revert.setToolTip(
@@ -516,16 +565,25 @@ class GraphicsDialog(QDialog):
 
     # -- what the window tells it ---------------------------------------------
 
-    def set_cgram(self, cgram: bytes | None) -> None:
-        """The level on screen's colours, or ``None`` with no level open.
+    def show_colours(self, cgram: bytes | None, blob: bytes | None = None) -> None:
+        """The colours the picture on the canvas is drawn from, and the
+        palette file **as the editor holds it**.
 
-        The rows on offer follow: the level's sixteen rows first, then the
-        palette file's runs. The row picked stays picked by name where the
-        new list still has it.
+        Both together, because both feed the rows on offer: the scene's rows
+        come out of the capture and the file's named runs out of the blob.
+        The blob is the held document rather than `Project.palette()` off
+        disk, so an unsaved colour edit shows in the sheet the way it shows
+        everywhere else -- this was the one preview in the editor that read
+        the last save while a newer document existed.
+
+        ``None`` for either is "nothing to say": no level on the canvas, or
+        no palette document to read. The row picked stays picked by name
+        where the new list still has it.
         """
-        if cgram == self._cgram:
+        if (cgram, blob) == (self._cgram, self._blob):
             return
         self._cgram = cgram
+        self._blob = blob
         self._offer_rows()
         self._draw()
 
@@ -541,10 +599,7 @@ class GraphicsDialog(QDialog):
         if project is self._project:
             return
         self._project = project
-        self._refill()
-        self._read_tiles()
-        self._draw()
-        self._sync_buttons()
+        self.refresh()
 
     @property
     def number(self) -> int | None:
@@ -649,7 +704,7 @@ class GraphicsDialog(QDialog):
         self._import.setEnabled(have)
         self._copy.setEnabled(have)
         self._paste.setEnabled(have)
-        self._duplicate.setEnabled(have)
+        self._clone.setEnabled(have)
         self._revert.setVisible(not added)
         self._revert.setEnabled(have and row.edited and not added)
         self._rename.setVisible(added)
@@ -675,6 +730,25 @@ class GraphicsDialog(QDialog):
         self._offer_rows()
         self._draw()
         self._sync_buttons()
+
+    def refresh(
+        self, stamps: dict[Path, tuple[int, int]] | None = None, said: str = ""
+    ) -> None:
+        """Re-read everything the dialog shows, in one place.
+
+        Four callers -- a write made here, a file moved under it, a project
+        handed back, a colour arriving -- each used to hand-list which of
+        the five halves to redo, and each listed a different subset: the
+        palette rows were the one every write path left out, which was
+        harmless only because the row list is fixed per format.
+        """
+        self._refill(stamps)
+        self._read_tiles()
+        self._offer_rows()
+        self._draw()
+        self._sync_buttons()
+        if said:
+            self._hover.setText(said)
 
     def _read_tiles(self) -> None:
         if self._number is None:
@@ -729,7 +803,11 @@ class GraphicsDialog(QDialog):
             except GraphicsError:
                 pass
         try:
-            rows += graphics.file_rows(self._project.palette(), fmt)
+            # The held blob where the window has handed one over, and the
+            # saved file only where it has not -- a dialog opened before any
+            # colour was read still has runs to offer.
+            blob = self._blob if self._blob is not None else self._project.palette()
+            rows += graphics.file_rows(blob, fmt)
         except (palettes.PaletteError, ProjectError, OSError):
             pass
         rows.append(PaletteRow(GREYS.name, GREYS.colours[: graphics.row_width(fmt)]))
@@ -860,7 +938,9 @@ class GraphicsDialog(QDialog):
             return False
         if not price.fits:
             QMessageBox.warning(
-                self, TITLE, _over_budget(row, price, self._project.graphics_managed)
+                self,
+                TITLE,
+                over_budget(row.name, price, self._project.graphics_managed),
             )
             return False
         try:
@@ -1002,7 +1082,7 @@ class GraphicsDialog(QDialog):
         """File ``tiles`` as the new file ``number`` in ``fmt``, priced as
         every graphics save is: a file the banks cannot hold is refused with
         the numbers, one that needs a bank more takes it. ``said`` is what
-        the note calls the add, since a duplicate is one."""
+        the note calls the add, since a clone is one."""
         try:
             raw = codec.encode_tiles(fmt, tiles)
             saved = self._project.add_graphics(number, raw, fmt)
@@ -1026,21 +1106,14 @@ class GraphicsDialog(QDialog):
             return picked
         return self._rows_for(fmt)[0]
 
-    def _duplicate_file(self) -> None:
+    def _clone_file(self) -> None:
         row = self._current()
         if row is not None:
-            self.duplicate_file(row.number)
+            self.clone_file(row.number)
 
-    def duplicate_file(self, number: int) -> bool:
-        """Bring file ``number``'s tiles in again as a new added file.
-
-        The copy is an add and is priced and refused as one; what it saves
-        the reader is painting a file that is nearly another one. Any file
-        may be copied, the game's own included, and the copy keeps the
-        source's shape wherever a project may add it -- the animated tiles'
-        384 as well as a slot's 128 (:func:`copied_shape`). Where the source
-        is a shape a project cannot add, :func:`duplicate_note` says up
-        front where the two part.
+    def clone_file(self, number: int) -> bool:
+        """Bring file ``number``'s tiles in again as a new added file
+        (:func:`clone_file`), the copy selected.
 
         Needs the managed graphics banks the way an add does, and is handed
         to the window the same way on a project without them, carrying the
@@ -1048,30 +1121,18 @@ class GraphicsDialog(QDialog):
         reopens.
         """
         if not self._project.graphics_managed:
-            self.feature_needed.emit(DUPLICATE, number)
+            self.feature_needed.emit(CLONE, number)
             return False
         try:
-            taken = self._project.added_graphics()
-            held = graphics.tiles(self._project, number)
-            shape = copied_shape(graphics.file_format(self._project, number), len(held))
-            tiles = fitted_tiles(held, shape)
-        except (GraphicsError, packed.PackedError, ProjectError, OSError) as error:
+            saved = clone_file(self._project, number, self)
+        except GraphicsError as error:
             QMessageBox.warning(self, TITLE, str(error))
             return False
-        source = _name(number)
-        row = self._row_named(number)
-        note = duplicate_note(row) if row is not None else ""
-        dialog = FileNumberDialog(
-            "Duplicate file",
-            f"{source} is copied into the number typed here."
-            + (f" {note}" if note else ""),
-            taken,
-            self,
-        )
-        to = answered(dialog, lambda: dialog.chosen_number)
-        if to is None:
+        if saved is None:
             return False
-        return self.add_tiles(to, shape.format, tiles, said=f"Duplicated {source} into")
+        self._number = saved.number
+        self._take(saved, f"Cloned {_name(number)} into GFX{saved.number:02X}")
+        return True
 
     def _row_named(self, number: int) -> GraphicsFile | None:
         """The catalogue row for file ``number``, or ``None`` for a number
@@ -1296,11 +1357,7 @@ class GraphicsDialog(QDialog):
 
     def _changed_here(self, said: str) -> None:
         """A write this dialog made: re-read, redraw, and tell the window."""
-        self._refill()
-        self._read_tiles()
-        self._draw()
-        self._sync_buttons()
-        self._hover.setText(said)
+        self.refresh(said=said)
         self.overlay_changed.emit()
 
     # -- what moved while somebody was in another window ---------------------
@@ -1334,10 +1391,7 @@ class GraphicsDialog(QDialog):
         gone = sorted(
             _name(numbers[path]) for path in set(before) - set(found) if path in numbers
         )
-        self._refill(found)
-        self._read_tiles()
-        self._draw()
-        self._sync_buttons()
+        self.refresh(stamps=found)
         self._say(moved + gone)
         self.overlay_changed.emit()
 
@@ -1350,7 +1404,7 @@ class GraphicsDialog(QDialog):
         self._moved.setVisible(bool(moved))
 
 
-def _over_budget(row: GraphicsFile, price: graphics.Price, managed: bool) -> str:
+def over_budget(name: str, price: graphics.Price, managed: bool) -> str:
     """The refusal, with the numbers a save is decided on: the stock run's,
     or the managed packing's -- which was priced at one bank more too."""
     packs = (
@@ -1359,13 +1413,13 @@ def _over_budget(row: GraphicsFile, price: graphics.Price, managed: bool) -> str
     )
     if managed:
         return (
-            f"{row.name} was not saved. {packs}, and the graphics banks would "
+            f"{name} was not saved. {packs}, and the graphics banks would "
             f"need {price.used:,} bytes of their {price.budget:,} -- "
             f"{price.over:,} too many, even with a bank more. Shrink the edit, "
             f"or delete an added file."
         )
     return (
-        f"{row.name} was not saved. {packs}, and the run every graphics file "
+        f"{name} was not saved. {packs}, and the run every graphics file "
         f"shares would need {price.used:,} bytes of its {price.budget:,} -- "
         f"{price.over:,} too many. Shrink the edit, or make room in another "
         f"file."
@@ -1375,7 +1429,7 @@ def _over_budget(row: GraphicsFile, price: graphics.Price, managed: bool) -> str
 __all__ = [
     "ADD",
     "DELETE",
-    "DUPLICATE",
+    "CLONE",
     "EXPORT_FOLDER_KEY",
     "GraphicsDialog",
     "TITLE",
@@ -1383,7 +1437,8 @@ __all__ = [
     "added_format",
     "blank_tiles",
     "copied_shape",
-    "duplicate_note",
+    "clone_file",
+    "clone_note",
     "fitted_tiles",
     "room_text",
     "rooms_text",

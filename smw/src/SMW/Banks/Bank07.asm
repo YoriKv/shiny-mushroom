@@ -170,9 +170,16 @@ ClearTables:
 ; The subroutine that loads the necessary bytes for some sprite tables.
 ; Actually just JSLs to $07F7A0 and sets $15F6,x.
 YXPPCCCTAndPropertyTables:
+if defined("Define_SMW_SA1")
+	; SA-1 Pack: InitSpriteTables is called from everywhere, I can't possibly
+	; hope that the pointer is set correctly in all cases, so just hijack
+	; accesses to the sprite number that happen in this routine.
+	JML.l SPRITE_NUM_REMAP0
+else
 	PHY								; Optimization: There is no need to preserve Y when it's not modified here
 	PHX
 	LDA.b !RAM_SMW_NorSpr_SpriteID,x
+endif
 	TAX
 	LDA.l Sprite166EVals,x
 	AND.b #!Define_SMW_NorSpr_166EProp_Palette|!Define_SMW_NorSpr_166EProp_UseSP3And4
@@ -186,9 +193,13 @@ YXPPCCCTAndPropertyTables:
 ; initialized.
 PropertyTables:								; Optimization: This routine can be fused with the above one to save a few bytes
 	PHY								; Both because of the removed JSL.l/RTL, but also from removing 1 set of PHX/PHY/PLY/PLX
+if defined("Define_SMW_SA1")
+	JML.l SPRITE_NUM_REMAP1
+else
 	PHX								; However, there is one place where SMW_InitializeNormalSpriteRAMTables_PropertyTables is called outside here, so that would need to be modified
 	TXY
 	LDX.b !RAM_SMW_NorSpr_SpriteID,y
+endif
 	LDA.l Sprite1656Vals,x
 	STA.w !RAM_SMW_NorSpr_PropertyBits1656,y
 	LDA.l Sprite1662Vals,x
@@ -208,7 +219,17 @@ PropertyTables:								; Optimization: This routine can be fused with the above 
 ; Resets most sprite tables and loads new values for some of them depending
 ; on the sprite number. Actually just JSLs to $07F722 and $07F78B.
 Main:									; Optimization: This routine can be moved to before ClearTables and have all the routines here execute in sequence.
+if !Define_SMW_CustomSprites == !TRUE
+	; The same four bytes as the call, at the one choke every spawn
+	; passes through -- stream or code-spawned, on either base. The stub
+	; consumes the spawn seam's pending pair into the slot's custom
+	; tables, leaves a slot nothing is pending for clean, and makes the
+	; displaced call itself. See Config/CustomSprites.asm.
+	JML.l SMW_CustomSprites_ClearSlot
+else
 	JSL.l ClearTables						; ClearTables is not called anywhere outside of here, so its RTL can be removed.
+endif
+CustomSpritesReturn:
 	JSL.l YXPPCCCTAndPropertyTables
 	RTL
 namespace off
@@ -257,14 +278,14 @@ CODE_07FC52:
 	STA.w !RAM_SMW_ExtSpr_SpriteID,y
 	PHX
 	LDX.w !RAM_SMW_NorSpr_CurrentSlotID	; X = Sprite index
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x
 	CLC
 	ADC.b #$04
 	STA.w !RAM_SMW_ExtSpr_YPosLo,y
 	LDA.w !RAM_SMW_NorSpr_YPosHi,x
 	ADC.b #$00
 	STA.w !RAM_SMW_ExtSpr_YPosHi,y
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x
 	CLC
 	ADC.b #$04
 	STA.w !RAM_SMW_ExtSpr_XPosLo,y
@@ -605,9 +626,12 @@ namespace SMW
 ; with it. The managed level banks hook that read to a table of one byte
 ; per level (Config/ManagedLevelMemory.asm) and pack a sprite list
 ; wherever the run has got to; the label stays at the macro's stock
-; address so the stock build reads what it always read.
+; address so the stock build reads what it always read -- placed from the
+; map line, and not again from the macro's turn in the packing.
+if !SMW_ManagedLevelEmit == !FALSE
 SpriteDataBank:
-%SMW_ManagedLevelRunStart(<Address>)
+endif
+%SMW_ManagedLevelSlot(<Address>)
 
 	%SMW_InsertLevelData(LEVEL_L1_GhostHouseEntrance, NoYoshiCutscene_GhostHouse, SMW_U, LAYER_1)
 	%SMW_InsertLevelData(LEVEL_L1_BlankEntrance, NoYoshiCutscene_GhostHouse, SMW_U, LAYER_2)
@@ -620,13 +644,12 @@ SpriteDataBank:
 	%SMW_InsertLevelData(LEVEL_L1_NoYoshiEntrance2, NoYoshiCutscene_StarrySky, SMW_U, LAYER_1)
 	%SMW_InsertLevelData(LEVEL_L1_NoYoshiEntrance3, NoYoshiCutscene_Craggy, SMW_U, LAYER_1)
 	%SMW_InsertLevelData(LEVEL_L1_108, Level108_SlopeTest, SMW_U, LAYER_1)
-%SMW_ManagedLevelRunEnd()
 namespace off
 endmacro
 
 macro DATATABLE_RT04_SMW_LevelData(Address)
 namespace SMW
-%SMW_ManagedLevelRunStart(<Address>)
+%SMW_ManagedLevelSlot(<Address>)
 
 	%SMW_InsertLevelData(LEVEL_L1_01D, 01D, SMW_U, LAYER_1)
 	%SMW_InsertLevelData(LEVEL_L1_0EA, 0EA, SMW_U, LAYER_1)
@@ -662,13 +685,12 @@ namespace SMW
 	%SMW_InsertLevelData(LEVEL_L1_1FE, 1FE, SMW_U, LAYER_1)
 	%SMW_InsertLevelData(LEVEL_L1_111, 111, SMW_U, LAYER_1)
 	%SMW_InsertLevelData(LEVEL_L2_111, 111, SMW_U, LAYER_2)
-%SMW_ManagedLevelRunEnd()
 namespace off
 endmacro
 
 macro DATATABLE_RT05_SMW_LevelData(Address)
 namespace SMW
-%SMW_ManagedLevelRunStart(<Address>)
+%SMW_ManagedLevelSlot(<Address>)
 
 	%SMW_InsertLevelData(LEVEL_L1_10D, 10D, SMW_U, LAYER_1)
 	%SMW_InsertLevelData(LEVEL_L1_1D4, 1D4, SMW_U, LAYER_1)
@@ -705,13 +727,12 @@ namespace SMW
 	%SMW_InsertLevelData(LEVEL_L1_1E0, 1E0, SMW_U, LAYER_1)
 	%SMW_InsertLevelData(LEVEL_L1_126, 126, SMW_U, LAYER_1)
 	%SMW_InsertLevelData(LEVEL_L1_125, Level125_Funky_Main, SMW_J, LAYER_1)
-%SMW_ManagedLevelRunEnd()
 namespace off
 endmacro
 
 macro DATATABLE_RT06_SMW_LevelData(Address)
 namespace SMW
-%SMW_ManagedLevelRunStart(<Address>)
+%SMW_ManagedLevelSlot(<Address>)
 
 	%SMW_InsertLevelData(UnusedLevelData_RideAmongTheCloudsSpr, UnusedLevel_RideAmongTheClouds, SMW_U, SPRITES)
 	%SMW_InsertLevelData(UnusedLevelData_MushroomScalesSpr, UnusedLevel_MushroomScales, SMW_U, SPRITES)
@@ -902,7 +923,6 @@ namespace SMW
 	%SMW_InsertLevelData(LEVEL_SP_125, Level125_Funky_Main, SMW_U, SPRITES)
 	%SMW_InsertLevelData(LEVEL_SP_104, Level104_YoshisHouse, SMW_U, SPRITES)
 	%SMW_InsertLevelData(LEVEL_SP_Test, Level025_TestLevel, SMW_U, SPRITES)
-%SMW_ManagedLevelRunEnd()
 namespace off
 endmacro
 

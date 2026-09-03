@@ -17,7 +17,7 @@ includeonce
 ;# other will want. smw_tools.features declares the run as a single TablePool
 ;# and the editor prices every save in it against the total.
 ;#
-;# Three occupants, in the order the ROM map emits them:
+;# Three occupants, in the order %SMW_PlaceReservedRun emits them:
 ;#
 ;# - The translevel remap table, at the head (Config/TranslevelRemap.asm).
 ;# - The relocated overworld tables (Config/OverworldTableRelocation.asm).
@@ -28,7 +28,9 @@ includeonce
 ;# it emitted, so smw_tools.features declares the same order and the same
 ;# unedited lengths, and reads an unbuilt cartridge without a symbol file.
 ;# Each occupant is switched on by itself -- one absent contributes nothing
-;# and the rest close up behind it.
+;# and the rest close up behind it. The run is one sequence: one org at its
+;# head, then the occupants one after another, so where each lands is where
+;# the assembler has got to and nothing carries a position between them.
 ;#
 ;# The run is the whole bank behind one RATS tag, and that is not generosity.
 ;# asar's freespace search does not respect written data -- it takes any long
@@ -70,25 +72,20 @@ endif
 ; features on reserves nothing, so a stock cartridge gains no RATS tag and no
 ; symbol -- and the editor's memory map draws the expansion banks free from
 ; end to end, which is what they are.
-!Define_SMW_ReservedBankWanted #= !FALSE
+!SMW_ReservedBankWanted #= !FALSE
 if !Define_SMW_RelocateOverworldTables == !TRUE
-	!Define_SMW_ReservedBankWanted #= !TRUE
+	!SMW_ReservedBankWanted #= !TRUE
 endif
 if !Define_SMW_TranslevelRemap == !TRUE
-	!Define_SMW_ReservedBankWanted #= !TRUE
+	!SMW_ReservedBankWanted #= !TRUE
 endif
 if !Define_SMW_RelocateStringTables == !TRUE
-	!Define_SMW_ReservedBankWanted #= !TRUE
+	!SMW_ReservedBankWanted #= !TRUE
 endif
 
 !Loc_SMW_ReservedBank_Tag	#= !Define_SMW_ReservedBankBase+$0000	;> the RATS tag, 8 bytes
 !Loc_SMW_ReservedBank_Packed	#= !Define_SMW_ReservedBankBase+$0008	;> the run, and SMW_ReservedBankStart
 !Loc_SMW_ReservedBank_End	#= !Define_SMW_ReservedBankBase+$7FFF	;> SMW_ReservedBankEnd, the bank's last byte
-
-; Where the run has got to: the cursor every occupant packs at and carries
-; forward. Reset here, which is once per assembler pass, because this file is
-; read at the start of each of them.
-!SMW_ReservedBankNext #= !Loc_SMW_ReservedBank_Packed
 
 ; The reservation (Config/ExpansionBanks.asm). Called from each ROM map once
 ; every occupant has emitted -- and once more below, from the initialize pass,
@@ -102,7 +99,7 @@ endif
 ; bytes again, which is where the end label the editor prices against comes
 ; from.
 macro SMW_ReserveBank()
-if !Define_SMW_ReservedBankWanted == !TRUE
+if !SMW_ReservedBankWanted == !TRUE
 	pushpc
 	%SMW_ReserveExpansionBank("The growable features' reserved bank", "Define_SMW_ReservedBank", !Define_SMW_ReservedBank, SMW_ReservedBankStart, SMW_ReservedBankEnd)
 	pullpc
@@ -113,8 +110,24 @@ endmacro
 ; rather than left to the ROM map, because by the time the ROM map runs the
 ; freespace search for that pass has already been answered from the file this
 ; writes into.
-if !Define_SMW_ReservedBankWanted == !TRUE
+if !SMW_ReservedBankWanted == !TRUE
 	if !FileType == !FileType_InitializeROM
 		%SMW_ReserveBank()
 	endif
 endif
+
+; The run itself, as one sequence: one org at its head, then each occupant
+; in the order the top of this file states, each emitting nothing where its
+; feature is off so the ones behind close up. Called from the tail of each
+; ROM map after the reservation, once every bank has emitted -- the overworld
+; tables and the text are the banks' own table macros, handed over rather
+; than emitted at their slots, and the remap's lookup jumps into bank $05.
+; Nothing after the ROM map reads the position this leaves.
+macro SMW_PlaceReservedRun()
+if !SMW_ReservedBankWanted == !TRUE
+	org !Loc_SMW_ReservedBank_Packed
+	%SMW_PlaceTranslevelLevelTable()
+	%SMW_PlaceRelocatedOverworldTables()
+	%SMW_PlaceRelocatedStrings()
+endif
+endmacro

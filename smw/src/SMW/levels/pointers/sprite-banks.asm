@@ -1,8 +1,9 @@
 ; The bank of each level's sprite list: one byte per level in level
 ; order, the bank of the label the sprite pointer table names in the
-; same row. Read by the managed level banks' stub at the level bank's tail
+; same row. Read by the managed level banks' stub at the tail of bank $07
 ; (Config/ManagedLevelMemory.asm) in place of the loader's literal bank
-; byte, and by SA-1 Pack's patch pass by address.
+; byte, and by address by the sprite-memory rewrite on the finalize pass
+; (Config/SpriteMemoryIndex.asm).
 ;
 ; The editor regenerates this file whenever it rewrites the sprite
 ; pointer table; the shipped copy mirrors the shipped table.

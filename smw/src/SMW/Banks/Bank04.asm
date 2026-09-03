@@ -481,7 +481,11 @@ CODE_04F56C:
 	LDA.b #$02
 	STA.w SMW_OAMTileSizeBuffer[$27].Slot
 	STA.w SMW_OAMTileSizeBuffer[$28].Slot
+if defined("Define_SMW_SA1")
+	JML.l overworld_lives_exchange_fix
+else
 	JSL.l SMW_LoadOverworldLifeCounter_Main
+endif
 	LDY.b #SMW_LifeExchangeText_End-SMW_LifeExchangeText_Main
 	TYA
 	CLC
@@ -558,7 +562,11 @@ namespace SMW_OverworldPrompt07_DisplayingSavePrompt
 %InsertMacroAtXPosition(<Address>)
 
 Main:
+if defined("Define_SMW_SA1")
+	JSL.l overworld_blinking_cursor
+else
 	JSL.l Bank00
+endif
 	RTS
 namespace off
 endmacro
@@ -579,12 +587,20 @@ endmacro
 ;#############################################################################################################
 
 macro DATATABLE_SMW_HandleOverworldStarPipeWarp(Address)
+%SMW_RelocatableTableSlot(<Address>, StarPipeWarps)
+if !Define_SMW_RelocateOverworldTables == !FALSE
+	%SMW_OverworldTable_StarPipeWarps()
+endif
+endmacro
+
+; The table itself, so that the relocated build can emit it where it
+; wants it: in place at the slot above, or into the reserved run out of
+; %SMW_PlaceRelocatedOverworldTables. Nothing here knows which.
+macro SMW_OverworldTable_StarPipeWarps()
 namespace SMW_HandleOverworldStarPipeWarp
-%SMW_RelocatableTableStart(<Address>, StarPipeWarps)
 
 incsrc "overworld/tables/star-pipe-warps.asm"
 namespace off
-%SMW_RelocatableTableEnd(StarPipeWarps)
 endmacro
 
 macro ROUTINE_SMW_HandleOverworldStarPipeWarp(Address)
@@ -678,7 +694,7 @@ SetPlayerDestination:
 	PLB
 	RTL
 if !Define_SMW_RelocateOverworldTables == !TRUE
-if defined("Define_SMW_SA1Pack")
+if defined("Define_SMW_SA1")
 	; SA-1 Pack's overworld boost hands work back to the SNES CPU through a
 	; pushed return address of $048575 -- where the RTL above sat before this
 	; routine moved into its tables' vacated run. The moved copy ends short
@@ -686,7 +702,7 @@ if defined("Define_SMW_SA1Pack")
 	; where it was: an RTL nothing here falls into, reached only through the
 	; pack's seams. The literal is a USA address, which is the one release
 	; the pack applies to.
-	warnpc $048575
+	assert pc() <= ($048575), "The moved copy runs past the pinned RTL at $048575!"
 	org $048575
 	RTL
 endif
@@ -698,12 +714,20 @@ endmacro
 ;#############################################################################################################
 
 macro DATATABLE_SMW_HandleOverworldPathExits(Address)
+%SMW_RelocatableTableSlot(<Address>, PathExits)
+if !Define_SMW_RelocateOverworldTables == !FALSE
+	%SMW_OverworldTable_PathExits()
+endif
+endmacro
+
+; The table itself, so that the relocated build can emit it where it
+; wants it: in place at the slot above, or into the reserved run out of
+; %SMW_PlaceRelocatedOverworldTables. Nothing here knows which.
+macro SMW_OverworldTable_PathExits()
 namespace SMW_HandleOverworldPathExits
-%SMW_RelocatableTableStart(<Address>, PathExits)
 
 incsrc "overworld/tables/path-exits.asm"
 namespace off
-%SMW_RelocatableTableEnd(PathExits)
 endmacro
 
 macro ROUTINE_SMW_HandleOverworldPathExits(Address)
@@ -1255,8 +1279,14 @@ namespace SMW_HandleCurrentOverworldProcess
 %InsertMacroAtXPosition(<Address>)
 
 Main:
+if defined("Define_SMW_SA1")
+	JSL.l overworld_events
+	RTS
+	NOP #2
+else
 	LDA.w !RAM_SMW_Pointer_CurrentOverworldProcess
 	JSL.l SMW_ExecutePtr_Long
+endif
 
 ; Pointers that are indexed by $7E13D9. Each one points to a different
 ; process running on the overworld.
@@ -1984,6 +2014,10 @@ CODE_0494A4:
 	ASL
 	ASL
 	ASL
+if defined("Define_SMW_SA1")
+	JML.l overworld_mulfixv2
+	NOP #38
+else
 	STA.w !REGISTER_Multiplicand	; Multiplicand A
 	LDA.b !RAM_SMW_Misc_ScratchRAM0C
 	BEQ.b CODE_0494DA
@@ -2000,6 +2034,7 @@ CODE_0494A4:
 	LDA.w !REGISTER_QuotientLo	; Quotient of Divide Result (Low Byte)
 CODE_0494DA:
 	REP.b #$20			; A->16
+endif
 	STA.b !RAM_SMW_Misc_ScratchRAM0E
 	LDX.w !RAM_SMW_Overworld_PlayerOnClimbingTileLo
 	LDA.w OWPlayerPathSpeedOffset,x
@@ -3528,12 +3563,20 @@ endmacro
 ;---------------------------------------------------------------------------
 
 macro DATATABLE_SMW_OverworldEventProcess07_SilentEventsAndEndOfEvent(Address)
+%SMW_RelocatableTableSlot(<Address>, SilentTiles)
+if !Define_SMW_RelocateOverworldTables == !FALSE
+	%SMW_OverworldTable_SilentTiles()
+endif
+endmacro
+
+; The table itself, so that the relocated build can emit it where it
+; wants it: in place at the slot above, or into the reserved run out of
+; %SMW_PlaceRelocatedOverworldTables. Nothing here knows which.
+macro SMW_OverworldTable_SilentTiles()
 namespace SMW_OverworldEventProcess07_SilentEventsAndEndOfEvent
-%SMW_RelocatableTableStart(<Address>, SilentTiles)
 
 incsrc "overworld/tables/silent-tiles.asm"
 namespace off
-%SMW_RelocatableTableEnd(SilentTiles)
 endmacro
 
 macro ROUTINE_SMW_OverworldEventProcess07_SilentEventsAndEndOfEvent(Address)
@@ -3721,7 +3764,7 @@ CODE_04DB81:
 	LDA.b #$33
 CODE_04DB95:
 	STA.b !RAM_SMW_Mirror_ObjectAndColorWindowSettings
-	LDA.b #$80
+	LDA.b #($01<<!Define_SMW_WindowHDMAChannel)
 	STA.w !RAM_SMW_Mirror_HDMAEnable
 	RTS
 namespace off
@@ -3965,8 +4008,13 @@ CODE_048261:
 	DEX
 	BPL.b CODE_048246
 	JSR.w SMW_DrawOverworldBorderPlayer_Entry2
+if defined("Define_SMW_SA1")
+	JSL.l overworld_animations
+	NOP #2
+else
 	JSR.w SMW_OverworldTileAnimations_Main
 	LDA.w !RAM_SMW_Misc_ColorOfPalaceSwitchPressed1	; \ If "! blocks flying away color" is 0,
+endif
 	BEQ.b CODE_048275		; / don't play the animation
 	JSR.w SMW_DrawFlyingSwitchBlocks_Main
 	JMP.w CODE_04840D
@@ -3974,7 +4022,11 @@ CODE_048261:
 CODE_048275:
 	LDA.w !RAM_SMW_Flag_ShowContinueAndEnd	; \ If not showing Continue/End message,
 	BEQ.b CODE_048281		; / branch to $8281
+if defined("Define_SMW_SA1")
+	JSL.l overworld_continue_fix
+else
 	JSL.l SMW_DisplayingContinueEnd_Main
+endif
 	JMP.w CODE_048410
 
 CODE_048281:
@@ -4040,6 +4092,10 @@ CODE_0482D1:
 	JMP.w CODE_0483BD
 
 CODE_0482ED:
+if defined("Define_SMW_SA1")
+	JML.l overworld_mulfix2v2
+	NOP #22
+else
 	STZ.w !REGISTER_DividendLo	; Dividend (Low Byte)
 	LDY.b !RAM_SMW_Misc_ScratchRAM04,x
 	STY.w !REGISTER_DividendHi	; Dividend (High-Byte)
@@ -4050,6 +4106,7 @@ CODE_0482ED:
 	LSR
 	LSR
 	SEP.b #$20			; A->8
+endif
 	LDY.b !RAM_SMW_Misc_ScratchRAM01,x
 	BPL.b CODE_04830E
 	EOR.b #$FF
@@ -5222,7 +5279,6 @@ namespace off
 endmacro
 
 macro ROUTINE_RT01_SMW_CheckIfDestroyTileEventIsActive(Address)
-namespace SMW_CheckIfDestroyTileEventIsActive
 ; Relocatable only together with the scan bound above: on a stock build the
 ; scan in SMW_CheckIfDestroyTileEventIsActive_Main runs 24 entries over this
 ; 16-entry table, so it reads the eight bytes that follow -- which are
@@ -5232,12 +5288,21 @@ namespace SMW_CheckIfDestroyTileEventIsActive
 ; would change what the game reads. The relocated build binds the scan to the
 ; table's own labels instead, so the table reads whole and nothing past it,
 ; and then it moves with the rest.
-%SMW_RelocatableTableStart(<Address>, DestroyedTiles)
+%SMW_RelocatableTableSlot(<Address>, DestroyedTiles)
+if !Define_SMW_RelocateOverworldTables == !FALSE
+	%SMW_OverworldTable_DestroyedTiles()
+endif
+endmacro
+
+; The table itself, so that the relocated build can emit it where it
+; wants it: in place at the slot above, or into the reserved run out of
+; %SMW_PlaceRelocatedOverworldTables. Nothing here knows which.
+macro SMW_OverworldTable_DestroyedTiles()
+namespace SMW_CheckIfDestroyTileEventIsActive
 
 incsrc "overworld/tables/destroyed-tiles.asm"
 
 namespace off
-%SMW_RelocatableTableEnd(DestroyedTiles)
 endmacro
 
 ;#############################################################################################################
@@ -5718,7 +5783,7 @@ CODE_04D714:
 	LDX.b #$06
 CODE_04D750:
 	LDA.l PARAMS_04DAB3,x
-	STA.w DMA[$01].Parameters,x
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].Parameters,x
 	DEX
 	BPL.b CODE_04D750
 	LDA.w !RAM_SMW_Player_CurrentCharacterX4Lo
@@ -5728,9 +5793,9 @@ CODE_04D750:
 	LDA.w !RAM_SMW_Overworld_MarioMap,x
 	BEQ.b CODE_04D76A						; Note: !Define_SMW_Overworld_MainMap
 	LDA.b #(!RAM_SMW_Overworld_Layer2Tiles+$2000)>>8
-	STA.w DMA[$01].SourceHi		; A Address (High Byte)
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].SourceHi		; A Address (High Byte)
 CODE_04D76A:
-	LDA.b #$02
+	LDA.b #($01<<!Define_SMW_TilemapUploadDMAChannel)
 	STA.w !REGISTER_DMAEnable	; Regular DMA Channel Enable
 	RTL
 namespace off
@@ -6343,12 +6408,20 @@ namespace off
 endmacro
 
 macro ROUTINE_RT01_SMW_LoadOverworldLayer1AndEvents(Address)
+%SMW_RelocatableTableSlot(<Address>, WalkDirections)
+if !Define_SMW_RelocateOverworldTables == !FALSE
+	%SMW_OverworldTable_WalkDirections()
+endif
+endmacro
+
+; The table itself, so that the relocated build can emit it where it
+; wants it: in place at the slot above, or into the reserved run out of
+; %SMW_PlaceRelocatedOverworldTables. Nothing here knows which.
+macro SMW_OverworldTable_WalkDirections()
 namespace SMW_LoadOverworldLayer1AndEvents
-%SMW_RelocatableTableStart(<Address>, WalkDirections)
 
 incsrc "overworld/tables/walk-directions.asm"
 namespace off
-%SMW_RelocatableTableEnd(WalkDirections)
 endmacro
 
 macro ROUTINE_RT02_SMW_LoadOverworldLayer1AndEvents(Address)
@@ -7337,42 +7410,74 @@ endmacro
 ;#############################################################################################################
 
 macro DATATABLE_RT00_SMW_Layer2EventData(Address)
+%SMW_RelocatableTableSlot(<Address>, Layer2EventEntries)
+if !Define_SMW_RelocateOverworldTables == !FALSE
+	%SMW_OverworldTable_Layer2EventEntries()
+endif
+endmacro
+
+; The table itself, so that the relocated build can emit it where it
+; wants it: in place at the slot above, or into the reserved run out of
+; %SMW_PlaceRelocatedOverworldTables. Nothing here knows which.
+macro SMW_OverworldTable_Layer2EventEntries()
 namespace SMW_Layer2EventData
-%SMW_RelocatableTableStart(<Address>, Layer2EventEntries)
 
 incsrc "overworld/tables/layer2-events.asm"
 namespace off
-%SMW_RelocatableTableEnd(Layer2EventEntries)
 endmacro
 
 macro DATATABLE_RT01_SMW_Layer2EventData(Address)
+%SMW_RelocatableTableSlot(<Address>, Layer2EventPtrs)
+if !Define_SMW_RelocateOverworldTables == !FALSE
+	%SMW_OverworldTable_Layer2EventPtrs()
+endif
+endmacro
+
+; The table itself, so that the relocated build can emit it where it
+; wants it: in place at the slot above, or into the reserved run out of
+; %SMW_PlaceRelocatedOverworldTables. Nothing here knows which.
+macro SMW_OverworldTable_Layer2EventPtrs()
 namespace SMW_Layer2EventData
-%SMW_RelocatableTableStart(<Address>, Layer2EventPtrs)
 
 incsrc "overworld/layer2-event-pointers.asm"
 namespace off
-%SMW_RelocatableTableEnd(Layer2EventPtrs)
 endmacro
 
 ;#############################################################################################################
 ;#############################################################################################################
 
 macro DATATABLE_RT00_SMW_ChangingLayer1OverworldTiles(Address)
+%SMW_RelocatableTableSlot(<Address>, Layer1EventLocations)
+if !Define_SMW_RelocateOverworldTables == !FALSE
+	%SMW_OverworldTable_Layer1EventLocations()
+endif
+endmacro
+
+; The table itself, so that the relocated build can emit it where it
+; wants it: in place at the slot above, or into the reserved run out of
+; %SMW_PlaceRelocatedOverworldTables. Nothing here knows which.
+macro SMW_OverworldTable_Layer1EventLocations()
 namespace SMW_ChangingLayer1OverworldTiles
-%SMW_RelocatableTableStart(<Address>, Layer1EventLocations)
 
 incsrc "overworld/tables/layer1-event-locations.asm"
 namespace off
-%SMW_RelocatableTableEnd(Layer1EventLocations)
 endmacro
 
 macro DATATABLE_RT01_SMW_ChangingLayer1OverworldTiles(Address)
+%SMW_RelocatableTableSlot(<Address>, Layer1EventSwaps)
+if !Define_SMW_RelocateOverworldTables == !FALSE
+	%SMW_OverworldTable_Layer1EventSwaps()
+endif
+endmacro
+
+; The table itself, so that the relocated build can emit it where it
+; wants it: in place at the slot above, or into the reserved run out of
+; %SMW_PlaceRelocatedOverworldTables. Nothing here knows which.
+macro SMW_OverworldTable_Layer1EventSwaps()
 namespace SMW_ChangingLayer1OverworldTiles
-%SMW_RelocatableTableStart(<Address>, Layer1EventSwaps)
 
 incsrc "overworld/tables/layer1-event-swaps.asm"
 namespace off
-%SMW_RelocatableTableEnd(Layer1EventSwaps)
 endmacro
 
 ;---------------------------------------------------------------------------

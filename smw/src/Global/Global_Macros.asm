@@ -1,11 +1,11 @@
-@includeonce
+includeonce
 
 ;---------------------------------------------------------------------------
 
 macro StartOfROM(CurrentGameID, GameID, ROMID)
 org $000000
-warnings disable W1011				; Note: Disable freespace leak warning.
-warnings disable W1019				; Note: Disable warning about db "STAR"
+warnings disable Wfreespace_leaked				; Note: Disable freespace leak warning.
+warnings disable Wxkas_patch				; Note: Disable warning about db "STAR"
 incsrc "../Global/HardwareRegisters/SNES.asm"
 ;namespace nested on
 
@@ -35,9 +35,9 @@ endif
 
 SNES_Header_!NumOfInsertedSNESHeader:
 if !ROMBankSplitFlag == !TRUE
-	warnpc ((!SNESHeaderLoc+!TEMP)|!FastROMAddressOffset)^!HiROMAddressOffset
+	assert pc() <= (((!SNESHeaderLoc+!TEMP)|!FastROMAddressOffset)^!HiROMAddressOffset), "The code before the SNES header runs into it!"
 else
-	warnpc (!SNESHeaderLoc+!TEMP)|!FastROMAddressOffset|!HiROMAddressOffset
+	assert pc() <= ((!SNESHeaderLoc+!TEMP)|!FastROMAddressOffset|!HiROMAddressOffset), "The code before the SNES header runs into it!"
 endif
 
 if !Define_Global_CartridgeHeaderVersion == $02
@@ -112,8 +112,8 @@ endmacro
 
 macro InitializeROM(CurrentGameID, GameID, ROMID)
 org $000000
-warnings disable W1011				; Note: Disable freespace leak warning.
-warnings disable W1019				; Note: Disable warning about db "STAR"
+warnings disable Wfreespace_leaked				; Note: Disable freespace leak warning.
+warnings disable Wxkas_patch				; Note: Disable warning about db "STAR"
 ;namespace nested on
 
 print "Yoshifanatic's SNES ROM Framework, Version !FrameworkVer.!FrameworkSubVer.!FrameworkSubSubVer"
@@ -136,10 +136,11 @@ endmacro
 
 macro InitializeSPCROM(CurrentGameID, GameID, ROMID)
 org $000000
-warnings disable W1011				; Note: Disable freespace leak warning.
-warnings disable W1019				; Note: Disable warning about db "STAR"
-warnings disable W1006				; Note: Disable warning about non-existent opcodes with 16-bit parameters.
-arch spc700-raw
+warnings disable Wfreespace_leaked				; Note: Disable freespace leak warning.
+warnings disable Wxkas_patch				; Note: Disable warning about db "STAR"
+warnings disable Wspc700_assuming_8_bit				; Note: Disable warning about non-existent opcodes with 16-bit parameters.
+arch spc700
+norom
 incsrc "../Global/HardwareRegisters/SPC700.asm"
 ;namespace nested on
 
@@ -155,8 +156,8 @@ endmacro
 
 macro InitializeSuperFXROM(CurrentGameID, GameID, ROMID)
 org $008000
-warnings disable W1011				; Note: Disable freespace leak warning.
-warnings disable W1019				; Note: Disable warning about db "STAR"
+warnings disable Wfreespace_leaked				; Note: Disable freespace leak warning.
+warnings disable Wxkas_patch				; Note: Disable warning about db "STAR"
 arch superfx
 ;namespace nested on
 
@@ -177,7 +178,7 @@ endmacro
 
 macro FinalizeROM(CurrentGameID, GameID, ROMID)
 org $000000
-warnings disable W1019				; Note: Disable warning about db "STAR"
+warnings disable Wxkas_patch				; Note: Disable warning about db "STAR"
 ;namespace nested on
 
 incsrc "../<GameID>/RomMap/ROM_Map_!ROMID.asm"
@@ -198,8 +199,8 @@ endmacro
 
 macro DisplayFinalChecksum(CurrentGameID, GameID, ROMID)
 org $000000
-warnings disable W1011				; Note: Disable freespace leak warning.
-warnings disable W1019				; Note: Disable warning about db "STAR"
+warnings disable Wfreespace_leaked				; Note: Disable freespace leak warning.
+warnings disable Wxkas_patch				; Note: Disable warning about db "STAR"
 ;namespace nested on
 
 incsrc "../<GameID>/RomMap/ROM_Map_!ROMID.asm"
@@ -241,8 +242,8 @@ endmacro
 
 macro GetFirmwareFile(CurrentGameID, GameID, ROMID)
 org $008000
-warnings disable W1011				; Note: Disable freespace leak warning.
-warnings disable W1019				; Note: Disable warning about db "STAR"
+warnings disable Wfreespace_leaked				; Note: Disable freespace leak warning.
+warnings disable Wxkas_patch				; Note: Disable warning about db "STAR"
 ;namespace nested on
 
 incsrc "../<GameID>/RomMap/ROM_Map_!ROMID.asm"
@@ -255,8 +256,8 @@ endmacro
 
 macro InitializeMSU1ROM(CurrentGameID, GameID, ROMID)
 org $000000
-warnings disable W1011				; Note: Disable freespace leak warning.
-warnings disable W1019				; Note: Disable warning about db "STAR"
+warnings disable Wfreespace_leaked				; Note: Disable freespace leak warning.
+warnings disable Wxkas_patch				; Note: Disable warning about db "STAR"
 incsrc "../Global/HardwareRegisters/SNES.asm"
 ;namespace nested on
 
@@ -273,8 +274,8 @@ endmacro
 
 macro GenerateSaveFile(CurrentGameID, GameID, ROMID)
 org $000000
-warnings disable W1011				; Note: Disable freespace leak warning.
-warnings disable W1019				; Note: Disable warning about db "STAR"
+warnings disable Wfreespace_leaked				; Note: Disable freespace leak warning.
+warnings disable Wxkas_patch				; Note: Disable warning about db "STAR"
 incsrc "../Global/HardwareRegisters/SNES.asm"
 ;namespace nested on
 
@@ -282,7 +283,7 @@ incsrc "../<GameID>/RomMap/ROM_Map_!ROMID.asm"
 %<GameID>_GlobalAssemblySettings()
 %<GameID>_GameSpecificAssemblySettings()
 reset bytes
-if !Define_Global_CartridgeHeaderVersion = $02
+if !Define_Global_CartridgeHeaderVersion == $02
 	if !Define_Global_SRAMSize|!Define_Global_ExpansionRAMSize|!Define_Global_ExpansionFlashSize != !SRAMSize_0KB 
 		incsrc "!PathToFile"
 	else
@@ -314,7 +315,7 @@ macro InsertMacroAtXPosition(Address)
 if !Define_Global_IgnoreCodeAlignments == !FALSE
 	if stringsequal("<Address>", "NULLROM")
 	else
-		warnpc <Address>|!FastROMAddressOffset|!HiROMAddressOffset
+		assert pc() <= (<Address>|!FastROMAddressOffset|!HiROMAddressOffset), "The code placed before <Address> runs past it!"
 		org <Address>|!FastROMAddressOffset|!HiROMAddressOffset
 	endif
 endif
@@ -834,11 +835,11 @@ macro GetChipData()
 if !Define_Global_CustomChip&$7F == !Chip_None
 	!ChipName = "None"
 	!Firmware = "NULL"
-elseif !Define_Global_CustomChip&$7F = !Chip_DSP1
+elseif !Define_Global_CustomChip&$7F == !Chip_DSP1
 	incsrc "../Global/HardwareRegisters/DSP1.asm"
-elseif !Define_Global_CustomChip&$7F = !Chip_DSP1A
+elseif !Define_Global_CustomChip&$7F == !Chip_DSP1A
 	incsrc "../Global/HardwareRegisters/DSP1.asm"
-elseif !Define_Global_CustomChip&$7F = !Chip_DSP1B
+elseif !Define_Global_CustomChip&$7F == !Chip_DSP1B
 	incsrc "../Global/HardwareRegisters/DSP1.asm"
 elseif !Define_Global_CustomChip&$7F == !Chip_DSP2
 	incsrc "../Global/HardwareRegisters/DSP2.asm"
@@ -1049,8 +1050,8 @@ elseif !FileType == !FileType_SaveFile
 	!TEMP1 = !TRUE
 endif
 
-if !TEMP1 = !TRUE
-	if !Define_Global_CartridgeHeaderVersion = $02
+if !TEMP1 == !TRUE
+	if !Define_Global_CartridgeHeaderVersion == $02
 		if !Define_Global_SRAMSize|!Define_Global_ExpansionRAMSize|!Define_Global_ExpansionFlashSize != !SRAMSize_0KB 
 			incsrc "<Path>"
 		endif

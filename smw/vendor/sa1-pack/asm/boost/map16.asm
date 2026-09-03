@@ -1,6 +1,7 @@
 includefrom sa1.asm
 
 pushpc
+if !sa1_hijacks_external == 0
 ORG $0586DD
 	BEQ +
 ORG $0586E9
@@ -12,6 +13,7 @@ ORG $0586DF
 ORG $0585FF
 	JSL CallSA1
 	RTS
+endif
 pullpc
 	
 CallSA1:

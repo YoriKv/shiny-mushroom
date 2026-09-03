@@ -21,7 +21,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, QSize, Qt
+from PySide6.QtGui import QPalette
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -38,7 +39,10 @@ from PySide6.QtWidgets import (
 
 from shiny_mushroom import APP_NAME, mesen_config, mesen_keys, pads
 from shiny_mushroom.pad_bindings import BUTTON_ORDER, DEFAULT_BINDINGS, Bindings
+from shiny_mushroom.play_request import Buttons
 from shiny_mushroom.ui.dialogs import warn
+from shiny_mushroom.ui.icon_font import icon_aspect, palette_icon
+from shiny_mushroom.ui.icons import PadIcon
 from shiny_mushroom.ui.settings import (
     load_int_setting,
     load_str_setting,
@@ -63,6 +67,23 @@ DEADZONE_KEY = "input/deadzone"
 SOURCE_KEY = "input/imported-from"
 
 COLUMNS = ("Button", "Keyboard", "Controller")
+
+#: How tall a button's mark is drawn. Its *width* is its own -- see
+#: :func:`~shiny_mushroom.ui.icon_font.icon_aspect` -- because these are marks
+#: beside words rather than buttons in a row: a shared box wide enough for a
+#: shoulder's labelled pill would leave the d-pad floating away from its name.
+#: One height, so the column still reads as a column.
+PAD_MARK_HEIGHT = 20
+
+#: The widest a mark may come out, which is what the view is told to reserve.
+#: Only a ceiling: each mark is handed over at its own width, and Qt lays out
+#: the decoration it actually got.
+PAD_MARK_LIMIT = QSize(PAD_MARK_HEIGHT * 3, PAD_MARK_HEIGHT)
+
+#: Which mark each button wears. The two enums are named alike on purpose --
+#: they are the same twelve buttons -- and ``test_controls`` asserts they stay
+#: that way, so this is a lookup rather than a table to keep in step.
+PAD_ICONS = {button: PadIcon[button.name] for button in BUTTON_ORDER}
 
 NOTE = (
     "The test window reads these while a run is on screen. Import takes the "
@@ -122,6 +143,7 @@ class ControlsDialog(QDialog):
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         style_table(self._table)
         self._table.setItemDelegate(PaddedCells(self._table))
+        self._table.setIconSize(PAD_MARK_LIMIT)
         layout.addWidget(self._table, 1)
 
         note = QLabel(NOTE)
@@ -179,8 +201,39 @@ class ControlsDialog(QDialog):
                     Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
                 )
                 self._table.setItem(row, column, item)
+            self._mark(row, button)
         self._table.resizeColumnsToContents()
         self._where.setText(self._provenance())
+
+    def _mark(self, row: int, button: Buttons) -> None:
+        """Put ``button``'s own mark beside its name.
+
+        The name alone is ambiguous in this table and nowhere else: the row
+        called "Y" sits next to a Keyboard column that is also full of single
+        letters, and a drawn button says which kind of thing the row is about
+        before it is read. The marks are baked from the palette like every
+        other icon in the editor, so a theme switch redraws them.
+        """
+        item = self._table.item(row, 0)
+        if item is None:
+            return
+        mark = PAD_ICONS[button]
+        width = max(1, round(PAD_MARK_HEIGHT * icon_aspect(mark)))
+        item.setIcon(
+            palette_icon(
+                mark,
+                self.palette(),
+                QSize(width, PAD_MARK_HEIGHT),
+                self.devicePixelRatioF() or 1.0,
+                QPalette.ColorRole.Text,
+            )
+        )
+
+    def changeEvent(self, event: QEvent) -> None:  # noqa: N802 - Qt override
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.PaletteChange:
+            for row, button in enumerate(BUTTON_ORDER):
+                self._mark(row, button)
 
     def _provenance(self) -> str:
         """One line: where this set came from, and what can read a pad here."""

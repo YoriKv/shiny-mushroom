@@ -810,7 +810,7 @@ def _layer2_level_stream(
     return rom[base : base + HEADER_SIZE], object_stream(rom, base + HEADER_SIZE)
 
 
-def sprite_stream(rom: bytes, base: int) -> bytes:
+def sprite_stream(rom: bytes, base: int, counts: Mapping[int, int] = {}) -> bytes:
     """Copy a sprite stream out of the cartridge, header byte to terminator.
 
     ``base`` is where the stream starts -- from :func:`sprite_base` for a level
@@ -818,12 +818,41 @@ def sprite_stream(rom: bytes, base: int) -> bytes:
     has been loaded. The walk is the same either way, and having one of it is
     the point: where a stream *ends* is a fact about the format, not about which
     of the two pointers led to it.
+
+    ``counts`` is the custom sprites' extra-byte stride, from
+    :func:`extra_byte_counts` -- the walk has to step over a custom record's
+    extra bytes exactly as the loader does, or a byte of somebody's data
+    reads as a terminator, or worse, as the next record's first byte.
     """
     end = base + 1  # past the header byte: memory setting and buoyancy
     limit = end + MAX_SPRITE_RECORDS * SPRITE_RECORD_SIZE
     while end < len(rom) and end < limit and rom[end] != 0xFF:
+        first = rom[end]
+        number = rom[min(end + 2, len(rom) - 1)]
         end += SPRITE_RECORD_SIZE
+        if counts and first & 0x08 and number < 0xC9 and number != 0x7B:
+            end += counts.get(number, 0)
     return rom[base : end + 1]
+
+
+def extra_byte_counts(rom: bytes, *, where: Addresses) -> dict[int, int]:
+    """The custom sprites' extra-byte counts, off the cartridge's own table.
+
+    The built cartridge is the authority on its own stride -- the count
+    table sits at a declared address in the sprite bank
+    (``custom_sprite_extra_byte_count``) -- so every walker over this image's
+    streams reads the same figures the loader does. Empty on a build without
+    the feature, which is also the answer that leaves every walk exactly as
+    it was.
+    """
+    address = where.roles.get("custom_sprite_extra_byte_count")
+    if address is None:
+        return {}
+    offset = where.offset(address)
+    table = rom[offset : offset + 0x100]
+    if len(table) < 0x100:
+        return {}
+    return {number: table[number] for number in range(0x100) if table[number]}
 
 
 def background_definitions(rom: bytes, *, where: Addresses) -> bytes:
@@ -1062,7 +1091,9 @@ def level_patch(
         )
 
     sprite_start = sprite_base(rom, level, where=where)
-    if len(sprites) <= len(sprite_stream(rom, sprite_start)):
+    if len(sprites) <= len(
+        sprite_stream(rom, sprite_start, extra_byte_counts(rom, where=where))
+    ):
         patches[sprite_start] = bytes(sprites)
     else:
         bank = sprite_list_bank(rom, level, where=where)

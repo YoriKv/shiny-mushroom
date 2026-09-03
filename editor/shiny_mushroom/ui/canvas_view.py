@@ -383,7 +383,7 @@ class CanvasView(QScrollArea):
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override
         if not self._navigate(event):
-            self.canvas.release_at(self._on_canvas(event))
+            self.canvas.release_at(self._on_canvas(event), event.button())
             super().mouseReleaseEvent(event)
 
     def _on_canvas(self, event: QMouseEvent) -> QPoint:

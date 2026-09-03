@@ -138,14 +138,14 @@ def staged_sources(
         # own paths from there, so Global has to be a sibling in the copy too.
         _copy_tree(rom_base.src_root, root / "src")
         _copy_tree(rom_base.assets_root, root / "assets")
-        patch = rom_base.patch
+        patch = rom_base.pack
         if patch is not None and (tree := patch.locate()) is not None:
-            # The patch pass opens its tree the same way the main passes open
-            # src/ -- file by file, from wherever it is -- so it is staged for
-            # the same reason, and pointed at through the patch's own env
-            # override: the documented way to build against a tree elsewhere,
-            # restored on the way out. A tree locate() cannot find is left for
-            # the build to report.
+            # The main pass opens the vendored tree the same way it opens src/
+            # -- file by file, from wherever it is -- so it is staged for the
+            # same reason, and pointed at through the tree's own env override:
+            # the documented way to build against a tree elsewhere, restored on
+            # the way out. A tree locate() cannot find is left for the build to
+            # report.
             _copy_tree(tree, root / "patch")
             pointed, was = patch.env_var, os.environ.get(patch.env_var)
             os.environ[pointed] = str(root / "patch")

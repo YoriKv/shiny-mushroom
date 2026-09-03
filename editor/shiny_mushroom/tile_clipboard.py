@@ -40,6 +40,32 @@ class TileClipboard:
 
 
 @dataclass(frozen=True)
+class GridStamp:
+    """A rectangle of tiles in hand, grabbed off a picture or a panel by a
+    right drag: a brush, where :class:`TileClipboard` is a copy.
+
+    The same relative geometry as a clipboard -- ``(dx, dy, payload)`` from
+    the grabbed region's top-left corner -- but the payloads are the armed
+    payload dataclasses of the surface it came from (a ``Layer1Tile``, a
+    ``Layer2Word``, a ``BackgroundTile``), because a stamp *is* an armed
+    tool: it travels through the same hand the single-tile payloads do, and
+    the leaf type is what says which grid it lands on. One stamp holds one
+    leaf type; :attr:`width` and :attr:`height` are the grabbed rectangle in
+    grid units, for the ghost that shows where it will land.
+    """
+
+    entries: tuple[tuple[int, int, object], ...]
+    width: int
+    height: int
+
+    @property
+    def leaf(self) -> object:
+        """The first payload, which is every payload's type: what material
+        the stamp lays down."""
+        return self.entries[0][2]
+
+
+@dataclass(frozen=True)
 class SelectionMark[S]:
     """What was held when an edit was made -- put back when an undo or a redo
     comes back to that edit's document. ``History``'s per-step mark, in the

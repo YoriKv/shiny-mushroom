@@ -120,7 +120,7 @@ DATA_03B75E:									;|
 Bank03:
 	STZ.w !RAM_SMW_NorSpr_YOffscreenFlag,x	; Reset sprite offscreen flag, vertical
 	STZ.w !RAM_SMW_NorSpr_XOffscreenFlag,x	; Reset sprite offscreen flag, horizontal
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x
 	CMP.b !RAM_SMW_Mirror_CurrentLayer1XPosLo	; | Set horizontal offscreen if necessary
 	LDA.w !RAM_SMW_NorSpr_XPosHi,x
 	SBC.b !RAM_SMW_Mirror_CurrentLayer1XPosHi
@@ -129,7 +129,7 @@ Bank03:
 CODE_03B774:
 	LDA.w !RAM_SMW_NorSpr_XPosHi,x
 	XBA				; | Mark sprite invalid if far enough off screen
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x
 	REP.b #$20			; A->16
 	SEC
 	SBC.b !RAM_SMW_Mirror_CurrentLayer1XPosLo
@@ -147,7 +147,7 @@ CODE_03B774:
 	BEQ.b CODE_03B79A							;|
 	INY									;|
 CODE_03B79A:									;|
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x						;|
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x	;|
 	CLC									;|
 	ADC.w DATA_03B75C,y							;|
 	PHP									;|
@@ -166,11 +166,11 @@ CODE_03B7BA:									;|
 	DEY									;|
 	BPL.b CODE_03B79A							;/
 	LDY.w !RAM_SMW_NorSpr_OAMIndex,x	; get offset to sprite OAM
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x
 	SEC
 	SBC.b !RAM_SMW_Mirror_CurrentLayer1XPosLo
 	STA.b !RAM_SMW_Misc_ScratchRAM00	; / $00 = sprite x position relative to screen boarder
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x
 	SEC
 	SBC.b !RAM_SMW_Mirror_CurrentLayer1YPosLo
 	STA.b !RAM_SMW_Misc_ScratchRAM01	; / $01 = sprite y position relative to screen boarder
@@ -661,11 +661,11 @@ namespace SMW_CheckPlayerPositionRelativeToSprite
 
 Bank03:
 .X:
-%CheckPlayerPositionRelativeToSpriteSub(RAM_SMW_Player_XPos, RAM_SMW_NorSpr_XPos, !RAM_SMW_Misc_ScratchRAM0F)
+%CheckPlayerPositionRelativeToSpriteSub(RAM_SMW_Player_XPos, RAM_SMW_NorSpr_XPos, !RAM_SMW_Misc_ScratchRAM0F, none)
 
 .Y:
 ;$03B829
-%CheckPlayerPositionRelativeToSpriteSub(RAM_SMW_Player_YPos, RAM_SMW_NorSpr_YPos, !RAM_SMW_Misc_ScratchRAM0F)
+%CheckPlayerPositionRelativeToSpriteSub(RAM_SMW_Player_YPos, RAM_SMW_NorSpr_YPos, !RAM_SMW_Misc_ScratchRAM0F, none)
 namespace off
 endmacro
 
@@ -717,7 +717,7 @@ Bank03:
 	LDA.b !RAM_SMW_Misc_LevelLayoutFlags	; \  vertical level
 	AND.b #$01
 	BNE.b .VerticalLevel
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x
 	CLC
 	ADC.b #$50			; | if the sprite has gone off the bottom of the level...
 	LDA.w !RAM_SMW_NorSpr_YPosHi,x	; | (if adding 0x50 to the sprite y position would make the high byte >= 2)
@@ -736,7 +736,7 @@ Bank03:
 	CLC
 	ADC.w .DATA_03B83F,y
 	ROL.b !RAM_SMW_Misc_ScratchRAM00
-	CMP.b !RAM_SMW_NorSpr_XPosLo,x
+	CMP.b !RAM_SMW_NorSpr_XPosLo_x
 	PHP
 	LDA.b !RAM_SMW_Mirror_CurrentLayer1XPosHi
 	LSR.b !RAM_SMW_Misc_ScratchRAM00
@@ -758,8 +758,13 @@ Bank03:
 	LDY.w !RAM_SMW_NorSpr_LoadStatusTableIndex,x	; \ Branch if should permanently erase sprite
 	CPY.b #$FF
 	BEQ.b .OffScrKillSpr
+if defined("Define_SMW_SA1")
+	JSL.l SpriteLoading_CODE_01AC9C
+	NOP
+else
 	LDA.b #$00			; \ Allow sprite to be reloaded by level loading routine
 	STA.w !RAM_SMW_Sprites_LoadStatus,y
+endif
 .OffScrKillSpr:
 	STZ.w !RAM_SMW_NorSpr_CurrentStatus,x
 .Return03B8C2:
@@ -779,7 +784,7 @@ Bank03:
 	CLC
 	ADC.w .DATA_03B83B,y
 	ROL.b !RAM_SMW_Misc_ScratchRAM00
-	CMP.b !RAM_SMW_NorSpr_YPosLo,x
+	CMP.b !RAM_SMW_NorSpr_YPosLo_x
 	PHP
 	LDA.w !RAM_SMW_Mirror_CurrentLayer1YPosHi
 	LSR.b !RAM_SMW_Misc_ScratchRAM00
@@ -882,10 +887,14 @@ GFXFile:
 	db $00		; Reznor
 
 Main:
+if defined("Define_SMW_SA1")
+	JML.l MoreMode7
+else
 	PHX
 	PHB
 	PHK
 	PLB
+endif
 	LDY.b !RAM_SMW_NorSprXXX_CurrentlyActiveBoss,x
 	STY.w !RAM_SMW_Misc_CurrentlyActiveBoss
 	CPY.b #$04
@@ -941,7 +950,11 @@ CODE_03DDD9:
 	DEX
 	BPL.b CODE_03DDD9
 	PLB
+if defined("Define_SMW_SA1")
+	NOP
+else
 	PLX
+endif
 	RTL
 
 ; SMW 3bpp to Mode 7 8bpp converter. Used to decode the graphics of Morton,
@@ -1075,14 +1088,19 @@ CODE_03C2DC:
 Generate1Up:
 	LDA.b #!Define_SMW_NorSprStatus08_Normal	; \ Sprite status = Normal
 	STA.w !RAM_SMW_NorSpr_CurrentStatus,x
+if defined("Define_SMW_SA1")
+	; SA-1 Pack: Invisible 1up stuff.
+	JSL.l INVIS_1UP_SET
+else
 	LDA.b #!Define_SMW_SpriteID_NorSpr078_1upMushroom	; \ Sprite = 1Up
-	STA.b !RAM_SMW_NorSpr_SpriteID,x
+	STA.b !RAM_SMW_NorSpr_SpriteID_x
+endif
 	LDA.b !RAM_SMW_Player_XPosLo	; \ Sprite X position = Mario X position
-	STA.b !RAM_SMW_NorSpr_XPosLo,x
+	STA.b !RAM_SMW_NorSpr_XPosLo_x
 	LDA.b !RAM_SMW_Player_XPosHi
 	STA.w !RAM_SMW_NorSpr_XPosHi,x
 	LDA.b !RAM_SMW_Player_YPosLo	; \ Sprite Y position = Matio Y position
-	STA.b !RAM_SMW_NorSpr_YPosLo,x
+	STA.b !RAM_SMW_NorSpr_YPosLo_x
 	LDA.b !RAM_SMW_Player_YPosHi
 	STA.w !RAM_SMW_NorSpr_YPosHi,x
 	JSL.l SMW_InitializeNormalSpriteRAMTables_Main	; Load sprite tables
@@ -1122,10 +1140,10 @@ CODE_03C1CA:
 	BPL.b CODE_03C1D5
 	INY
 CODE_03C1D5:
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x
 	CLC
 	ADC.w DATA_03C1C6,y
-	STA.b !RAM_SMW_NorSpr_XPosLo,x
+	STA.b !RAM_SMW_NorSpr_XPosLo_x
 	LDA.w !RAM_SMW_NorSpr_XPosHi,x
 	ADC.w DATA_03C1C8,y
 	STA.w !RAM_SMW_NorSpr_XPosHi,x
@@ -1269,17 +1287,22 @@ DATA_03DED7:
 	db $20,$03,$30,$03,$40,$03,$50,$03
 
 Main:
+if defined("Define_SMW_SA1")
+	JML.l Mode7Stuff
+	NOP #2
+else
 	PHB
 	PHK
 	PLB
 	LDA.w !RAM_SMW_NorSpr_XPosHi,x
+endif
 	XBA
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x
 	LDY.b #$00
 	JSR.w CODE_03DFAE
 	LDA.w !RAM_SMW_NorSpr_YPosHi,x
 	XBA
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x
 	LDY.b #$02
 	JSR.w CODE_03DFAE
 	PHX
@@ -1494,21 +1517,21 @@ namespace SMW_NorSpr01F_MagiKoopa_Status08
 ; colour)
 MagiKoopaFadePalettes:
 .Fade07:						;\ Note: For some reason, the lightest blue color is inverted from what it should be in each palette row.
-	incbin "palettes/MagiKoopa.tpl":6-16		;|
+	incbin "palettes/MagiKoopa.tpl":$6..$16		;|
 .Fade06:						;|
-	incbin "palettes/MagiKoopa.tpl":26-36		;|
+	incbin "palettes/MagiKoopa.tpl":$26..$36		;|
 .Fade05:						;|
-	incbin "palettes/MagiKoopa.tpl":46-56		;|
+	incbin "palettes/MagiKoopa.tpl":$46..$56		;|
 .Fade04:						;|
-	incbin "palettes/MagiKoopa.tpl":66-76		;|
+	incbin "palettes/MagiKoopa.tpl":$66..$76		;|
 .Fade03:						;|
-	incbin "palettes/MagiKoopa.tpl":86-96		;|
+	incbin "palettes/MagiKoopa.tpl":$86..$96		;|
 .Fade02:						;|
-	incbin "palettes/MagiKoopa.tpl":A6-B6		;|
+	incbin "palettes/MagiKoopa.tpl":$A6..$B6		;|
 .Fade01:						;|
-	incbin "palettes/MagiKoopa.tpl":C6-D6		;|
+	incbin "palettes/MagiKoopa.tpl":$C6..$D6		;|
 .Normal:						;|
-	incbin "palettes/MagiKoopa.tpl":E6-F6		;/
+	incbin "palettes/MagiKoopa.tpl":$E6..$F6		;/
 namespace off
 endmacro
 
@@ -1613,14 +1636,14 @@ CODE_03CC9D:
 	LDA.w SpawningPositionIndexes,y
 	TAY
 	LDA.w SpawningXPos,y
-	STA.b !RAM_SMW_NorSpr_XPosLo,x
+	STA.b !RAM_SMW_NorSpr_XPosLo_x
 	LDA.b !RAM_SMW_NorSpr029_KoopaKid_KoopaKidType,x
 	CMP.b #$06
 	LDA.w LemmySpawningYPos,y
 	BCC.b CODE_03CCB8
 	LDA.b #$50
 CODE_03CCB8:
-	STA.b !RAM_SMW_NorSpr_YPosLo,x
+	STA.b !RAM_SMW_NorSpr_YPosLo_x
 	LDA.b #$08
 	LDY.w !RAM_SMW_NorSpr029_KoopaKid_WendyLemmy_DummyFlag,x
 	BNE.b CODE_03CCCC
@@ -1644,7 +1667,7 @@ DummyIDs:
 	db $10,$20
 
 CODE_03CCE2:
-	LDY.b #!Define_SMW_MaxNormalSpriteSlot-$0A
+	LDY.b #!Define_SMW_StockMaxNormalSpriteSlot-$0A
 	JSR.w CODE_03CCE8
 	DEY
 CODE_03CCE8:
@@ -1662,11 +1685,11 @@ CODE_03CCE8:
 	STA.w !RAM_SMW_NorSpr029_KoopaKid_KoopaKidType,y
 	LDA.w !RAM_SMW_NorSpr029_KoopaKid_WendyLemmy_SpawnPositionIndex,x
 	STA.w !RAM_SMW_NorSpr029_KoopaKid_WendyLemmy_SpawnPositionIndex,y
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x
 	STA.w !RAM_SMW_NorSpr_XPosLo,y
 	LDA.w !RAM_SMW_NorSpr_XPosHi,x
 	STA.w !RAM_SMW_NorSpr_XPosHi,y
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x
 	STA.w !RAM_SMW_NorSpr_YPosLo,y
 	LDA.w !RAM_SMW_NorSpr_YPosHi,x
 	STA.w !RAM_SMW_NorSpr_YPosHi,y
@@ -1859,7 +1882,7 @@ State05_Falling:
 CODE_03CE69:
 	LDA.w !RAM_SMW_NorSpr_YPosHi,x
 	BEQ.b CODE_03CE87
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x
 	CMP.b #$85
 	BCC.b CODE_03CE87
 	LDA.b #$06
@@ -2413,9 +2436,9 @@ ADDR_03C05C:
 	STA.w !RAM_SMW_NorSpr_CurrentStatus,x
 	LDA.b #!Define_SMW_Sound1DFC_MountYoshi	; \ Play sound effect
 	STA.w !RAM_SMW_IO_SoundCh3
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x
 	SBC.b #$10
-	STA.b !RAM_SMW_NorSpr_YPosLo,x
+	STA.b !RAM_SMW_NorSpr_YPosLo_x
 	LDA.w !RAM_SMW_NorSpr_YPosHi,x
 	SBC.b #$00
 	STA.w !RAM_SMW_NorSpr_YPosHi,x
@@ -2497,7 +2520,7 @@ DATA_03C3D7:
 	db $00,$00,$FF
 
 CODE_03C3DA:
-	LDA.b !RAM_SMW_NorSpr_SpriteID,x
+	LDA.b !RAM_SMW_NorSpr_SpriteID_x
 	CMP.b #!Define_SMW_SpriteID_NorSpr031_BonyBeetle
 	BEQ.b CODE_03C3AE
 	JSR.w SMW_GetDrawInfo_Bank03
@@ -2585,14 +2608,14 @@ Return03C460:
 CODE_03C461:
 	LDA.b #!Define_SMW_SpriteID_ExtSpr06_ThrownBone	; \ Extended sprite = Bone
 	STA.w !RAM_SMW_ExtSpr_SpriteID,y
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x
 	SEC
 	SBC.b #$10
 	STA.w !RAM_SMW_ExtSpr_YPosLo,y
 	LDA.w !RAM_SMW_NorSpr_YPosHi,x
 	SBC.b #$00
 	STA.w !RAM_SMW_ExtSpr_YPosHi,y
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x
 	STA.w !RAM_SMW_ExtSpr_XPosLo,y
 	LDA.w !RAM_SMW_NorSpr_XPosHi,x
 	STA.w !RAM_SMW_ExtSpr_XPosHi,y
@@ -2694,7 +2717,7 @@ Main:
 	RTL
 
 Sub:
-	LDA.b !RAM_SMW_NorSpr_SpriteID,x	;\ if sprite isn't #37 (Boo),
+	LDA.b !RAM_SMW_NorSpr_SpriteID_x	;\ if sprite isn't #37 (Boo),
 	CMP.b #!Define_SMW_SpriteID_NorSpr037_Boo	; |
 	BNE.b CODE_0383C2		;/ branch
 	LDA.b #$00
@@ -2852,14 +2875,14 @@ namespace SMW_NorSpr054_ClimbingNetDoor_Status08
 ; JSL, and A should be set to the value of $9C you wish to use.
 UpdateClimbingNetDoorTiles:
 	STA.b !RAM_SMW_Blocks_Map16ToGenerate	; $9C = tile to generate
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x	; \ $9A = Sprite X position + #$08
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x	; \ $9A = Sprite X position + #$08
 	SEC				; | for block creation
 	SBC.b #$08
 	STA.b !RAM_SMW_Blocks_XPosLo
 	LDA.w !RAM_SMW_NorSpr_XPosHi,x
 	SBC.b #$00
 	STA.b !RAM_SMW_Blocks_XPosHi
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x	; \ $98 = Sprite Y position + #$08
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x	; \ $98 = Sprite Y position + #$08
 	CLC				; | for block creation
 	ADC.b #$08
 	STA.b !RAM_SMW_Blocks_YPosLo
@@ -2897,7 +2920,7 @@ ChainsawGFXRt:
 .Sub:
 	JSR.w SMW_GetDrawInfo_Bank03
 	PHX
-	LDA.b !RAM_SMW_NorSpr_SpriteID,x
+	LDA.b !RAM_SMW_NorSpr_SpriteID_x
 	SEC
 	SBC.b #!Define_SMW_SpriteID_NorSpr065_Chainsaw
 	TAX
@@ -2957,7 +2980,7 @@ namespace SMW_NorSpr06F_DinoTorch_Status08
 %InsertMacroAtXPosition(<Address>)
 
 Bank03:
-	LDA.b !RAM_SMW_NorSpr_SpriteID,x				;\ Optimization: You know, SolidSpriteBlock_Main is in bank 01. Sprite 6D's main pointer could have been set to directly point there.
+	LDA.b !RAM_SMW_NorSpr_SpriteID_x				;\ Optimization: You know, SolidSpriteBlock_Main is in bank 01. Sprite 6D's main pointer could have been set to directly point there.
 	CMP.b #!Define_SMW_SpriteID_NorSpr06D_InvisibleBlock		;| That would have rendered this bit of code unnecessary.
 	BNE.b NotInvisibleBlock						;|
 	JSL.l SMW_SolidSpriteBlock_Main					;|
@@ -3011,10 +3034,10 @@ CODE_039C89:
 	LDA.w !RAM_SMW_NorSpr_LevelCollisionFlags,x
 	AND.b #$03
 	TAY
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x
 	CLC
 	ADC.w DATA_039C6E,y
-	STA.b !RAM_SMW_NorSpr_XPosLo,x
+	STA.b !RAM_SMW_NorSpr_XPosLo_x
 	LDA.w !RAM_SMW_NorSpr_XPosHi,x
 	ADC.w DATA_039C71,y
 	STA.w !RAM_SMW_NorSpr_XPosHi,x
@@ -3031,7 +3054,7 @@ CODE_039CA8:
 	BEQ.b CODE_039C89
 	LDA.w !RAM_SMW_NorSpr06F_DinoTorch_BreathFireTimer,x
 	BNE.b CODE_039CC8
-	LDA.b !RAM_SMW_NorSpr_SpriteID,x
+	LDA.b !RAM_SMW_NorSpr_SpriteID_x
 	CMP.b #!Define_SMW_SpriteID_NorSpr06E_DinoRhino
 	BEQ.b CODE_039CC8
 	LDA.b #$FF			; \ Set fire breathing timer
@@ -3056,7 +3079,7 @@ CODE_039CDA:
 	LDA.b #$10
 	STA.b !RAM_SMW_NorSpr_YSpeed,x
 	LDY.w !RAM_SMW_NorSpr_FacingDirection,x	; \ Set x speed for rhino based on direction and sprite number
-	LDA.b !RAM_SMW_NorSpr_SpriteID,x
+	LDA.b !RAM_SMW_NorSpr_SpriteID_x
 	CMP.b #!Define_SMW_SpriteID_NorSpr06E_DinoRhino
 	BEQ.b CODE_039CE9
 	INY
@@ -3121,7 +3144,7 @@ CODE_039D66:
 	LSR
 	STA.w !RAM_SMW_NorSpr06F_DinoTorch_FireLength,x
 	BNE.b Return039D9D
-	LDA.b !RAM_SMW_NorSpr_SpriteID,x
+	LDA.b !RAM_SMW_NorSpr_SpriteID_x
 	CMP.b #!Define_SMW_SpriteID_NorSpr06E_DinoRhino
 	BEQ.b Return039D9D
 	TXA
@@ -3174,7 +3197,7 @@ DinoFlameClipping:
 	INY
 	INY
 CODE_039DC4:
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x
 	CLC
 	ADC.w DinoFlame1,y
 	STA.b !RAM_SMW_Misc_ScratchRAM04
@@ -3183,7 +3206,7 @@ CODE_039DC4:
 	STA.b !RAM_SMW_Misc_ScratchRAM0A
 	LDA.w DinoFlame3,y
 	STA.b !RAM_SMW_Misc_ScratchRAM06
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x
 	CLC
 	ADC.w DinoFlame4,y
 	STA.b !RAM_SMW_Misc_ScratchRAM05
@@ -3251,7 +3274,7 @@ GFXRt:
 	STA.b !RAM_SMW_Misc_ScratchRAM02
 	LDA.w !RAM_SMW_NorSpr_AnimationFrame,x
 	STA.b !RAM_SMW_Misc_ScratchRAM04
-	LDA.b !RAM_SMW_NorSpr_SpriteID,x
+	LDA.b !RAM_SMW_NorSpr_SpriteID_x
 	CMP.b #!Define_SMW_SpriteID_NorSpr06F_DinoTorch
 	BEQ.b CODE_039EA9
 	PHX
@@ -3633,9 +3656,9 @@ CODE_03C9E9:
 	STA.b !RAM_SMW_Misc_ScratchRAM06
 	LDA.w !RAM_SMW_NorSpr07A_Fireworks_ParticleAnimationSet,x
 	STA.b !RAM_SMW_Misc_ScratchRAM07
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x
 	STA.b !RAM_SMW_Misc_ScratchRAM08
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x
 	SEC
 	SBC.b !RAM_SMW_Mirror_CurrentLayer1YPosLo
 	STA.b !RAM_SMW_Misc_ScratchRAM09
@@ -3670,6 +3693,12 @@ CODE_03CA2D:
 	EOR.b #$FF
 	INC
 CODE_03CA39:
+if defined("Define_SMW_SA1")
+	; SA-1 Pack's own code sits here, from the vendored tree.
+namespace off
+incsrc "asm/inline/03CA39.asm"
+namespace SMW_NorSpr07A_Fireworks_Status08
+else
 	STA.w !REGISTER_Multiplicand	; Multiplicand A
 	LDA.b !RAM_SMW_Misc_ScratchRAM06
 	STA.w !REGISTER_Multiplier	; Multplier B
@@ -3691,6 +3720,7 @@ CODE_03CA58:
 	STA.w !REGISTER_Multiplier	; Multplier B
 	NOP #4
 	LDA.w !REGISTER_ProductOrRemainderHi	; Product/Remainder Result (High Byte)
+endif
 	LDY.b !RAM_SMW_Misc_ScratchRAM01
 	BPL.b CODE_03CA6E
 	EOR.b #$FF
@@ -3791,6 +3821,12 @@ CODE_03CAFB:
 	EOR.b #$FF
 	INC
 CODE_03CB08:
+if defined("Define_SMW_SA1")
+	; SA-1 Pack's own code sits here, from the vendored tree.
+namespace off
+incsrc "asm/inline/03CB08.asm"
+namespace SMW_NorSpr07A_Fireworks_Status08
+else
 	STA.w !REGISTER_Multiplicand	; Multiplicand A
 	LDA.b !RAM_SMW_Misc_ScratchRAM06
 	STA.w !REGISTER_Multiplier	; Multplier B
@@ -3812,6 +3848,7 @@ CODE_03CB27:
 	STA.w !REGISTER_Multiplier	; Multplier B
 	NOP #4
 	LDA.w !REGISTER_ProductOrRemainderHi	; Product/Remainder Result (High Byte)
+endif
 	LDY.b !RAM_SMW_Misc_ScratchRAM01
 	BPL.b CODE_03CB3D
 	EOR.b #$FF
@@ -3985,11 +4022,11 @@ BlushTiles:
 
 Bank03:
 ;$03AC97
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x
 	SEC
 	SBC.b !RAM_SMW_Mirror_CurrentLayer1XPosLo
 	STA.b !RAM_SMW_Misc_ScratchRAM00
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x
 	SEC
 	SBC.b !RAM_SMW_Mirror_CurrentLayer1YPosLo
 	STA.b !RAM_SMW_Misc_ScratchRAM01
@@ -4098,7 +4135,7 @@ FloatingDown:
 CODE_03AD4B:
 	LDA.w !RAM_SMW_NorSpr_YPosHi,x
 	BMI.b CODE_03AD63
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x
 if ver_is_pal_rev1(!Define_Global_ROMToAssemble)
 	CMP.b #$B0
 else
@@ -4110,7 +4147,7 @@ if ver_is_pal_rev1(!Define_Global_ROMToAssemble)
 else
 	LDA.b #$A0
 endif
-	STA.b !RAM_SMW_NorSpr_YPosLo,x
+	STA.b !RAM_SMW_NorSpr_YPosLo_x
 	STZ.b !RAM_SMW_NorSpr_YSpeed,x	; Sprite Y Speed = 0
 	LDA.b #$A0
 	STA.w !RAM_SMW_NorSpr07C_PrincessPeach_PhaseTimer,x
@@ -4140,14 +4177,14 @@ CODE_03AD74:
 	DEC.b !RAM_SMW_Misc_ScratchRAM00
 CODE_03AD88:
 	CLC
-	ADC.b !RAM_SMW_NorSpr_XPosLo,x
+	ADC.b !RAM_SMW_NorSpr_XPosLo_x
 	STA.w !RAM_SMW_MExtSpr_XPosLo,y
 	LDA.w !RAM_SMW_NorSpr_XPosHi,x
 	ADC.b !RAM_SMW_Misc_ScratchRAM00
 	STA.w !RAM_SMW_MExtSpr_XPosHi,y
 	LDA.w !RAM_SMW_Misc_RandomByte2
 	AND.b #$1F
-	ADC.b !RAM_SMW_NorSpr_YPosLo,x
+	ADC.b !RAM_SMW_NorSpr_YPosLo_x
 	STA.w !RAM_SMW_MExtSpr_YPosLo,y
 	LDA.w !RAM_SMW_NorSpr_YPosHi,x
 	ADC.b #$00
@@ -4417,7 +4454,7 @@ CODE_03C7A7:
 	LDA.w !RAM_SMW_NorSpr07C_PrincessPeach_FireworksCounter,x
 	CMP.b #$04
 	BEQ.b CODE_03C810
-	LDY.b #!Define_SMW_MaxNormalSpriteSlot-$0A
+	LDY.b #!Define_SMW_StockMaxNormalSpriteSlot-$0A
 CODE_03C7C7:
 	LDA.w !RAM_SMW_NorSpr_CurrentStatus,y
 	BEQ.b CODE_03C7D0
@@ -4678,13 +4715,13 @@ PeachProp:
 
 GFXRt_DrawHELP:
 ;$03AA6E
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x
 	CLC
 	ADC.b #$04
 	SEC
 	SBC.b !RAM_SMW_Mirror_CurrentLayer1XPosLo
 	STA.b !RAM_SMW_Misc_ScratchRAM00
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x
 	CLC
 	ADC.b #$20
 	SEC
@@ -4806,11 +4843,11 @@ Main:
 	PLX
 	LDA.b #!Define_SMW_NorSprStatus08_Normal	; \ Sprite status = Normal
 	STA.w !RAM_SMW_NorSpr_CurrentStatus,y
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x
 	STA.w !RAM_SMW_NorSpr_YPosLo,y
 	LDA.w !RAM_SMW_NorSpr_YPosHi,x
 	STA.w !RAM_SMW_NorSpr_YPosHi,y
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x
 	STA.b !RAM_SMW_Misc_ScratchRAM01
 	LDA.w !RAM_SMW_NorSpr_XPosHi,x
 	STA.b !RAM_SMW_Misc_ScratchRAM00
@@ -4844,11 +4881,11 @@ Bank03:
 	JSL.l SMW_InitializeNormalSpriteRAMTables_Main
 	STZ.w !RAM_SMW_NorSpr_XOffscreenFlag,x
 	LDA.b #$80
-	STA.b !RAM_SMW_NorSpr_YPosLo,x
+	STA.b !RAM_SMW_NorSpr_YPosLo_x
 	LDA.b #$FF
 	STA.w !RAM_SMW_NorSpr_YPosHi,x
 	LDA.b #$D0
-	STA.b !RAM_SMW_NorSpr_XPosLo,x
+	STA.b !RAM_SMW_NorSpr_XPosLo_x
 	LDA.b #$00
 	STA.w !RAM_SMW_NorSpr_XPosHi,x
 	LDA.b #$02
@@ -4868,7 +4905,7 @@ Bank03:
 	PHB
 	PHK
 	PLB
-	LDA.b !RAM_SMW_NorSpr_SpriteID,x
+	LDA.b !RAM_SMW_NorSpr_SpriteID_x
 	CMP.b #!Define_SMW_SpriteID_NorSpr0C8_LightSwitch
 	BNE.b NotLightSwitch
 	JSR.w SMW_NorSpr0C8_LightSwitch_Status08_Bank03
@@ -5026,7 +5063,7 @@ NotMovingCastleStone:
 	RTL
 
 NotBowserStatueFire:
-	LDA.b !RAM_SMW_NorSpr_SpriteID,x
+	LDA.b !RAM_SMW_NorSpr_SpriteID_x
 	CMP.b #!Define_SMW_SpriteID_NorSpr0B2_FallingSpike
 	BNE.b NotFallingSpike
 	JSR.w SMW_NorSpr0B2_FallingSpike_Status08_Bank03
@@ -5326,7 +5363,7 @@ else
 endif
 	STA.b !RAM_SMW_NorSpr_YSpeed,x
 	STZ.b !RAM_SMW_NorSpr_XSpeed,x	; Sprite X Speed = 0
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x
 	SEC
 	SBC.b !RAM_SMW_Mirror_CurrentLayer1YPosLo
 	CMP.b #$10
@@ -5564,18 +5601,24 @@ CODE_03A61D:
 	LDA.b #!Define_SMW_NorSprStatus08_Normal
 	STA.w !RAM_SMW_NorSpr_CurrentStatus+$08
 	LDA.b #!Define_SMW_SpriteID_NorSpr0A1_BowserBowlingBall
+if defined("Define_SMW_SA1")
+	; SA-1 Pack: Bowser's bowling balls are hard-coded to use sprite slot 8,
+	; just hijack their generation for simplicity.
+	JML.l BOWSER_BOWLING_BALL
+else
 	STA.b !RAM_SMW_NorSpr_SpriteID+$08
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x
+endif
 	CLC
 	ADC.b #$08
-	STA.b !RAM_SMW_NorSpr_XPosLo+$08
+	STA.b !RAM_SMW_NorSpr_XPosLo_AsShipped+$08	; dead under SA-1 Pack, which replaces this code
 	LDA.w !RAM_SMW_NorSpr_XPosHi,x
 	ADC.b #$00
 	STA.w !RAM_SMW_NorSpr_XPosHi+$08
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x
 	CLC
 	ADC.b #$40
-	STA.b !RAM_SMW_NorSpr_YPosLo+$08
+	STA.b !RAM_SMW_NorSpr_YPosLo_AsShipped+$08	; dead under SA-1 Pack, which replaces this code
 	LDA.w !RAM_SMW_NorSpr_YPosHi,x
 	ADC.b #$00
 	STA.w !RAM_SMW_NorSpr_YPosHi+$08
@@ -5782,7 +5825,7 @@ State03_DropFireballs:
 	LDA.b #$FF
 	STA.w !RAM_SMW_NorSpr_XPosHi,x
 	LDA.b #$60
-	STA.b !RAM_SMW_NorSpr_XPosLo,x
+	STA.b !RAM_SMW_NorSpr_XPosLo_x
 	LDA.w !RAM_SMW_NorSpr0A0_ActivateBowserBattle_WaitBeforeNextAttack
 	BNE.b CODE_03A7DF
 	LDA.b #!Define_SMW_LevelMusic_BowserZoomIn
@@ -5790,7 +5833,7 @@ State03_DropFireballs:
 	LDA.b #$02
 	STA.w !RAM_SMW_NorSpr0A0_ActivateBowserBattle_CurrentState,x
 	LDA.b #$18
-	STA.b !RAM_SMW_NorSpr_YPosLo,x
+	STA.b !RAM_SMW_NorSpr_YPosLo_x
 	LDA.b #$00
 	STA.w !RAM_SMW_NorSpr_YPosHi,x
 	LDA.b #$08
@@ -5806,12 +5849,12 @@ CODE_03A7DF:
 	LDA.b !RAM_SMW_Counter_GlobalFrames
 	AND.b #$1F
 	BNE.b Return03A840
-	LDY.b #!Define_SMW_MaxNormalSpriteSlot-$04
+	LDY.b #!Define_SMW_StockMaxNormalSpriteSlot-$04
 CODE_03A7EB:
 	LDA.w !RAM_SMW_NorSpr_CurrentStatus,y
 	BEQ.b CODE_03A7F6
 	DEY
-	CPY.b #!Define_SMW_MaxNormalSpriteSlot-$0A
+	CPY.b #!Define_SMW_StockMaxNormalSpriteSlot-$0A
 	BNE.b CODE_03A7EB
 	RTS
 
@@ -5944,12 +5987,12 @@ DATA_03A8BE:
 	db $18,$17,$14,$10,$0C,$08,$04,$00
 
 CODE_03A8D6:
-	LDY.b #!Define_SMW_MaxNormalSpriteSlot-$04
+	LDY.b #!Define_SMW_StockMaxNormalSpriteSlot-$04
 CODE_03A8D8:
 	LDA.w !RAM_SMW_NorSpr_CurrentStatus,y
 	BEQ.b CODE_03A8E3
 	DEY
-	CPY.b #!Define_SMW_MaxNormalSpriteSlot-$0A
+	CPY.b #!Define_SMW_StockMaxNormalSpriteSlot-$0A
 	BNE.b CODE_03A8D8
 	RTS
 
@@ -5960,14 +6003,14 @@ CODE_03A8E3:
 	STA.w !RAM_SMW_NorSpr_CurrentStatus,y
 	LDA.b #!Define_SMW_SpriteID_NorSpr074_Mushroom
 	STA.w !RAM_SMW_NorSpr_SpriteID,y
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x
 	CLC
 	ADC.b #$04
 	STA.w !RAM_SMW_NorSpr_XPosLo,y
 	LDA.w !RAM_SMW_NorSpr_XPosHi,x
 	ADC.b #$00
 	STA.w !RAM_SMW_NorSpr_XPosHi,y
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x
 	CLC
 	ADC.b #$18
 	STA.w !RAM_SMW_NorSpr_YPosLo,y
@@ -5981,7 +6024,7 @@ CODE_03A8E3:
 	STA.b !RAM_SMW_NorSpr_YSpeed,x
 	STZ.w !RAM_SMW_NorSpr_FacingDirection,x
 	LDY.b #$0C
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x
 	BPL.b CODE_03A92A
 	LDY.b #$F4
 	INC.w !RAM_SMW_NorSpr_FacingDirection,x
@@ -6020,7 +6063,7 @@ State08_Phase2:
 	AND.b #$00
 	BNE.b CODE_03AB4B
 	LDY.b #$00
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x
 	CMP.b !RAM_SMW_Player_XPosLo
 	LDA.w !RAM_SMW_NorSpr_XPosHi,x
 	SBC.b !RAM_SMW_Player_XPosHi
@@ -6035,7 +6078,7 @@ CODE_03AB3E:
 	STA.b !RAM_SMW_NorSpr_XSpeed,x
 CODE_03AB4B:
 	LDY.b #$00
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x
 	CMP.b #$10
 	BMI.b CODE_03AB54
 	INY
@@ -6063,7 +6106,7 @@ State09_Phase3:
 	CLC
 	ADC.b #$03
 	STA.b !RAM_SMW_NorSpr_YSpeed,x
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x
 if ver_is_pal_rev1(!Define_Global_ROMToAssemble)
 	CMP.b #$74
 else
@@ -6073,7 +6116,7 @@ endif
 	LDA.w !RAM_SMW_NorSpr_YPosHi,x
 	BMI.b Return03AB9E
 	LDA.b #$64
-	STA.b !RAM_SMW_NorSpr_YPosLo,x
+	STA.b !RAM_SMW_NorSpr_YPosLo_x
 	LDA.b #$A0
 	STA.b !RAM_SMW_NorSpr_YSpeed,x
 	LDA.b #!Define_SMW_Sound1DFC_BulletShoot	; \ Play sound effect
@@ -6091,7 +6134,7 @@ State04_RiseUpToDie:
 	LDA.w !RAM_SMW_NorSpr_YPosHi,x
 	BMI.b CODE_03ABAF
 	BNE.b CODE_03ABB9
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x
 	CMP.b #$10
 	BCS.b CODE_03ABB9
 CODE_03ABAF:
@@ -6216,18 +6259,24 @@ CODE_03AC63:
 	LDA.b #!Define_SMW_NorSprStatus08_Normal
 	STA.w !RAM_SMW_NorSpr_CurrentStatus+$08
 	LDA.b #!Define_SMW_SpriteID_NorSpr07C_PrincessPeach
+if defined("Define_SMW_SA1")
+	; SA-1 Pack: Princess peach is also hard-coded for slot 8, do the same
+	; thing.
+	JML.l PRINCESS_PEACH
+else
 	STA.b !RAM_SMW_NorSpr_SpriteID+$08
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x
+endif
 	CLC
 	ADC.b #$08
-	STA.b !RAM_SMW_NorSpr_XPosLo+$08
+	STA.b !RAM_SMW_NorSpr_XPosLo_AsShipped+$08	; dead under SA-1 Pack, which replaces this code
 	LDA.w !RAM_SMW_NorSpr_XPosHi,x
 	ADC.b #$00
 	STA.w !RAM_SMW_NorSpr_XPosHi+$08
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x
 	CLC
 	ADC.b #$47
-	STA.b !RAM_SMW_NorSpr_YPosLo+$08
+	STA.b !RAM_SMW_NorSpr_YPosLo_AsShipped+$08	; dead under SA-1 Pack, which replaces this code
 	LDA.w !RAM_SMW_NorSpr_YPosHi,x
 	ADC.b #$00
 	STA.w !RAM_SMW_NorSpr_YPosHi+$08
@@ -6374,7 +6423,7 @@ CODE_03B019:
 	JSR.w CODE_03B020
 	INC.b !RAM_SMW_Misc_ScratchRAM02
 CODE_03B020:
-	LDY.b #!Define_SMW_MaxNormalSpriteSlot-$0A
+	LDY.b #!Define_SMW_StockMaxNormalSpriteSlot-$0A
 CODE_03B022:
 	LDA.w !RAM_SMW_NorSpr_CurrentStatus,y
 	BEQ.b CODE_03B02B
@@ -6387,14 +6436,14 @@ CODE_03B02B:
 	STA.w !RAM_SMW_NorSpr_CurrentStatus,y
 	LDA.b #!Define_SMW_SpriteID_NorSpr0A2_MechaKoopa
 	STA.w !RAM_SMW_NorSpr_SpriteID,y
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x
 	CLC
 	ADC.b #$10
 	STA.w !RAM_SMW_NorSpr_YPosLo,y
 	LDA.w !RAM_SMW_NorSpr_YPosHi,x
 	ADC.b #$00
 	STA.w !RAM_SMW_NorSpr_YPosHi,y
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x
 	STA.b !RAM_SMW_Misc_ScratchRAM00
 	LDA.w !RAM_SMW_NorSpr_XPosHi,x
 	STA.b !RAM_SMW_Misc_ScratchRAM01
@@ -6473,7 +6522,7 @@ Return03B0DB:
 	RTS
 
 CODE_03B0DC:
-	LDY.b #!Define_SMW_MaxNormalSpriteSlot-$0A
+	LDY.b #!Define_SMW_StockMaxNormalSpriteSlot-$0A
 CODE_03B0DE:
 	PHY
 	LDA.w !RAM_SMW_NorSpr_CurrentStatus,y
@@ -6888,7 +6937,7 @@ CODE_03B18A:
 	BMI.b CODE_03B1C5
 	LDA.w !RAM_SMW_NorSpr_YPosHi,x					;\ Note: This sprite is hardcoded to "land" at a specific Y position regardless of whether there is ground there or not.
 	BMI.b CODE_03B1C5						;|
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x					;|
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x	;|
 if ver_is_pal_rev1(!Define_Global_ROMToAssemble)	;|
 	CMP.b #$C0							;|
 else									;|
@@ -6900,7 +6949,7 @@ if ver_is_pal_rev1(!Define_Global_ROMToAssemble)	;|
 else									;|
 	LDA.b #$B0							;|
 endif									;|
-	STA.b !RAM_SMW_NorSpr_YPosLo,x					;/
+	STA.b !RAM_SMW_NorSpr_YPosLo_x					;/
 	LDA.b !RAM_SMW_NorSpr_YSpeed,x
 	CMP.b #$3E
 	BCC.b CODE_03B1AD
@@ -7053,7 +7102,7 @@ MakeBallBounce:
 	LSR
 	LSR
 	TAY
-	LDA.b !RAM_SMW_NorSpr_SpriteID,x				;\ Optimization: Sprite 0A1 is the only sprite that calls this routine.
+	LDA.b !RAM_SMW_NorSpr_SpriteID_x				;\ Optimization: Sprite 0A1 is the only sprite that calls this routine.
 	CMP.b #!Define_SMW_SpriteID_NorSpr0A1_BowserBowlingBall		;| Perhaps Nintendo planned on having other sprites call this?
 	BNE.b CODE_03B80C						;/
 	TYA
@@ -7339,11 +7388,11 @@ HidingInLava:
 	STA.b !RAM_SMW_NorSpr_YSpeed,x
 	LDA.w !RAM_SMW_NorSpr_XPosHi,x
 	STA.w !RAM_SMW_NorSpr0A8_Blargg_InitialXPosHi,x
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x
 	STA.w !RAM_SMW_NorSpr0A8_Blargg_InitialXPosLo,x
 	LDA.w !RAM_SMW_NorSpr_YPosHi,x
 	STA.w !RAM_SMW_NorSpr0A8_Blargg_InitialYPosHi,x
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x
 	STA.w !RAM_SMW_NorSpr0A8_Blargg_InitialYPosLo,x
 	JSR.w CODE_039FC0
 	INC.b !RAM_SMW_NorSpr0A8_Blargg_CurrentState,x
@@ -7439,11 +7488,11 @@ CODE_03A012:
 	LDA.w !RAM_SMW_NorSpr0A8_Blargg_InitialXPosHi,x
 	STA.w !RAM_SMW_NorSpr_XPosHi,x
 	LDA.w !RAM_SMW_NorSpr0A8_Blargg_InitialXPosLo,x
-	STA.b !RAM_SMW_NorSpr_XPosLo,x
+	STA.b !RAM_SMW_NorSpr_XPosLo_x
 	LDA.w !RAM_SMW_NorSpr0A8_Blargg_InitialYPosHi,x
 	STA.w !RAM_SMW_NorSpr_YPosHi,x
 	LDA.w !RAM_SMW_NorSpr0A8_Blargg_InitialYPosLo,x
-	STA.b !RAM_SMW_NorSpr_YPosLo,x
+	STA.b !RAM_SMW_NorSpr_YPosLo_x
 	LDA.b #$40
 	STA.w !RAM_SMW_NorSpr0A8_Blargg_PhaseTimer,x
 CODE_03A038:
@@ -7457,11 +7506,11 @@ Return03A044:
 	RTS
 
 CODE_03A045:
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x
 	PHA
 	SEC
 	SBC.b #$0C
-	STA.b !RAM_SMW_NorSpr_YPosLo,x
+	STA.b !RAM_SMW_NorSpr_YPosLo_x
 	LDA.w !RAM_SMW_NorSpr_YPosHi,x
 	PHA
 	SBC.b #$00
@@ -7470,7 +7519,7 @@ CODE_03A045:
 	PLA
 	STA.w !RAM_SMW_NorSpr_YPosHi,x
 	PLA
-	STA.b !RAM_SMW_NorSpr_YPosLo,x
+	STA.b !RAM_SMW_NorSpr_YPosLo_x
 	RTS
 
 GFXRt:
@@ -7561,7 +7610,7 @@ namespace SMW_NorSpr0A9_Reznor_Status01
 %InsertMacroAtXPosition(<Address>)
 
 Bank03:
-	CPX.b #!Define_SMW_MaxNormalSpriteSlot-$04
+	CPX.b #!Define_SMW_StockMaxNormalSpriteSlot-$04
 	BNE.b NotAlphaReznor
 	LDA.b #$04
 	STA.b !RAM_SMW_NorSpr0A9_Reznor_SpriteGFXToLoad,x
@@ -7591,13 +7640,24 @@ ReboundSpeedX:
 	db $20,$E0
 
 Bank03:
+if defined("Define_SMW_SA1")
+	; SA-1 Pack: I'm pretty sure that $140F was meant to be used a flag
+	; indicating that Reznor is on screen but SMW has a bug where it
+	; increments every frame in which Reznor is present instead of just once,
+	; which means it can wrap around to zero for one frame. This can cause
+	; tiles to disappear among other problems for this patch so it is best to
+	; fix the bug and set $140F to a fixed value so that it's always non-zero
+	; during a Reznor fight.
+	STA.w !RAM_SMW_Flag_ReznorRoomOAMIndexTimer
+else
 	INC.w !RAM_SMW_Flag_ReznorRoomOAMIndexTimer
+endif
 	LDA.b !RAM_SMW_Flag_SpritesLocked
 	BEQ.b ReznorNotLocked
 	JMP.w DrawReznor
 
 ReznorNotLocked:
-	CPX.b #!Define_SMW_MaxNormalSpriteSlot-$04
+	CPX.b #!Define_SMW_StockMaxNormalSpriteSlot-$04
 	BNE.b CODE_039910
 	PHX
 	; [22 0C D7 03] Change to [EA EA EA EA] to stop the bridge in the Reznor
@@ -7606,26 +7666,35 @@ ReznorNotLocked:
 	LDA.b #$80			; \ Set radius for Reznor sign rotation
 	STA.b !RAM_SMW_Mirror_M7CenterXPosLo
 	STZ.b !RAM_SMW_Mirror_M7CenterXPosHi
+if defined("Define_SMW_SA1")
+	; SA-1 Pack: It seems reznor's sign is hard-coded to be in sprite slot 0.
+	JSL.l REZNOR_SET
+else
 	LDX.b #$00
 	LDA.b #$C0			; \ X position of Reznor sign
-	STA.b !RAM_SMW_NorSpr_XPosLo
+endif
+	STA.b !RAM_SMW_NorSpr_XPosLo_Slot0
 	STZ.w !RAM_SMW_NorSpr_XPosHi
 	LDA.b #$B2			; \ Y position of Reznor sign
-	STA.b !RAM_SMW_NorSpr_YPosLo
+	STA.b !RAM_SMW_NorSpr_YPosLo_Slot0
 	STZ.w !RAM_SMW_NorSpr_YPosHi
 	LDA.b #$2C
 	STA.w !RAM_SMW_Misc_Mode7TilemapIndex
 	JSL.l SMW_UpdateMode7SpriteAnimations_Main	; Applies position changes to Reznor sign
 	PLX				; Pull, X = sprite index
+if defined("Define_SMW_SA1")
+	JSL.l REZNOR_RESTORE
+else
 	REP.b #$20			; A->16
 	LDA.b !RAM_SMW_Misc_M7RotationLo	; \ Rotate 1 frame around the circle (clockwise)
+endif
 	; Change to [38 E9] to change rotation direction of the Reznor platform.
 	CLC				; | $37,36 = 0 to 1FF, denotes circle position
 	ADC.w #$0001
 	AND.w #$01FF
 	STA.b !RAM_SMW_Misc_M7RotationLo
 	SEP.b #$20			; A->8
-	CPX.b #!Define_SMW_MaxNormalSpriteSlot-$04
+	CPX.b #!Define_SMW_StockMaxNormalSpriteSlot-$04
 	BNE.b CODE_039910
 	LDA.w !RAM_SMW_NorSpr0A9_Reznor_WaitBeforeEndingLevel,x	; \ Branch if timer to trigger level isn't set
 	BEQ.b ReznorNoLevelEnd
@@ -7639,11 +7708,11 @@ ReznorNotLocked:
 	RTS
 
 ReznorNoLevelEnd:
-	LDA.w !RAM_SMW_NorSpr0A9_Reznor_IsDeadFlag+(!Define_SMW_MaxNormalSpriteSlot-$04)
+	LDA.w !RAM_SMW_NorSpr0A9_Reznor_IsDeadFlag+(!Define_SMW_StockMaxNormalSpriteSlot-$04)
 	CLC
-	ADC.w !RAM_SMW_NorSpr0A9_Reznor_IsDeadFlag+(!Define_SMW_MaxNormalSpriteSlot-$05)
-	ADC.w !RAM_SMW_NorSpr0A9_Reznor_IsDeadFlag+(!Define_SMW_MaxNormalSpriteSlot-$06)
-	ADC.w !RAM_SMW_NorSpr0A9_Reznor_IsDeadFlag+(!Define_SMW_MaxNormalSpriteSlot-$07)
+	ADC.w !RAM_SMW_NorSpr0A9_Reznor_IsDeadFlag+(!Define_SMW_StockMaxNormalSpriteSlot-$05)
+	ADC.w !RAM_SMW_NorSpr0A9_Reznor_IsDeadFlag+(!Define_SMW_StockMaxNormalSpriteSlot-$06)
+	ADC.w !RAM_SMW_NorSpr0A9_Reznor_IsDeadFlag+(!Define_SMW_StockMaxNormalSpriteSlot-$07)
 	CMP.b #$04
 	BNE.b CODE_039910
 	LDA.b #$90			; | Set time to trigger level if all Reznors are dead
@@ -7695,6 +7764,12 @@ CODE_03991A:
 	LDA.l SMW_CircleCoordinates_Main,x
 	STA.b !RAM_SMW_Misc_ScratchRAM06
 	SEP.b #$30			; AXY->8
+if defined("Define_SMW_SA1")
+	; SA-1 Pack's own code sits here, from the vendored tree.
+namespace off
+incsrc "asm/inline/03995E.asm"
+namespace SMW_NorSpr0A9_Reznor_Status08
+else
 	LDA.b !RAM_SMW_Misc_ScratchRAM04
 	STA.w !REGISTER_Multiplicand	; Multiplicand A
 	LDA.b #$38
@@ -7729,8 +7804,9 @@ CODE_03999B:
 	INC
 CODE_0399A2:
 	STA.b !RAM_SMW_Misc_ScratchRAM06
+endif
 	LDX.w !RAM_SMW_NorSpr_CurrentSlotID	; X = sprite index
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x
 	PHA
 	STZ.b !RAM_SMW_Misc_ScratchRAM00
 	LDA.b !RAM_SMW_Misc_ScratchRAM04
@@ -7742,7 +7818,7 @@ CODE_0399B2:
 	PHP
 	CLC
 	ADC.b #$40
-	STA.b !RAM_SMW_NorSpr_XPosLo,x
+	STA.b !RAM_SMW_NorSpr_XPosLo_x
 	LDA.b !RAM_SMW_Mirror_M7CenterXPosHi
 	ADC.b #$00
 	PLP
@@ -7750,7 +7826,7 @@ CODE_0399B2:
 	STA.w !RAM_SMW_NorSpr_XPosHi,x
 	PLA
 	SEC
-	SBC.b !RAM_SMW_NorSpr_XPosLo,x
+	SBC.b !RAM_SMW_NorSpr_XPosLo_x
 	EOR.b #$FF
 	INC
 	STA.w !RAM_SMW_NorSpr_PlayerXSpeedOffset,x
@@ -7763,7 +7839,7 @@ CODE_0399D7:
 	ADC.b !RAM_SMW_Mirror_M7CenterYPosLo
 	PHP
 	ADC.b #$20
-	STA.b !RAM_SMW_NorSpr_YPosLo,x
+	STA.b !RAM_SMW_NorSpr_YPosLo_x
 	LDA.b !RAM_SMW_Mirror_M7CenterYPosHi
 	ADC.b #$00
 	PLP
@@ -7821,7 +7897,7 @@ NoSetRenrTurnTime:
 	STA.w !RAM_SMW_NorSpr_DecrementingTable7E154C,x	; / (eg. after hitting Reznor, or getting bounced by platform)
 	LDA.b !RAM_SMW_Player_YPosLo	; \ Compare y positions to see if mario hit Reznor
 	SEC
-	SBC.b !RAM_SMW_NorSpr_YPosLo,x
+	SBC.b !RAM_SMW_NorSpr_YPosLo_x
 	CMP.b #$ED
 	BMI.b HitReznor
 	CMP.b #$F2			; \ See if mario hit side of the platform
@@ -7888,11 +7964,11 @@ ReznorNoFiring:
 	STA.w !RAM_SMW_NorSpr_CurrentStatus,y
 	LDA.b #!Define_SMW_SpriteID_NorSpr0A9_Reznor	; \ Sprite to use for dead Reznor
 	STA.w !RAM_SMW_NorSpr_SpriteID,y
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x	; \ Transfer x position to dead Reznor
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x	; \ Transfer x position to dead Reznor
 	STA.w !RAM_SMW_NorSpr_XPosLo,y
 	LDA.w !RAM_SMW_NorSpr_XPosHi,x
 	STA.w !RAM_SMW_NorSpr_XPosHi,y
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x	; \ Transfer y position to dead Reznor
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x	; \ Transfer y position to dead Reznor
 	STA.w !RAM_SMW_NorSpr_YPosLo,y
 	LDA.w !RAM_SMW_NorSpr_YPosHi,x
 	STA.w !RAM_SMW_NorSpr_YPosHi,y
@@ -7919,20 +7995,20 @@ FoundRznrFireSlot:
 	STA.w !RAM_SMW_IO_SoundCh1	; / Play sound effect
 	LDA.b #!Define_SMW_SpriteID_ExtSpr02_ReznorFireball	; \ Extended sprite = Reznor fireball
 	STA.w !RAM_SMW_ExtSpr_SpriteID,y
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x
 	PHA
 	SEC
 	SBC.b #$08
 	STA.w !RAM_SMW_ExtSpr_XPosLo,y
-	STA.b !RAM_SMW_NorSpr_XPosLo,x
+	STA.b !RAM_SMW_NorSpr_XPosLo_x
 	LDA.w !RAM_SMW_NorSpr_XPosHi,x
 	SBC.b #$00
 	STA.w !RAM_SMW_ExtSpr_XPosHi,y
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x
 	PHA
 	SEC
 	SBC.b #$14
-	STA.b !RAM_SMW_NorSpr_YPosLo,x
+	STA.b !RAM_SMW_NorSpr_YPosLo_x
 	STA.w !RAM_SMW_ExtSpr_YPosLo,y
 	LDA.w !RAM_SMW_NorSpr_YPosHi,x
 	PHA
@@ -7944,9 +8020,9 @@ FoundRznrFireSlot:
 	PLA
 	STA.w !RAM_SMW_NorSpr_YPosHi,x
 	PLA
-	STA.b !RAM_SMW_NorSpr_YPosLo,x
+	STA.b !RAM_SMW_NorSpr_YPosLo_x
 	PLA
-	STA.b !RAM_SMW_NorSpr_XPosLo,x
+	STA.b !RAM_SMW_NorSpr_XPosLo_x
 	LDA.b !RAM_SMW_Misc_ScratchRAM00
 	STA.w !RAM_SMW_ExtSpr_YSpeed,y
 	LDA.b !RAM_SMW_Misc_ScratchRAM01
@@ -8086,11 +8162,11 @@ DATA_03D700:
 
 BreakReznorBridge:
 	PHX
-	LDA.w !RAM_SMW_NorSpr0A9_Reznor_IsDeadFlag+(!Define_SMW_MaxNormalSpriteSlot-$07)	; \ Return if less than 2 reznors killed
+	LDA.w !RAM_SMW_NorSpr0A9_Reznor_IsDeadFlag+(!Define_SMW_StockMaxNormalSpriteSlot-$07)	; \ Return if less than 2 reznors killed
 	CLC
-	ADC.w !RAM_SMW_NorSpr0A9_Reznor_IsDeadFlag+(!Define_SMW_MaxNormalSpriteSlot-$06)
-	ADC.w !RAM_SMW_NorSpr0A9_Reznor_IsDeadFlag+(!Define_SMW_MaxNormalSpriteSlot-$05)
-	ADC.w !RAM_SMW_NorSpr0A9_Reznor_IsDeadFlag+(!Define_SMW_MaxNormalSpriteSlot-$04)
+	ADC.w !RAM_SMW_NorSpr0A9_Reznor_IsDeadFlag+(!Define_SMW_StockMaxNormalSpriteSlot-$06)
+	ADC.w !RAM_SMW_NorSpr0A9_Reznor_IsDeadFlag+(!Define_SMW_StockMaxNormalSpriteSlot-$05)
+	ADC.w !RAM_SMW_NorSpr0A9_Reznor_IsDeadFlag+(!Define_SMW_StockMaxNormalSpriteSlot-$04)
 	CMP.b #$02
 	BCC.b CODE_03D757
 	LDX.w !RAM_SMW_Counter_NumberOfBrokenReznorBridgeTiles
@@ -8170,8 +8246,14 @@ CODE_03D798:
 	STA.l !RAM_SMW_Blocks_Map16TableLo,x
 	LDA.b #$00
 	STA.l !RAM_SMW_Blocks_Map16TableHi,x
+if defined("Define_SMW_SA1")
+	JML.l ReznorFix
+	RTS
+	db $7F	; the tail of the LDA.l below, which the hijack leaves unreached
+else
 	REP.b #$20			; A->16
 	LDA.l !RAM_SMW_Misc_StripeImageUploadIndexLo
+endif
 	TAX
 	LDA.w #$C05A
 	CLC
@@ -8770,7 +8852,7 @@ Prop:
 GFXRt:
 	JSR.w SMW_GetDrawInfo_Bank03
 	STZ.b !RAM_SMW_Misc_ScratchRAM02	; \ Set $02 based on sprite number
-	LDA.b !RAM_SMW_NorSpr_SpriteID,x
+	LDA.b !RAM_SMW_NorSpr_SpriteID_x
 	CMP.b #!Define_SMW_SpriteID_NorSpr0AD_UpDownFirstWoodenSpike
 	BNE.b CODE_0394DE
 	LDA.b #$05
@@ -8915,7 +8997,7 @@ CODE_0390F3:
 	ASL
 	ADC.w !RAM_SMW_NorSpr_AnimationFrame,x
 	TAY
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x
 	CLC
 	ADC.w DATA_0390EB,y
 	STA.b !RAM_SMW_Misc_ScratchRAM04
@@ -8925,7 +9007,7 @@ CODE_0390F3:
 	LDA.b #$04
 	STA.b !RAM_SMW_Misc_ScratchRAM06
 	STA.b !RAM_SMW_Misc_ScratchRAM07
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x
 	CLC
 	ADC.b #$47
 	STA.b !RAM_SMW_Misc_ScratchRAM05
@@ -9112,7 +9194,7 @@ CODE_038FA4:
 	AND.b #$07			; |
 	ORA.w !RAM_SMW_NorSpr_YOffscreenFlag,x	; | or sprite is offscreen vertically,
 	BNE.b CODE_038FC2		;/ branch
-	LDA.b !RAM_SMW_NorSpr_SpriteID,x	;\ if sprite number isn't B0 (boo stream),
+	LDA.b !RAM_SMW_NorSpr_SpriteID_x	;\ if sprite number isn't B0 (boo stream),
 	CMP.b #!Define_SMW_SpriteID_NorSpr0B0_ReflectingBooBuddies	; |
 	BNE.b CODE_038FC2		;/ branch
 	JSR.w SpawnTrailingBoo
@@ -9184,11 +9266,11 @@ ADDR_039034:
 CODE_039037:
 	LDA.b #!Define_SMW_SpriteID_MExtSpr0A_BooStream	;\ set extended sprite number: 0A (boo stream tile)
 	STA.w !RAM_SMW_MExtSpr_SpriteID,y	;/
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x	;\ set x position for extended sprite
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x	;\ set x position for extended sprite
 	STA.w !RAM_SMW_MExtSpr_XPosLo,y	; |
 	LDA.w !RAM_SMW_NorSpr_XPosHi,x	; |
 	STA.w !RAM_SMW_MExtSpr_XPosHi,y	;/
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x	;\ set y position for extended sprite
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x	;\ set y position for extended sprite
 	STA.w !RAM_SMW_MExtSpr_YPosLo,y	; |
 	LDA.w !RAM_SMW_NorSpr_YPosHi,x	; |
 	STA.w !RAM_SMW_MExtSpr_YPosHi,y	;/
@@ -9259,8 +9341,8 @@ CODE_0392C0:
 	LDA.w !RAM_SMW_Flag_ActiveCreateEatBlock
 	CMP.b #$FF
 	BEQ.b Return03932B
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x
-	ORA.b !RAM_SMW_NorSpr_XPosLo,x
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x
+	ORA.b !RAM_SMW_NorSpr_XPosLo_x
 	AND.b #$0F
 	BNE.b Return03932B
 	LDA.w !RAM_SMW_NorSpr0B1_CreateEatBlock_BlockType,x
@@ -9309,20 +9391,20 @@ CODE_03932C:
 	LDA.b #$FF
 	STA.b !RAM_SMW_NorSpr_XSpeed,x
 	STA.b !RAM_SMW_NorSpr_YSpeed,x
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x
 	PHA
 	SEC
 	SBC.b #$01
-	STA.b !RAM_SMW_NorSpr_XPosLo,x
+	STA.b !RAM_SMW_NorSpr_XPosLo_x
 	LDA.w !RAM_SMW_NorSpr_XPosHi,x
 	PHA
 	SBC.b #$00
 	STA.w !RAM_SMW_NorSpr_XPosHi,x
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x
 	PHA
 	SEC
 	SBC.b #$01
-	STA.b !RAM_SMW_NorSpr_YPosLo,x
+	STA.b !RAM_SMW_NorSpr_YPosLo_x
 	LDA.w !RAM_SMW_NorSpr_YPosHi,x
 	PHA
 	SBC.b #$00
@@ -9331,11 +9413,11 @@ CODE_03932C:
 	PLA
 	STA.w !RAM_SMW_NorSpr_YPosHi,x
 	PLA
-	STA.b !RAM_SMW_NorSpr_YPosLo,x
+	STA.b !RAM_SMW_NorSpr_YPosLo_x
 	PLA
 	STA.w !RAM_SMW_NorSpr_XPosHi,x
 	PLA
-	STA.b !RAM_SMW_NorSpr_XPosLo,x
+	STA.b !RAM_SMW_NorSpr_XPosLo_x
 	PLA
 	ORA.w !RAM_SMW_NorSpr_LevelCollisionFlags,x
 	BEQ.b CODE_039387
@@ -9353,11 +9435,11 @@ CODE_039387:
 ; ends with RTS.
 GenTileFromSpr1:
 	STA.b !RAM_SMW_Blocks_Map16ToGenerate	; $9C = tile to generate
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x	; \ $9A = Sprite X position
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x	; \ $9A = Sprite X position
 	STA.b !RAM_SMW_Blocks_XPosLo	; | for block creation
 	LDA.w !RAM_SMW_NorSpr_XPosHi,x
 	STA.b !RAM_SMW_Blocks_XPosHi
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x	; \ $98 = Sprite Y position
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x	; \ $98 = Sprite Y position
 	STA.b !RAM_SMW_Blocks_YPosLo	; | for block creation
 	LDA.w !RAM_SMW_NorSpr_YPosHi,x
 	STA.b !RAM_SMW_Blocks_YPosHi
@@ -9641,7 +9723,7 @@ CODE_038C45:
 	LDA.w DATA_038C2A,y
 	STA.b !RAM_SMW_NorSpr_XSpeed,x
 	LDA.b !RAM_SMW_NorSpr_XSpeed,x
-	LDY.b !RAM_SMW_NorSpr_SpriteID,x
+	LDY.b !RAM_SMW_NorSpr_SpriteID_x_Cached
 	CPY.b #!Define_SMW_SpriteID_NorSpr0B8_CarrotTopLiftUpperLeft
 	BEQ.b CODE_038C5A
 	EOR.b #$FF
@@ -9649,7 +9731,7 @@ CODE_038C45:
 CODE_038C5A:
 	STA.b !RAM_SMW_NorSpr_YSpeed,x
 	JSL.l SMW_UpdateNormalSpritePositionBank01_Main_Y
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x
 	STA.w !RAM_SMW_NorSpr_Table7E151C,x
 	JSL.l SMW_UpdateNormalSpritePositionBank01_Main_X
 	JSR.w CODE_038CE4
@@ -9663,7 +9745,7 @@ CODE_038C5A:
 	SBC.w !RAM_SMW_NorSpr_Table7E151C,x
 	CLC
 	ADC.b #$1C
-	LDY.b !RAM_SMW_NorSpr_SpriteID,x
+	LDY.b !RAM_SMW_NorSpr_SpriteID_x_Cached
 	CPY.b #!Define_SMW_SpriteID_NorSpr0B8_CarrotTopLiftUpperLeft
 	BNE.b CODE_038C8C
 	CLC
@@ -9679,7 +9761,7 @@ CODE_038C98:
 	CLC
 	ADC.b !RAM_SMW_Player_YPosLo
 	STA.b !RAM_SMW_Misc_ScratchRAM00
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x
 	CLC
 	ADC.w DATA_038BAA,y
 	CMP.b !RAM_SMW_Misc_ScratchRAM00
@@ -9691,7 +9773,7 @@ CODE_038C98:
 	LDA.b #$2D
 CODE_038CB2:
 	STA.b !RAM_SMW_Misc_ScratchRAM00
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x
 	CLC
 	ADC.w DATA_038BAA,y
 	PHP
@@ -9767,7 +9849,7 @@ Prop:
 GFXRt:
 	JSR.w SMW_GetDrawInfo_Bank03
 	PHX
-	LDA.b !RAM_SMW_NorSpr_SpriteID,x
+	LDA.b !RAM_SMW_NorSpr_SpriteID_x
 	CMP.b #!Define_SMW_SpriteID_NorSpr0B8_CarrotTopLiftUpperLeft
 	LDX.b #$02
 	STX.b !RAM_SMW_Misc_ScratchRAM02
@@ -9826,7 +9908,7 @@ Bank03:
 	STA.w !RAM_SMW_IO_SoundCh3
 	STZ.w !RAM_SMW_NorSpr0B9_MessageBox_BounceAnimationTimer,x	; clear message timer
 	STZ.b !RAM_SMW_NorSpr0B9_MessageBox_HitFlag,x
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x	;\ use sprite x position to determine which message to display
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x	;\ use sprite x position to determine which message to display
 	LSR				; |
 	LSR				; |
 	LSR				; |
@@ -10167,7 +10249,7 @@ CODE_038ACB:
 	STA.w !RAM_SMW_NorSpr_CurrentStatus,y
 	LDA.b #!Define_SMW_SpriteID_NorSpr0B3_BowserStatueFire	; \ Sprite = Bowser Statue Fireball
 	STA.w !RAM_SMW_NorSpr_SpriteID,y
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x	;\ set sprite x position
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x	;\ set sprite x position
 	STA.b !RAM_SMW_Misc_ScratchRAM00	; |
 	LDA.w !RAM_SMW_NorSpr_XPosHi,x	; |
 	STA.b !RAM_SMW_Misc_ScratchRAM01	; |
@@ -10177,17 +10259,17 @@ CODE_038ACB:
 	LDA.b !RAM_SMW_Misc_ScratchRAM00	; |
 	CLC				; |
 	ADC.w FireSpawnXDispXLo,x	; |
-	STA.w !RAM_SMW_NorSpr_XPosLo,y	; |
+	STA.w !RAM_SMW_NorSpr_XPosLo,y	;|
 	LDA.b !RAM_SMW_Misc_ScratchRAM01	; |
 	ADC.w FireSpawnXDispXHi,x	; |
 	STA.w !RAM_SMW_NorSpr_XPosHi,y	;/
 	TYX				; \ Reset sprite tables
 	JSL.l SMW_InitializeNormalSpriteRAMTables_Main
 	PLX
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x	;\ set sprite y position
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x	;\ set sprite y position
 	SEC				; |
 	SBC.b #$02			; |
-	STA.w !RAM_SMW_NorSpr_YPosLo,y	; |
+	STA.w !RAM_SMW_NorSpr_YPosLo,y	;|
 	LDA.w !RAM_SMW_NorSpr_YPosHi,x	; |
 	SBC.b #$00			; |
 	STA.w !RAM_SMW_NorSpr_YPosHi,y	;/
@@ -10311,7 +10393,7 @@ CODE_038964:
 	LDA.w !RAM_SMW_NorSpr_FacingDirection,x	;\ preserve sprite direction
 	PHA				;/
 	LDA.b #!Define_SMW_SpriteID_NorSpr002_BlueNakedKoopa	;\ sprite number = shelless blue Koopa
-	STA.b !RAM_SMW_NorSpr_SpriteID,x	;/
+	STA.b !RAM_SMW_NorSpr_SpriteID_x	;/
 	JSL.l SMW_InitializeNormalSpriteRAMTables_Main	; INIT shelless blue Koopa
 	PLA				;\ get sprite direction back
 	STA.w !RAM_SMW_NorSpr_FacingDirection,x	;/
@@ -10409,11 +10491,11 @@ Return038A20:
 CODE_038A21:
 	LDA.b #!Define_SMW_SpriteID_SmokeSpr03_TurnAroundSmoke	;\ display smoke image
 	STA.w !RAM_SMW_SmokeSpr_SpriteID,y	;/
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x	;\ set smoke x position
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x	;\ set smoke x position
 	CLC				; |
 	ADC.b !RAM_SMW_Misc_ScratchRAM00	; |
 	STA.w !RAM_SMW_SmokeSpr_XPosLo,y	;/
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x	;\ set smoke y position
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x	;\ set smoke y position
 	CLC				; |
 	ADC.b !RAM_SMW_Misc_ScratchRAM01	; |
 	STA.w !RAM_SMW_SmokeSpr_YPosLo,y	;/
@@ -10623,7 +10705,7 @@ CODE_0387D7:
 	LDA.b #$C6
 NoYoshi:
 	CLC
-	ADC.b !RAM_SMW_NorSpr_YPosLo,x
+	ADC.b !RAM_SMW_NorSpr_YPosLo_x
 	STA.b !RAM_SMW_Player_YPosLo
 	LDA.w !RAM_SMW_NorSpr_YPosHi,x
 	ADC.b #$FF
@@ -10740,8 +10822,13 @@ Bank03:
 	DEC				; |
 	BNE.b CODE_03871B		;/ branch
 	LDY.w !RAM_SMW_NorSpr_LoadStatusTableIndex,x
+if defined("Define_SMW_SA1")
+	JSL.l SpriteLoading_CODE_01AC9C
+	NOP
+else
 	LDA.b #$00			; | Allow sprite to be reloaded by level loading routine
 	STA.w !RAM_SMW_Sprites_LoadStatus,y
+endif
 	STZ.w !RAM_SMW_NorSpr_CurrentStatus,x
 	RTS
 
@@ -11454,11 +11541,19 @@ CODE_0381F5:
 	PHX
 	TYX
 	STZ.w !RAM_SMW_NorSpr_CurrentStatus,x	; destroy sprite that hit Boo
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x	;\ setup exploding block effect
+if defined("Define_SMW_SA1")
+	; SA-1 Pack: Big boo boss needs to access sprite tables for objects that
+	; are colliding with it, the tables are indexed by x only in one place so
+	; don't bother updating the pointers, instead simply hijack and replace
+	; with our own version.
+	JML.l BIG_BOO_BOSS_FIX
+else
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x	;\ setup exploding block effect
 	STA.b !RAM_SMW_Blocks_XPosLo	; |
+endif
 	LDA.w !RAM_SMW_NorSpr_XPosHi,x	; |
 	STA.b !RAM_SMW_Blocks_XPosHi	; |
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x	; |
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x	;|
 	STA.b !RAM_SMW_Blocks_YPosLo	; |
 	LDA.w !RAM_SMW_NorSpr_YPosHi,x	; |
 	STA.b !RAM_SMW_Blocks_YPosHi	; |
@@ -11533,21 +11628,21 @@ namespace SMW_BooFadePalettes
 ; Big Boo Boss palettes (in same layout as Magikoopa palettes)
 Main:
 Fade07:
-	incbin "palettes/FadingBoo.tpl":6-16
+	incbin "palettes/FadingBoo.tpl":$6..$16
 Fade06:
-	incbin "palettes/FadingBoo.tpl":26-36
+	incbin "palettes/FadingBoo.tpl":$26..$36
 Fade05:
-	incbin "palettes/FadingBoo.tpl":46-56
+	incbin "palettes/FadingBoo.tpl":$46..$56
 Fade04:
-	incbin "palettes/FadingBoo.tpl":66-76
+	incbin "palettes/FadingBoo.tpl":$66..$76
 Fade03:
-	incbin "palettes/FadingBoo.tpl":86-96
+	incbin "palettes/FadingBoo.tpl":$86..$96
 Fade02:
-	incbin "palettes/FadingBoo.tpl":A6-B6
+	incbin "palettes/FadingBoo.tpl":$A6..$B6
 Fade01:
-	incbin "palettes/FadingBoo.tpl":C6-D6
+	incbin "palettes/FadingBoo.tpl":$C6..$D6
 Normal:
-	incbin "palettes/FadingBoo.tpl":E6-F6
+	incbin "palettes/FadingBoo.tpl":$E6..$F6
 namespace off
 endmacro
 
@@ -11639,7 +11734,7 @@ CODE_03C500:
 	STA.b !RAM_SMW_Mirror_ColorMathInitialSettings
 	LDA.b #$20
 	STA.b !RAM_SMW_Mirror_ObjectAndColorWindowSettings
-	LDA.b #$80
+	LDA.b #($01<<!Define_SMW_WindowHDMAChannel)
 	STA.w !RAM_SMW_Mirror_HDMAEnable
 	LDA.b !RAM_SMW_NorSpr0C6_Spotlight_OnFlag,x
 	AND.b #$01
@@ -11682,7 +11777,11 @@ CODE_03C54D:
 	STA.w !RAM_SMW_NorSpr0C6_Spotlight_Direction
 CODE_03C572:
 	LDA.b !RAM_SMW_Counter_GlobalFrames
+if defined("Define_SMW_SA1")
+	AND.b #$00			; every frame, not one in four
+else
 	AND.b #$03
+endif
 	BNE.b Return03C4F9
 	LDY.b #$00
 	LDA.w !RAM_SMW_NorSpr0C6_Spotlight_LeftWindowXPosTop
@@ -11794,14 +11893,14 @@ Bank03:
 	JSL.l SMW_CheckForPlayerToNormalSpriteCollision_Main	; \ Return if no interaction
 	BCC.b PopupMushroom_Return
 	LDA.b #!Define_SMW_SpriteID_NorSpr074_Mushroom	; \ Replace, Sprite = Mushroom
-	STA.b !RAM_SMW_NorSpr_SpriteID,x
+	STA.b !RAM_SMW_NorSpr_SpriteID_x
 	JSL.l SMW_InitializeNormalSpriteRAMTables_Main	; Reset sprite tables
 	LDA.b #$20			; \ Disable interaction timer = #$20
 	STA.w !RAM_SMW_NorSpr_DecrementingTable7E154C,x
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x	; \ Sprite Y position = Mario Y position - $000F
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x	; \ Sprite Y position = Mario Y position - $000F
 	SEC
 	SBC.b #$0F
-	STA.b !RAM_SMW_NorSpr_YPosLo,x
+	STA.b !RAM_SMW_NorSpr_YPosLo_x
 	LDA.w !RAM_SMW_NorSpr_YPosHi,x
 	SBC.b #$00
 	STA.w !RAM_SMW_NorSpr_YPosHi,x

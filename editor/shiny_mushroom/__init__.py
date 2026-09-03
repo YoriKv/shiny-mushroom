@@ -15,7 +15,7 @@ this one: the editor may import it to read the disassembly, but nothing in
 ``smw_tools`` may import the editor or Qt.
 """
 
-__version__ = "0.1.4"
+__version__ = "0.2.0"
 
 from smw_tools.paths import APP_ID as _APP_ID
 

@@ -62,8 +62,8 @@ includeonce
 
 ;#############################################################################################################
 ;# The level bank's packed head, in the order Config/LevelBank.asm emits it.
-;# The level streams behind these are the bank's last occupant and pack at
-;# the cursor they leave, so they have no block here.
+;# The level streams behind these are the bank's last occupant and pack
+;# where the bank's sequence ended, so they have no block here.
 ;#############################################################################################################
 
 ; The $200 rows of eight bytes, the $200 animated files and the read stubs

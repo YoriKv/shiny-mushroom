@@ -7,6 +7,13 @@ on Discord through the https://romhack.ing/ Discord server.
 
 Shiny Mushroom is built on Python + Qt (PySide6) and runs on Windows, macOS, and Linux.
 
+| | | |
+|:-:|:-:|:-:|
+| [![Level editing](screenshots/sm_1.png)](screenshots/sm_1.png) | [![Playtesting](screenshots/sm_2.png)](screenshots/sm_2.png) | [![World map](screenshots/sm_3.png)](screenshots/sm_3.png) |
+| Level editing | Playtesting | World map |
+| [![Overworld tiles](screenshots/sm_4.png)](screenshots/sm_4.png) | [![Graphics and the memory map](screenshots/sm_5.png)](screenshots/sm_5.png) | [![Cartridge features](screenshots/sm_6.png)](screenshots/sm_6.png) |
+| Overworld tiles, paths and warps | Graphics and the memory map | Enable/disable features |
+
 ## Features
 
 - **Built from source** - ROMs are built from ASM source and binary files which
@@ -40,7 +47,7 @@ Grab the build for your platform from the [Releases page](https://github.com/Yor
 ### First steps
 
 1. **Supply a cartridge** - once, on first run. Graphics, music and samples
-   are extracted and stored locall. Any of the 5 releases can work as a base.
+   are extracted and stored locally. Any of the 5 releases can work as a base.
 2. **Create a new project** - a folder is created to store all of your modified files.
 3. **Edit a level** - pick a level, click to select, drag to move, and use the
    Create panel to place objects and sprites.

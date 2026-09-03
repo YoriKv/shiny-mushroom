@@ -4,7 +4,7 @@ This is the choreography the emulator needs to turn a level number into a
 loaded level, expressed entirely as writes the game itself performs. Every
 address and every rule below was read out of the disassembly
 (``smw/src/SMW/Routine_Macros_SMW.asm`` and ``RAM_Map_SMW.asm``) and then
-confirmed against a running cart; ``docs/editor/emulated-loader.md`` records the
+confirmed against a running cart; ``docs/editor/emulator-worker.md`` records the
 measurements.
 
 The shape of a load:
@@ -84,10 +84,14 @@ from shiny_mushroom.addresses import (
     INTRO_LEVEL_FLAG,
     KEEP_MODE_TIMER,
     LAYER1_DATA_POINTER,
+    LAYER1_X,
+    LAYER1_Y,
     LAYER2_BG_HIGH,
     LAYER2_BG_LOW,
     LAYER2_BG_SIZE,
     LAYER2_DATA_POINTER,
+    LAYER2_X,
+    LAYER2_Y,
     LAYER3_SETTING,
     LAYER3_X,
     LAYER3_Y,
@@ -118,6 +122,7 @@ from shiny_mushroom.addresses import (
     PIPE_TILES,
     PLAYER_X,
     PLAYER_Y,
+    POWERUP,
     REBUILD_BUDGET,
     REBUILD_LANDING_A,
     REBUILD_LANDING_B,
@@ -133,9 +138,12 @@ from shiny_mushroom.addresses import (
     RamView,
     _read_long,
 )
+from shiny_mushroom.brk import MAX_STACK, STACK_TOP, BrkReport
 from shiny_mushroom.emu.core import (
+    CPU_TYPE_SA1,
     READ_STAMP,
     WRITE_STAMP,
+    CoreBroke,
     MesenCore,
 )
 from shiny_mushroom.emu.footprints import (
@@ -158,6 +166,7 @@ from shiny_mushroom.rom_patches import (
     _layer2_level_stream,
     _long,
     background_definitions,
+    extra_byte_counts,
     layer1_base,
     layer2_is_background,
     level_request_bytes,
@@ -175,7 +184,7 @@ from shiny_mushroom.sprite_art import SpriteTile
 #: Where a load reports what it did. Nothing here configures logging -- a
 #: library that installs a handler decides for the application that imports it.
 #: The editor turns this on from ``SHINY_MUSHROOM_DEBUG``; see
-#: ``docs/editor/emulated-loader.md``.
+#: ``docs/editor/emulator-worker.md``.
 #:
 #: ``INFO`` is one line per load, ``DEBUG`` adds the machine's condition at each
 #: sprite capture and names every sprite whose routine did not return. That last
@@ -259,6 +268,122 @@ class CartSession:
     #: outlive the preview that asked for it, and there would be no way back to
     #: the cart short of restarting the worker.
     _pristine: dict[int, int] = field(default_factory=dict, init=False)
+
+    #: ``BRK``\ s this session met and carried on past, waiting to be reported
+    #: with whatever reply the request they happened during produces. A sprite
+    #: whose code raises one is still a level that loads, so the exception
+    #: rides *with* the answer rather than instead of it -- see
+    #: :meth:`note_brk`.
+    _brks: list[BrkReport] = field(default_factory=list, init=False)
+
+    # -- the exception handler ---------------------------------------------
+
+    def watch_for_brk(self) -> None:
+        """Have the core stop at every ``BRK``, and report the ones it catches.
+
+        Turned on once per session, at the point the cartridge is opened, so
+        the machine is watched for the whole of its life rather than only
+        during whatever somebody thought to guard. What it costs is measured in
+        :meth:`~shiny_mushroom.emu.core.MesenCore.watch_for_brk`; what it buys
+        is that a cartridge that hits a ``BRK`` says so, in the same words the
+        BRK Exception Handler patch would have put on the screen, instead of
+        looking like a routine that would not return.
+        """
+        self.core.on_break = self._brk_report
+        self.core.watch_for_brk()
+
+    def note_brk(self, report: object, during: str) -> None:
+        """Keep a ``BRK`` that did not stop the request it happened during.
+
+        The sprite probe's case, and the reason this exists: one custom sprite
+        whose code raises an exception must not cost the level it is standing
+        in -- the capture for that sprite comes back empty, the rest of the
+        level renders, and the exception is reported beside it with the sprite
+        it came from written on it.
+        """
+        if isinstance(report, BrkReport):
+            self._brks.append(report.about(during))
+
+    def taken_brks(self) -> list[BrkReport]:
+        """Every kept ``BRK``, handed over and forgotten.
+
+        Drained rather than read, because the next request is a different
+        question: a report is carried by the reply to the request it happened
+        during and by no other.
+        """
+        taken, self._brks = self._brks, []
+        return taken
+
+    def _brk_report(self, _source: int, cpu: int) -> BrkReport:
+        """Read the stopped machine into a
+        :class:`~shiny_mushroom.brk.BrkReport`.
+
+        Called by the core while the ``BRK`` is still the next instruction --
+        the registers are the ones it was reached with, and nothing has been
+        pushed for it yet, so the stack below is the program's own.
+
+        Everything is read through :attr:`addresses`, which is what makes the
+        report right on a base that moved the memory: on ``sa1`` the powerup
+        and the layer mirrors are not in work RAM at all.
+        """
+        core, where = self.core, self.addresses
+        state = core.cpu_state(cpu)
+        signature = self._program_byte(state.k, state.pc + 1)
+        pairs = ((LAYER1_X, LAYER1_Y), (LAYER2_X, LAYER2_Y), (LAYER3_X, LAYER3_Y))
+        stack_at, stack, complete = self._stack_dump(state.sp)
+        return BrkReport(
+            address=state.address,
+            signature=signature,
+            a=state.a,
+            x=state.x,
+            y=state.y,
+            d=state.d,
+            db=state.dbr,
+            sp=state.sp,
+            ps=state.ps,
+            emulation=bool(state.emulation_mode),
+            cpu="SA-1" if cpu == CPU_TYPE_SA1 else "SNES",
+            game_mode=core.read(*where.at(GAME_MODE)),
+            powerup=core.read(*where.at(POWERUP)),
+            layers=tuple((self._word(x), self._word(y)) for x, y in pairs),
+            stack=stack,
+            stack_at=stack_at,
+            stack_complete=complete,
+        )
+
+    def _program_byte(self, bank: int, address: int) -> int:
+        """One byte of what the processor is about to execute.
+
+        Read off the **CPU bus** rather than the cartridge image, because the
+        two are not the same thing here: a byte in work RAM executes as
+        readily as one in ROM -- this package runs its own stubs from there --
+        and the signature byte of a ``BRK`` in a routine somebody copied into
+        RAM is in neither the image nor any table.
+        """
+        return self.core.read(MemoryType.SNES_MEMORY, (bank << 16) | (address & 0xFFFF))
+
+    def _word(self, offset: int) -> int:
+        """Two bytes of work RAM, low first, through this base's map."""
+        low = self.core.read(*self.addresses.at(offset))
+        high = self.core.read(*self.addresses.at(offset + 1))
+        return (high << 8) | low
+
+    def _stack_dump(self, sp: int) -> tuple[int, bytes, bool]:
+        """What is on the stack, as ``(first address, bytes, whole thing)``.
+
+        A 65816 stack pointer names the next *free* byte, so what has been
+        pushed and not pulled is everything above it up to where the stack was
+        started -- which is what the handler patch dumps and what says who
+        called whom. Capped at :data:`~shiny_mushroom.brk.MAX_STACK`, because a
+        program that has just run away can have pushed thousands of bytes and
+        the ones nearest the pointer are the ones that say why.
+        """
+        first = min(sp + 1, STACK_TOP + 1)
+        last = min(first + MAX_STACK - 1, STACK_TOP)
+        data = bytes(
+            self.core.read(*self.addresses.at(at)) for at in range(first, last + 1)
+        )
+        return first, data, last >= STACK_TOP
 
     # -- boot --------------------------------------------------------------
 
@@ -710,6 +835,16 @@ class CartSession:
         seen: list[int] = []
         frame, moved = self._frame(), time.monotonic()
         while time.monotonic() < deadline:
+            if self.core.broke_on_brk:
+                # A cartridge stopped at a BRK is not going to reach another
+                # game mode, and the stall detector below would spend
+                # `stall_timeout` finding that out. The report is gathered here
+                # rather than there because the evidence is the stopped machine
+                # itself -- see `MesenCore.take_break`.
+                raise CoreBroke(
+                    f"the cartridge hit a BRK while waiting for {description}",
+                    self.core.take_break(),
+                )
             mode = self.core.read(*self.addresses.at(GAME_MODE))
             if not seen or seen[-1] != mode:
                 seen.append(mode)
@@ -1617,7 +1752,8 @@ class SmwLevelLoader(SpriteProbe, OverworldCapture, CartSession):
         ram = RamView(self.core, where)
         rom = self.core.read_all(MemoryType.SNES_PRG_ROM)
         base = layer1_base(rom, level, where=where)
-        stream = self._sprite_stream(ram, rom)
+        extra_counts = extra_byte_counts(rom, where=self.addresses)
+        stream = self._sprite_stream(ram, rom, extra_counts)
         layer2_start = _layer2_level_stream(rom, level, where=where)
         return LevelSnapshot(
             level=level,
@@ -1640,7 +1776,9 @@ class SmwLevelLoader(SpriteProbe, OverworldCapture, CartSession):
                 rom[base : base + HEADER_SIZE],
                 stream,
                 bool(ram[LEVEL_LAYOUT_FLAGS] & LAYOUT_LAYER1_VERTICAL),
+                extra_counts,
             ),
+            extra_counts=extra_counts,
             footprints=footprints,
             # Layer 2 costs nothing to carry: a background's tilemap is already
             # in the RAM read above, a Layer 2 level is already inside the
@@ -1660,16 +1798,18 @@ class SmwLevelLoader(SpriteProbe, OverworldCapture, CartSession):
             duration=duration,
         )
 
-    def _sprite_stream(self, ram: RamView, rom: bytes) -> bytes:
+    def _sprite_stream(
+        self, ram: RamView, rom: bytes, counts: Mapping[int, int] = {}
+    ) -> bytes:
         """Copy the loaded level's sprite stream out of the cartridge.
 
         Followed from the pointer **the game resolved**, not from
         :func:`sprite_base`'s table, so a cart that repointed it while loading is
         obeyed. Where the stream ends is :func:`sprite_stream`'s answer either
-        way.
+        way, walked with the cartridge's own extra-byte stride.
         """
         pointer = _read_long(ram, SPRITE_LIST_POINTER)
-        return sprite_stream(rom, self.addresses.offset(pointer))
+        return sprite_stream(rom, self.addresses.offset(pointer), counts)
 
     def _map16_definitions(self, ram: RamView, rom: bytes) -> bytes:
         """Follow the game's own Map16 pointer table into the cartridge.

@@ -12,10 +12,12 @@ includeonce
 ;# bank packed to the byte.
 ;#
 ;# Setting !Define_SMW_ManagedGraphicsMemory to !TRUE makes the placement a
-;# sequence instead. Every file the macro inserts is emitted back to back,
-;# in the macro's order, into runs: the stock four banks whole, and then
-;# the graphics banks (Config/GraphicsBank.asm), one run each from its head
-;# to its last byte. A file that would run past the end of the run being
+;# sequence instead, emitted from the tail of the ROM map
+;# (%SMW_PlaceManagedGraphics): at its own map line the macro emits nothing
+;# and the run the map gave it is a hole, and invoked again from the tail
+;# every file it inserts is emitted back to back, in the macro's order,
+;# into runs: the stock four banks whole, and then the graphics banks
+;# (Config/GraphicsBank.asm), one run each from its head to its last byte. A file that would run past the end of the run being
 ;# filled is placed at the start of the next, and the packing never goes
 ;# back; a file may still straddle a bank boundary inside the stock run, as
 ;# the shipped files do, because the decompressor's ReadByte follows the
@@ -26,7 +28,7 @@ includeonce
 ;#
 ;# The files a project adds are packed after the game's own:
 ;# graphics/added/added-graphics.asm is one %SMW_AddedGraphics(GFXnn) per
-;# added file, read by %SMW_ManagedGraphicsMemory_Close, and each inserts
+;# added file, read by %SMW_PlaceManagedGraphics, and each inserts
 ;# its stream through the same macro the stock files use, so the asset's
 ;# path and its label follow one rule. File numbers $34-$FE may be added:
 ;# $FF is the terminator byte's neighbour and never a file, and $80 becomes
@@ -108,26 +110,25 @@ endif
 !Define_SMW_ManagedGraphicsUploadStubBytes	#= $26
 !Define_SMW_ManagedGraphicsHeadBytes		#= $0300+$0100+!Define_SMW_ManagedGraphicsPointerStubBytes+!Define_SMW_ManagedGraphicsUploadStubBytes
 
-; Where the packing has got to. Reset here, which is once per assembler
-; pass, because this file is read at the start of each of them. Run 0 is
-; the stock banks; run k is the graphics bank k-1 from the bank define.
+; Where the packing has got to, and whether the packing is what is being
+; emitted. Reset here, which is once per assembler pass, because this file
+; is read at the start of each of them. Run 0 is the stock banks; run k is
+; the graphics bank k-1 from the bank define.
 !SMW_ManagedGraphicsRun		#= 0
 !SMW_ManagedGraphicsNext	#= !Loc_SMW_ManagedGraphicsRun0_Start
 !SMW_ManagedGraphicsEnd		#= !Loc_SMW_ManagedGraphicsRun0_End
-!SMW_ManagedGraphicsInStockMacro = !FALSE
-!SMW_ManagedGraphicsMoved	= !FALSE
-!SMW_AddedGraphicsEmit		= !FALSE
+!SMW_ManagedGraphicsEmit	= !FALSE
 
 ;#############################################################################################################
 ;# The added files' two fragments, and the macros their lines are.
 ;#############################################################################################################
 
 ; One added file. Declares its number while the fragment is read at the
-; start of the pass -- so the pointer table's row can name its label before
-; any bank has emitted -- and inserts its stream through %SMW_INCGFX, the
-; stock files' own macro, when the close reads the fragment again.
+; start of the pass -- so the pointer table's row can name its label -- and
+; inserts its stream through %SMW_INCGFX, the stock files' own macro, when
+; the packing reads the fragment again.
 macro SMW_AddedGraphics(graphic)
-if !SMW_AddedGraphicsEmit == !TRUE
+if !SMW_ManagedGraphicsEmit == !TRUE
 	%SMW_INCGFX(<graphic>)
 else
 	!SMW_<graphic>_Added = !TRUE
@@ -165,7 +166,7 @@ endmacro
 
 ; The added files' numbers and formats, declared. Read here in the
 ; declaring mode, at the start of every pass and only under the define;
-; the streams themselves are read by the close.
+; the streams themselves are read by the packing.
 if !Define_SMW_ManagedGraphicsMemory == !TRUE
 	incsrc "graphics/added/added-graphics.asm"
 	incsrc "graphics/added/formats.asm"
@@ -175,43 +176,26 @@ endif
 ;# The packing.
 ;#############################################################################################################
 
-; Open the stock placement: called by DATATABLE_SMW_CompressedGraphics once
-; the ROM map has placed it, so the cursor is the first run's start.
-macro SMW_ManagedGraphicsRunStart()
-if !Define_SMW_ManagedGraphicsMemory == !TRUE
-	assert pc() == !Loc_SMW_ManagedGraphicsRun0_Start, "The compressed graphics are not placed where the managed graphics banks' first run starts. Check Config/ManagedGraphicsMemory.asm against the ROM map."
-	!SMW_ManagedGraphicsInStockMacro = !TRUE
-endif
-endmacro
-
-; Close the stock placement: carry the packing forward and, when a stock
-; file has moved the packing into a graphics bank, put the ROM map's
-; position back where the first run's fill left it.
-macro SMW_ManagedGraphicsRunEnd()
-if !Define_SMW_ManagedGraphicsMemory == !TRUE
-	!SMW_ManagedGraphicsNext #= pc()
-	if !SMW_ManagedGraphicsMoved == !TRUE
-		pullpc
-	endif
-	!SMW_ManagedGraphicsInStockMacro = !FALSE
+; The stock macro's slot in the ROM map, or its turn in the packing.
+; DATATABLE_SMW_CompressedGraphics is invoked twice under the define: from
+; its ROM map line, where it orgs to its stock address as ever and emits
+; nothing -- the run the map gave it is a hole -- and again from
+; %SMW_PlaceManagedGraphics, where it emits every file wherever the packing
+; has got to. !SMW_ManagedGraphicsEmit says which; %SMW_INCGFX reads the
+; same flag. The turn in the packing has to open at the first run's start,
+; which is asserted.
+macro SMW_ManagedGraphicsSlot()
+if !Define_SMW_ManagedGraphicsMemory == !TRUE && !SMW_ManagedGraphicsEmit == !TRUE
+	assert pc() == !Loc_SMW_ManagedGraphicsRun0_Start, "The graphics packing must open at the first run's start. Check %SMW_PlaceManagedGraphics."
 endif
 endmacro
 
 ; Move the packing to the next run, giving the rest of this one to the
-; cartridge as $FF. Leaving the stock run from inside the stock macro
-; keeps the ROM map's position, which the macro's close restores; the
-; close of the whole packing runs inside a bracket of its own and needs
-; none. The error names the banks rather than leaving asar to report a
-; position.
+; cartridge as $FF. The error names the banks rather than leaving asar to
+; report a position.
 macro SMW_ManagedGraphicsAdvance()
 	if pc() < !SMW_ManagedGraphicsEnd
 		fillbyte $FF : fill !SMW_ManagedGraphicsEnd-pc()
-	endif
-	if !SMW_ManagedGraphicsRun == 0
-		if !SMW_ManagedGraphicsInStockMacro == !TRUE
-			pushpc
-			!SMW_ManagedGraphicsMoved = !TRUE
-		endif
 	endif
 	!SMW_ManagedGraphicsRun #= !SMW_ManagedGraphicsRun+1
 	if !SMW_ManagedGraphicsRun > !Define_SMW_GraphicsBankCount
@@ -242,15 +226,13 @@ endmacro
 
 ;#############################################################################################################
 ;# The head of the first graphics bank: the two tables, then the two stubs,
-;# then the label the packed streams begin at. Placed from the top of each
-;# ROM map, before any bank emits, so the fixed occupant is the one the
-;# packing behind it is measured from. Bracketed with pushpc/pullpc like
-;# every placement there.
+;# then the label the packed streams begin at -- a fixed-size occupant at a
+;# fixed address, so the packing behind it is measured from the layout
+;# rather than from where this ended. Placed from %SMW_PlaceManagedGraphics.
 ;#############################################################################################################
 
 macro SMW_PlaceManagedGraphicsHead()
 if !Define_SMW_ManagedGraphicsMemory == !TRUE
-	pushpc
 	org !Loc_SMW_GraphicsBank_Packed
 
 ; One long pointer per file number, $100 rows.
@@ -362,31 +344,33 @@ SMW_ManagedGraphics_Upload:
 ; Where the packed streams begin, once the packing reaches this bank.
 SMW_ManagedGraphics_Streams:
 	assert pc() == !Loc_SMW_GraphicsBank_Streams, "The managed graphics head does not end where Config/GraphicsBank.asm says the streams start."
-	pullpc
 endif
 endmacro
 
 ;#############################################################################################################
-;# The close: the added files, the end of the packed data, and the fills.
+;# The packing, as one sequence: the head, then one org at the first run's
+;# start and the stock macro's turn in the packing -- every file inserted
+;# where the packing has got to, moved on a run when one would not fit --
+;# then the files the project adds, a label where the packed data ends,
+;# and the fills.
 ;#############################################################################################################
 
-; Pack the files the project adds after the game's own, label where the
-; packed data ends, and fill what the run it ended in has left with $FF,
-; then every graphics bank the packing never reached -- the stock fill
-; behind the files emits nothing under the define, and a bank the
+; Place the lot. The fills are what the run the packing ended in has left,
+; as $FF, then every graphics bank the packing never reached -- the stock
+; fill behind the files emits nothing under the define, and a bank the
 ; assembler never wrote is zeroes otherwise. Called once from each ROM map
-; after every bank has emitted, beside the other features' placements;
-; the whole of it is bracketed with pushpc/pullpc like every placement
-; there, and the fragment's labels are spelled bare because the map calls
-; this outside any namespace.
-macro SMW_ManagedGraphicsMemory_Close()
+; after every bank has emitted, beside the other features' placements; the
+; fragment's labels are spelled bare because the map calls this outside any
+; namespace. Nothing after the ROM map reads the position this leaves.
+macro SMW_PlaceManagedGraphics()
 if !Define_SMW_ManagedGraphicsMemory == !TRUE
-	pushpc
-	org !SMW_ManagedGraphicsNext
-	!SMW_AddedGraphicsEmit = !TRUE
+	%SMW_PlaceManagedGraphicsHead()
+	!SMW_ManagedGraphicsEmit = !TRUE
+	org !Loc_SMW_ManagedGraphicsRun0_Start
+	%DATATABLE_SMW_CompressedGraphics(NULLROM)
 SMW_ManagedGraphics_Added:
 	incsrc "graphics/added/added-graphics.asm"
-	!SMW_AddedGraphicsEmit = !FALSE
+	!SMW_ManagedGraphicsEmit = !FALSE
 SMW_ManagedGraphics_Free:
 	if pc() < !SMW_ManagedGraphicsEnd
 		fillbyte $FF : fill !SMW_ManagedGraphicsEnd-pc()
@@ -401,6 +385,5 @@ SMW_ManagedGraphics_Free:
 		fillbyte $FF : fill (((!Define_SMW_GraphicsBank+!SMW_ManagedGraphicsFillBank)<<$10)|$FFFF)-pc()
 		!SMW_ManagedGraphicsFillBank #= !SMW_ManagedGraphicsFillBank+1
 	endwhile
-	pullpc
 endif
 endmacro

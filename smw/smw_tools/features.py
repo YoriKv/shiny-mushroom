@@ -98,14 +98,16 @@ which the Features dialog prices a switch by. Both come out of the one
 declaration, so a block declared as a zero because nothing is read past it
 would be a run priced as though it were free.
 
-**Seven features are declared** -- the three above; :data:`LEVEL_GRAPHICS`,
+**The features that occupy packed runs are declared here** -- the three
+above; :data:`LEVEL_GRAPHICS`, :data:`UBERASM_SUPPORT`,
 :data:`LEVEL_CUSTOM_PALETTES` and :data:`MANAGED_LEVEL_MEMORY`, which share
 the *level bank* beside the reserved run (:data:`LEVEL_BANK`,
 ``Config/LevelBank.asm``): the level graphics' fixed-size rows at its head,
-the palettes behind them and shifted by them exactly as the reserved run's
-occupants shift one another, the level streams that outgrew the stock level
-banks behind those -- with the level number stash the first two read laid
-down by the bank in front of all of them, so no occupant's block depends on
+the per-level code's tables behind them, the palettes behind those and
+shifted by both exactly as the reserved run's occupants shift one another,
+the level streams that outgrew the stock level banks behind all of it --
+with the level number stash the head's occupants read laid down by the bank
+in front of all of them, so no occupant's block depends on
 which others the cartridge has; and :data:`MANAGED_GRAPHICS_MEMORY`, which packs the
 graphics files into the *graphics banks* above both, the last reservation and
 the one that grows
@@ -770,8 +772,8 @@ OVERWORLD_TABLES_RELOCATED = Feature(
 #: and the editor's translevel machinery holds. Only the last hop moves.
 #:
 #: The table is the first occupant of the run the growable features share
-#: (:data:`RESERVED_RUN`), placed from the head of each ROM map before
-#: anything else emits into it (``Config/TranslevelRemap.asm``). The head is
+#: (:data:`RESERVED_RUN`), the first call in the run's sequence
+#: (``Config/TranslevelRemap.asm``, from ``%SMW_PlaceReservedRun``). The head is
 #: its place because its rows are the one count in that run a project cannot
 #: change -- one word per translevel -- so it gains nothing from the growing
 #: end and everything behind it is spared knowing whether it is there. The
@@ -896,12 +898,14 @@ LEVEL_GRAPHICS = Feature(
 #: relocation's bank on every base, so any combination of the features is
 #: collision-free, and independent of the relocation: neither requires the
 #: other. The bank's other occupants are :data:`LEVEL_GRAPHICS`, whose
-#: fixed-size block goes in front of the table when that feature is on, and
+#: fixed-size block goes in front of the table when that feature is on,
+#: :data:`UBERASM_SUPPORT`, whose level code block sits behind that, and
 #: :data:`MANAGED_LEVEL_MEMORY`, which packs level streams behind the blobs;
 #: :data:`LEVEL_BANK` is the order.
 #:
-#: The pointer table sits at the run's head -- or the level graphics' block
-#: behind it, which :func:`applied` works out -- so its address is declared
+#: The pointer table sits at the run's head -- or behind whichever of the
+#: level graphics' and level code's blocks are on, which :func:`applied`
+#: works out -- so its address is declared
 #: the way every relocated table's is: as though nothing were in front of it.
 #: The blobs after the stubs are named by its rows and read through the
 #: build's own symbol file, like any grown fragment. The editor regenerates
@@ -1053,9 +1057,9 @@ STRING_TABLES_RELOCATED = Feature(
 #: and the editor reads that off the feature's presence. The one table
 #: declared is the sprite-bank table at the **fixed tail**, the ``$200``
 #: bytes below the end of bank ``$07``: the same slot on every cartridge and
-#: every base, which is what lets SA-1 Pack's patch pass read the bank of
-#: every sprite list off it by address, after this source has assembled and
-#: before any symbol of ours is in reach. In one of the game's own banks
+#: every base, which is what lets the sprite-memory rewrite
+#: (``Config/SpriteMemoryIndex.asm``, on the finalize pass) read the bank of
+#: every sprite list off it by address. In one of the game's own banks
 #: rather than in the expansion bank, because that bank is room this feature
 #: may not have and an address only the larger cartridge has is no address at
 #: all -- it is the one thing :attr:`~Feature.bank_rom_size` forbids.
@@ -1112,8 +1116,8 @@ MANAGED_LEVEL_MEMORY = Feature(
 #: file, and :func:`smw_tools.graphics_memory.pack` is the packer's own
 #: arithmetic for pricing a save. The two tables declared are the head's.
 #:
-#: The graphics banks are **two past the base's reservation bank** -- one
-#: past the level bank; ``$12`` on a plain build, ``$13`` on ``sa1`` -- which
+#: The graphics banks are **three past the base's reservation bank** -- one
+#: past the sprite bank; ``$13`` on a plain build, ``$14`` on ``sa1`` -- which
 #: is what :attr:`Feature.bank_offset` says, and how many the run takes is a
 #: build define beside the bank's (``Define_SMW_GraphicsBankCount``,
 #: :func:`smw_tools.graphics_memory.bank_count_define`), not a fact declared
@@ -1134,64 +1138,99 @@ MANAGED_GRAPHICS_MEMORY = Feature(
     "be added, each 3bpp or 4bpp. Nothing moves until a file grows.",
     defines=(("Define_SMW_ManagedGraphicsMemory", "1"),),
     bank_define="Define_SMW_GraphicsBank",
-    bank_offset=2,
+    bank_offset=3,
     min_rom_size="1mb",
     tables={
         "graphics_pointers": RomTable(
             role="graphics_pointers",
             label="SMW_ManagedGraphics_Pointers",
-            address=0x128008,
+            address=0x138008,
         ),
         "graphics_formats": RomTable(
             role="graphics_formats",
             label="SMW_ManagedGraphics_Formats",
-            address=0x128308,
+            address=0x138308,
         ),
     },
 )
 
 
-#: **Per-level code**: a level runs 65816 of its own, once a frame, called
-#: from the fork every running level frame passes through
-#: (``Config/LevelCode.asm``). The level number is the word the load stashed,
-#: shared with the per-level graphics and the custom level palettes
-#: (``Config/LevelNumberStash.asm``).
+#: **UberASM Support**: the project's own 65816, run per level, per game
+#: mode and globally, written the way UberASM Tool writes it. One switch in
+#: the editor, four defines in the source -- the disassembly keeps each
+#: mechanism behind its own (``Config/LevelCode.asm``,
+#: ``Config/GameModeCode.asm``, ``Config/GlobalCode.asm``,
+#: ``Config/UberASM.asm``), and this feature throws all four together.
 #:
-#: **Four entry points**, in the order a level reaches them: ``load``
-#: before its objects are drawn -- which is what makes writing the Map16
-#: table possible at all -- ``init`` once it is prepared, ``main`` once a
-#: frame while it runs, and ``nmi`` in the VBlank handler's own time. One
-#: table each, so a level may have any of the four and pay for none of the
-#: others.
+#: **Per-level code** is the half with addresses to declare. Four entry
+#: points, in the order a level reaches them: ``load`` before its objects
+#: are drawn -- which is what makes writing the Map16 table possible at all
+#: -- ``init`` once it is prepared, ``main`` once a frame while it runs,
+#: and ``nmi`` in the VBlank handler's own time. One ``$200``-row table of
+#: two bytes per entry point, so a level may have any of the four and pay
+#: for none of the others; a zero row is a level that runs nothing at that
+#: moment, which is every row as shipped. The tables are the level bank's
+#: **second packed occupant** (:data:`LEVEL_BANK`), behind the per-level
+#: graphics' block and in front of the custom level palettes -- the
+#: palettes' blobs are the packed head's growing end, so nothing may
+#: declare an address past them, which is what fixes this occupant's
+#: place. The level number the dispatch reads is the word the load
+#: stashed, shared with the per-level graphics and the custom level
+#: palettes (``Config/LevelNumberStash.asm``).
 #:
-#: The tables are the level bank's **second packed occupant**
-#: (:data:`LEVEL_BANK`): four ``$200``-row tables of two bytes behind the
-#: per-level graphics' block, then the dispatch and the entry stubs, then the
-#: levels' own routines. Words rather than long pointers because every
-#: routine is in this one bank, so the bank byte is known when the tables are
-#: assembled; the dispatch builds the long pointer from the row and the bank
-#: define. A zero row is a level that runs nothing at that moment, which is
-#: every row as shipped.
+#: **Per-game-mode code** runs a mode's own 65816 around the game's own
+#: routine for it: ``init`` on its first frame, ``main`` on every frame
+#: after, ``end`` after the game's routine. It declares no table the
+#: editor reads and no block: its three mode-indexed tables and the modes'
+#: routines sit behind the packed head with the levels' own code, and the
+#: hook is the main loop's call to the game mode, so the game's own
+#: pointer table is untouched. One byte of RAM, the mode the last frame
+#: ran, decides which frame is a mode's first
+#: (``!RAM_SMW_GameModeCode_LastMode``).
 #:
-#: **In front of the palettes, not behind them.** The palettes' blobs are the
-#: packed head's growing end, so nothing may declare an address past them --
-#: which is what fixes this occupant's place rather than leaving it to taste.
-LEVEL_CODE = Feature(
-    id="level-code",
-    name="Per-level code",
-    summary="A level runs 65816 of its own, as it loads and as it runs",
+#: **Global and status bar code** is the tool's ``global:`` and
+#: ``statusbar:`` tags, which belong to no level and no game mode
+#: (``Config/GlobalCode.asm``): three entry points, one routine each, so
+#: nothing is dispatched through anything. Its routines return with
+#: ``RTS``, the tool's convention for these two tags, so each is called
+#: from a stub in the bank the routine is in. A hook is only planted if
+#: the project wrote that entry point -- a project with only status bar
+#: code has no frame hook at all, not a branch and not a byte.
+#:
+#: **The dialect** (``Config/UberASM.asm``) is the defines a routine
+#: written for that tool expects and a shared library it may call into:
+#: ``!addr``, ``!sprite_slots``, the sprite tables it names after
+#: themselves, a macro library of the project's own read once, and
+#: library files reached by filename. It moves nothing and declares
+#: nothing -- the defines emit no bytes, and the library is assembled with
+#: the levels' own routines, behind the packed head where nothing
+#: declares an address. What it costs is what the library holds: every
+#: file in it, whether anything calls it or not.
+UBERASM_SUPPORT = Feature(
+    id="uberasm",
+    name="UberASM Support",
+    summary="Levels, game modes and the whole game run 65816 of the "
+    "project's own, written the way UberASM Tool writes it",
     detail="Without it a level does only what its header, objects and "
-    "sprites say, so two levels wanting different behaviour need different "
-    "data. A level given code here can write its own Map16 tiles before its "
-    "objects are placed, set itself up once it is prepared, and run every "
-    "frame it is on screen -- in a boss room as readily as in an ordinary "
-    "level. A level given none runs exactly what the stock cartridge runs.",
-    defines=(("Define_SMW_LevelCode", "1"),),
+    "sprites say, and a game mode only what the game's own routine does. "
+    "Here a level runs code of its own as it loads and as it runs, a game "
+    "mode around the game's routine for it, and the project's global and "
+    "status bar code besides -- with UberASM Tool's defines, macros and a "
+    "shared library, so a routine published for that tool assembles "
+    "unchanged. An entry point nobody wrote costs nothing, and a project "
+    "with no code files runs exactly what the stock cartridge runs.",
+    defines=(
+        ("Define_SMW_LevelCode", "1"),
+        ("Define_SMW_GameModeCode", "1"),
+        ("Define_SMW_GlobalCode", "1"),
+        ("Define_SMW_UberASM", "1"),
+    ),
     bank_define="Define_SMW_LevelBank",
     bank_offset=1,
     min_rom_size="1mb",
-    # The four tables and the entry stubs behind them, from the occupant's
-    # head to the first level's own routine.
+    # The per-level rows and the entry stubs behind them, from the
+    # occupant's head to the first level's own routine -- the one part of
+    # the feature with addresses to declare.
     block_bytes=block("LevelCode"),
     tables={
         f"level_code_{when}_rows": RomTable(
@@ -1204,124 +1243,117 @@ LEVEL_CODE = Feature(
 )
 
 
-#: **UberASM Tool compatibility**: the defines a routine written for that
-#: tool expects, and a shared library it may call into
-#: (``Config/UberASM.asm``). Switched apart from the features that say a
-#: project *has* code, because one writing its own in this source's idiom
-#: wants neither -- and would rather not have ``!addr`` and ``!14C8``
-#: defined over its head. It names none of them in
-#: :attr:`Feature.requires`: any one of the three will do, which that field
-#: cannot say, so the assembler is what refuses a cartridge carrying a
-#: library nothing can call.
+#: **Custom sprites**: a sprite number that carries code and properties of
+#: its own (``Config/CustomSprites.asm``), dispatched from the game's own
+#: sites through tables in a bank the feature reserves for itself
+#: (``Config/SpriteBank.asm``, **two past the reservation bank** -- one
+#: past the level bank; ``$12`` on a plain build, ``$13`` on ``sa1``).
 #:
-#: **It moves nothing and declares nothing**, which is why it has no block
-#: and no tables: the defines emit no bytes, and the library is assembled
-#: with the levels' own routines, behind the packed head where nothing
-#: declares an address. What it costs is what the library holds -- every
-#: file in it, whether a level calls it or not, since nothing can know which
-#: labels a routine will reach for.
-UBERASM = Feature(
-    id="uberasm",
-    name="UberASM Tool compatibility",
-    summary="A level's code written the way UberASM Tool writes it, and a "
-    "library it can call",
-    detail="Without it a level's code is written in this disassembly's own "
-    "terms. Here it also gets that tool's defines and macros -- !addr, "
-    "!sprite_slots, the sprite tables it names after themselves -- so a "
-    "routine published for it assembles unchanged, a macro library of the "
-    "project's own read once, and a shared library whose files are reached "
-    "by filename. Every library file is assembled whether a level calls it "
-    "or not.",
-    defines=(("Define_SMW_UberASM", "1"),),
-)
-
-
-#: **Per-game-mode code**: a mode runs 65816 of its own around the game's
-#: own routine for it (``Config/GameModeCode.asm``): ``init`` on its first
-#: frame, ``main`` on every frame after, ``end`` after the game's routine.
+#: **The custom bit is PIXI's bit 3** of a sprite record's first byte --
+#: one of the two extra bits the loader leaves in the Y high byte and
+#: nothing in the stock game reads -- which doubles the normal number
+#: space to 512 without touching the level data format. The one number it
+#: cannot mark is the goal tape, ``$7B``, whose both extra bits Lunar
+#: Magic 3.00 spends choosing between secret exits.
 #:
-#: **It declares no table the editor reads and no block.** Its three
-#: mode-indexed tables and the modes' routines sit behind the packed head
-#: with the levels' own code, where nothing declares an address, and the
-#: hook is the main loop's call to the game mode -- the site the global
-#: main routine already displaces -- so nothing is written into the game's
-#: own banks and the game's pointer table is untouched.
+#: **The tables the editor reads are the bank's fixed head**: the init and
+#: main rows, the acts-like numbers, the two extra property bytes and the
+#: six Tweaker tables, at declared addresses on every cartridge. The five
+#: status entry points' rows, the seven other kinds' rows and the sprites'
+#: own code sit behind the stubs and exist only where the project uses
+#: them, so those are read through a build's own symbol file instead.
 #:
-#: **One byte of RAM**, the mode the last frame ran, decides which frame is
-#: a mode's first (``!RAM_SMW_GameModeCode_LastMode``). That is the tool
-#: this copies' answer too, and the one that is right for every mode.
-GAMEMODE_CODE = Feature(
-    id="gamemode-code",
-    name="Per-game-mode code",
-    summary="A game mode runs 65816 of its own, before the game's",
-    detail="Without it a game mode does what the game's own routine does "
-    "and nothing else. A mode given code here runs it on the mode's first "
-    "frame, on every frame after, or after the game's own routine each "
-    "frame -- and a routine can be given to every mode at once. Which frame "
-    "is a mode's first is one byte of RAM the stock game never touches, "
-    "$7E010F, holding the last frame's mode; a patch that takes the same "
-    "byte makes a mode's first frame every frame, or none.",
-    defines=(("Define_SMW_GameModeCode", "1"),),
-    bank_define="Define_SMW_LevelBank",
-    bank_offset=1,
+#: **``$9E`` keeps holding the acts-like number** -- every comparison the
+#: game makes against a sprite number stays right -- and the true number
+#: lives in a per-slot table of the feature's own, at the RAM every sprite
+#: tool in the wild keeps it (``$7FAB9E``; the pack's BW-RAM layout on
+#: ``sa1``), so the dialect's defines read the same bytes the feature
+#: writes.
+#:
+#: **The dialect comes with the feature** (``Config/Pixi.asm``): the
+#: defines and macros a sprite published for PIXI expects, that tool's
+#: shared-routine macros, and a sprite library reached by filename. Most
+#: of it is shared with UberASM Support's dialect -- the two tools' macro
+#: libraries name the same addresses the same way, so
+#: ``code/uberasm/defines.asm`` and the project macro library are read
+#: here too, once, whichever features are on -- and only PIXI's own
+#: additions live under ``code/pixi/``: the ``!Base1``/``!Base2`` pair,
+#: the shared-routine macros, and the library over ``code/sprites/lib/``.
+#: It moves nothing and declares nothing; ``Define_SMW_Pixi`` stays a
+#: define of its own so a hand build can still take the capability alone.
+CUSTOM_SPRITES = Feature(
+    id="custom-sprites",
+    name="Custom sprites (PIXI)",
+    summary="A sprite number that carries code and properties of its own, "
+    "written the way PIXI writes it",
+    detail="Without it every sprite number is the game's: all 256 are "
+    "spoken for, and no dispatch table has a spare byte behind it. Here "
+    "one of the two extra bits in a sprite record marks a number as the "
+    "project's own -- 256 more numbers without touching the level format "
+    "-- with its own init and main, its own acts-like number and Tweaker "
+    "properties, five further entry points at the carry statuses, and "
+    "custom sprites of the seven other kinds behind their own dispatches. "
+    "The one number the bit cannot mark is the goal tape, whose extra "
+    "bits Lunar Magic spends on secret exits. The sprites are written in "
+    "PIXI's own dialect -- that tool's defines, its shared-routine macros "
+    "and a library reached by filename -- so a sprite published for it "
+    "assembles here unchanged. A project with no sprite files runs "
+    "exactly what the stock cartridge runs.",
+    defines=(
+        ("Define_SMW_CustomSprites", "1"),
+        ("Define_SMW_Pixi", "1"),
+    ),
+    bank_define="Define_SMW_SpriteBank",
+    bank_offset=2,
     min_rom_size="1mb",
+    tables={
+        role: RomTable(role=role, label=label, address=0x128008 + offset)
+        for role, label, offset in (
+            ("custom_sprite_init_rows", "SMW_CustomSprites_InitRows", 0x000),
+            ("custom_sprite_main_rows", "SMW_CustomSprites_MainRows", 0x200),
+            ("custom_sprite_acts_like", "SMW_CustomSprites_ActsLike", 0x400),
+            (
+                "custom_sprite_extra_property_1",
+                "SMW_CustomSprites_ExtraProperty1",
+                0x500,
+            ),
+            (
+                "custom_sprite_extra_property_2",
+                "SMW_CustomSprites_ExtraProperty2",
+                0x600,
+            ),
+            ("custom_sprite_tweak_1656", "SMW_CustomSprites_Tweak1656", 0x700),
+            ("custom_sprite_tweak_1662", "SMW_CustomSprites_Tweak1662", 0x800),
+            ("custom_sprite_tweak_166e", "SMW_CustomSprites_Tweak166E", 0x900),
+            ("custom_sprite_tweak_167a", "SMW_CustomSprites_Tweak167A", 0xA00),
+            ("custom_sprite_tweak_1686", "SMW_CustomSprites_Tweak1686", 0xB00),
+            ("custom_sprite_tweak_190f", "SMW_CustomSprites_Tweak190F", 0xC00),
+            (
+                "custom_sprite_extra_byte_count",
+                "SMW_CustomSprites_ExtraByteCount",
+                0xD00,
+            ),
+        )
+    },
 )
 
-
-#: **Global and status bar code**: the tool's ``global:`` and ``statusbar:``
-#: tags, which belong to no level and no game mode
-#: (``Config/GlobalCode.asm``). Three entry points, none dispatched through
-#: anything -- there is one of each, so there is nothing to index.
-#:
-#: **Its routines return with ``RTS``**, which is that tool's convention for
-#: these two tags and the reason they cannot go through the dispatch the
-#: levels' and the game modes' code goes through: an ``RTS`` returns within
-#: the program bank it was called in, so the call is made from the bank the
-#: routine is in. The stubs exist for exactly that.
-#:
-#: **A hook is only planted if the project wrote that entry point.** The
-#: fragment naming them is read with the defines rather than with the code,
-#: so each hook in ``Banks/`` asks whether its own is there -- a project with
-#: only status bar code has no frame hook at all, not a branch and not a
-#: byte. The tool this copies installs every hook always, having no way to
-#: know what will be added after it has run. The frame hook is shared with
-#: the game modes' code, which wants it whatever the project wrote.
-#:
-#: No tables and no block: one routine per entry point, placed behind the
-#: packed head with the levels' own code.
-GLOBAL_CODE = Feature(
-    id="global-code",
-    name="Global and status bar code",
-    summary="Code that runs every frame, at boot, or when the status bar is "
-    "drawn",
-    detail="Without it a project's own code belongs to a level or a game "
-    "mode. Here it can also run once at boot, every frame whatever the game "
-    "is doing, and when the status bar's counters are drawn. Each entry "
-    "point costs nothing until it is written: the hook for one nobody wrote "
-    "is not assembled.",
-    defines=(("Define_SMW_GlobalCode", "1"),),
-    bank_define="Define_SMW_LevelBank",
-    bank_offset=1,
-    min_rom_size="1mb",
-)
 
 
 #: The occupants of the level bank, in the order it holds them: the level
-#: graphics' fixed-size block at its head, the palettes behind it, and the
-#: packed level streams behind those, up to the managed level banks' fixed
-#: tail. All three share one bank define and one offset from the
-#: reservation bank.
+#: graphics' fixed-size block at its head, the level code's tables behind
+#: it, the palettes behind those, and the packed level streams last, up to
+#: the managed level banks' fixed tail. All four share one bank define and
+#: one offset from the reservation bank.
 #:
-#: The first two pack from the head and are :data:`LEVEL_BANK_HEAD`: the
-#: graphics declare their length and the palettes are read that much
-#: further on when both are on, exactly as :data:`RESERVED_RUN`'s occupants
-#: shift one another. The streams are the bank's last occupant and declare
-#: nothing but the tail's table, which is fixed to the bank's end and
-#: shifts for nothing -- so they are in the order and not in the packed
-#: head.
+#: The first three pack from the head and are :data:`LEVEL_BANK_HEAD`: each
+#: declares its length and the next is read that much further on when both
+#: are on, exactly as :data:`RESERVED_RUN`'s occupants shift one another.
+#: The streams are the bank's last occupant and declare nothing but the
+#: tail's table, which is fixed to the bank's end and shifts for nothing --
+#: so they are in the order and not in the packed head.
 LEVEL_BANK: tuple[str, ...] = (
     LEVEL_GRAPHICS.id,
-    LEVEL_CODE.id,
+    UBERASM_SUPPORT.id,
     LEVEL_CUSTOM_PALETTES.id,
     MANAGED_LEVEL_MEMORY.id,
 )
@@ -1371,18 +1403,60 @@ PACKED_RUNS: tuple[tuple[str, ...], ...] = (RESERVED_RUN, LEVEL_BANK_HEAD)
 #: say so themselves. The four that buy room to grow lead, because that is the
 #: question someone opening the Features dialog is usually asking; the ones
 #: that add a per-level or per-tile choice follow.
+#: **Custom music**: songs a project imported, with samples of their own
+#: (``Config/CustomMusic.asm``). The stock game's three music banks share one
+#: window of the SPC700's memory and one fixed set of samples, so a song
+#: written afterwards has nowhere to go and no waveform to play; this carries
+#: a second sound driver, AddmusicK's, which uploads a song and that song's
+#: own samples together when the song is asked for.
+#:
+#: **Nothing here is assembled from source.** The driver, every sequence and
+#: every sample arrive as blobs from the user's own copy of AddmusicK, already
+#: in the SPC700's upload format, and the disassembly ``incbin``s them. A
+#: song's place in ARAM is computed from the driver's size, so the two have to
+#: come from one run of that tool -- taking both as blobs is what makes a
+#: mismatch impossible rather than merely unlikely.
+#:
+#: **It declares no table, and that is the point.** Every byte of the run is
+#: reached through the pointer tables at its own head, which the editor finds
+#: by symbol exactly as :mod:`shiny_mushroom.audio` already finds the five
+#: stock audio blobs. That is what lets the music banks sit *above* the
+#: graphics banks, which cannot move because their pointer table is at one
+#: declared address on every cartridge -- two growable runs cannot both be
+#: last, and the one that declares nothing is the one that yields.
+#:
+#: So no ``bank_define`` either: which bank the run starts in follows
+#: ``Define_SMW_GraphicsBank`` plus its count, decided by the ROM map rather
+#: than filled in from the base. A feature whose bank depends on another
+#: feature's *count* is one :attr:`Feature.bank_offset` cannot express, and
+#: needing no address is what makes not expressing it free.
+CUSTOM_MUSIC = Feature(
+    id="custom-music",
+    name="Custom music",
+    summary="Songs of the project's own, each with the samples it needs",
+    detail="Without it the cartridge plays the thirty-odd songs it shipped "
+    "with, on the one set of samples it shipped with, because all three music "
+    "banks share a single window of the sound chip's memory. Here a project "
+    "carries as many songs as it has room for, each uploaded with its own "
+    "waveforms when it is asked for. The songs are compiled by AddmusicK, "
+    "which the editor runs and does not bundle; a project that has imported "
+    "none plays exactly what the stock cartridge plays.",
+    defines=(("Define_SMW_CustomMusic", "1"),),
+    min_rom_size="1mb",
+)
+
+
 FEATURES: dict[str, Feature] = {
+    MANAGED_LEVEL_MEMORY.id: MANAGED_LEVEL_MEMORY,
     OVERWORLD_TABLES_RELOCATED.id: OVERWORLD_TABLES_RELOCATED,
     STRING_TABLES_RELOCATED.id: STRING_TABLES_RELOCATED,
-    MANAGED_LEVEL_MEMORY.id: MANAGED_LEVEL_MEMORY,
     MANAGED_GRAPHICS_MEMORY.id: MANAGED_GRAPHICS_MEMORY,
     TRANSLEVEL_REMAP.id: TRANSLEVEL_REMAP,
     LEVEL_GRAPHICS.id: LEVEL_GRAPHICS,
     LEVEL_CUSTOM_PALETTES.id: LEVEL_CUSTOM_PALETTES,
-    LEVEL_CODE.id: LEVEL_CODE,
-    GAMEMODE_CODE.id: GAMEMODE_CODE,
-    GLOBAL_CODE.id: GLOBAL_CODE,
-    UBERASM.id: UBERASM,
+    UBERASM_SUPPORT.id: UBERASM_SUPPORT,
+    CUSTOM_SPRITES.id: CUSTOM_SPRITES,
+    CUSTOM_MUSIC.id: CUSTOM_MUSIC,
 }
 
 
@@ -1637,9 +1711,7 @@ def _in_bank(found: Feature, base: RomBase, held: set[str]) -> dict[str, RomTabl
     table there is where it is declared on every base.
     """
     tables = dict(found.tables)
-    shift = sum(
-        feature(one).shifts_by() for one in _run_ahead(found.id) if one in held
-    )
+    shift = sum(feature(one).shifts_by() for one in _run_ahead(found.id) if one in held)
     if found.bank_define is not None and base.reservation_bank != RESERVATION_BANK:
         shift += (base.reservation_bank - RESERVATION_BANK) << 16
     if not shift:

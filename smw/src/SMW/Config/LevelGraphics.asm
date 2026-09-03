@@ -51,14 +51,14 @@ includeonce
 ;# then $200 animated files, one per level, then the stubs. Everything else in the bank -- the custom level
 ;# palettes, the packed level streams -- is measured from behind them,
 ;# which is why the block is one size whatever else the cartridge has.
-;# Both tables are filled with $FF and then overwritten, level by level,
-;# from graphics/levels/level-graphics.asm, a fragment the project build
-;# derives from the level containers' ExGFX slots: one
-;# %SMW_LevelGraphics(level, nine bytes) per level with a row, placed at
-;# its level's row and its level's animated byte whatever order the lines
-;# come in. The shipped fragment names no level, since no
-;# shipped container does, so the feature with an unedited table loads
-;# exactly what the stock cartridge loads.
+;# Both tables are emitted row by row from graphics/levels/level-graphics.asm,
+;# a fragment the project build derives from the level containers' ExGFX
+;# slots: one %SMW_LevelGraphics(level, nine bytes) per level with a row,
+;# each declaring its level's row and animated byte, and every level the
+;# fragment leaves out is $FF -- whatever order the lines come in. The
+;# shipped fragment names no level, since no shipped container does, so the
+;# feature with an unedited table loads exactly what the stock cartridge
+;# loads.
 ;#
 ;# Two hooks in SMW_UploadGraphicsFiles (Banks/Bank00.asm), each a JSL of
 ;# exactly the size of the loop it stands in for -- the loop that copies a
@@ -100,53 +100,66 @@ endif
 
 ; One level's nine files: the eight slots in slot order FG1, FG2, BG1,
 ; FG3, SP1, SP2, SP3, SP4, where $FF keeps the tileset's file, and then
-; the animated tiles, where $FF is the game's own GFX33. Placed at the
-; level's own row of one table and its own byte of the other, so the
-; fragment's lines may come in any order, and a level the fragment names
-; twice keeps the later line. The product is bracketed because the
-; assembler's arithmetic is left to right.
+; the animated tiles, where $FF is the game's own GFX33. The line declares
+; the level's row and its animated byte as two defines keyed on the level
+; number, and the placement below emits both tables row by row from them
+; -- so the fragment's lines may come in any order, a level the fragment
+; names twice keeps the later line, and nothing is written anywhere but in
+; sequence. The level is evaluated first so the key is one spelling
+; whatever the line wrote.
 macro SMW_LevelGraphics(level, fg1, fg2, bg1, fg3, sp1, sp2, sp3, sp4, an2)
 	assert ((<level>)>>9) == 0, "A level graphics row names a level past $1FF. Check graphics/levels/level-graphics.asm."
 	assert (((<fg1>)|(<fg2>)|(<bg1>)|(<fg3>)|(<sp1>)|(<sp2>)|(<sp3>)|(<sp4>)|(<an2>))>>8) == 0, "A level graphics row holds a file number past $FF. Check graphics/levels/level-graphics.asm."
 if !Define_SMW_ManagedGraphicsMemory == !FALSE
 	assert (<an2>) == $FF, "A level names its own animated tiles, which needs the managed graphics: nothing else reaches a file of that shape, or sends it anywhere but the decompression buffer it would overrun. Check graphics/levels/level-graphics.asm."
 endif
-	pushpc
-	org !SMW_LevelGraphics_RowsAt+((<level>)*!Define_SMW_LevelGraphicsRowBytes)
-	db <fg1>,<fg2>,<bg1>,<fg3>,<sp1>,<sp2>,<sp3>,<sp4>
-	org !SMW_LevelGraphics_AnimatedAt+(<level>)
-	db <an2>
-	pullpc
+	!SMW_LevelGraphicsKey #= <level>
+	!{SMW_LevelGraphicsRow_!{SMW_LevelGraphicsKey}} = <fg1>,<fg2>,<bg1>,<fg3>,<sp1>,<sp2>,<sp3>,<sp4>
+	!{SMW_LevelGraphicsAnimated_!{SMW_LevelGraphicsKey}} = <an2>
 endmacro
 
 ;#############################################################################################################
-;# Where they go: the rows at the level bank's fixed head, then the stubs.
-;# Placed from the top of each ROM map, before any bank emits, so the
-;# fixed-size occupant is the one everything behind it is measured from:
-;# the palettes pack at the cursor this leaves, and the level streams
-;# behind them.
+;# Where they go: the rows at the level bank's fixed head, then the stubs,
+;# as the bank's first occupant (Config/LevelBank.asm) so the fixed-size
+;# block is the one everything behind it is measured from.
 ;#############################################################################################################
 
-; Place the rows and the stubs. Called from the head of each ROM map,
-; before the custom level palettes' placement, and bracketed with
-; pushpc/pullpc like every placement there.
+; Place the rows and the stubs. Called from %SMW_PlaceLevelBank, first of
+; the bank's occupants.
 macro SMW_PlaceLevelGraphics()
 if !Define_SMW_LevelGraphics == !TRUE
-	pushpc
-	org !SMW_LevelBankNext
 	assert pc() == !Loc_SMW_LevelBank_Packed, "The level graphics must be the level bank's first occupant: their rows have to sit at the run's fixed head."
 
-; One row per level number, $200 rows of eight bytes, and then one
-; animated tiles file per level: every byte $FF, and then each level the
-; fragment names written over its own. The rows come first and keep the
-; bank's fixed head, so the arithmetic that reads them is a shift.
-SMW_LevelGraphics_Rows:
-	!SMW_LevelGraphics_RowsAt #= pc()
-	fillbyte $FF : fill !Define_SMW_LevelGraphicsRowsBytes
-SMW_LevelGraphics_AnimatedFiles:
-	!SMW_LevelGraphics_AnimatedAt #= pc()
-	fillbyte $FF : fill !Define_SMW_LevelGraphicsAnimatedBytes
+; The fragment, graphics/levels/level-graphics.asm: one %SMW_LevelGraphics
+; line per level with a row, each declaring the level's row and animated
+; byte and emitting nothing. Read here, where the defines it tests are all
+; in force.
 	incsrc "graphics/levels/level-graphics.asm"
+
+; One row per level number, $200 rows of eight bytes, and then one
+; animated tiles file per level -- each level's own where the fragment
+; named it, every byte $FF where it did not. The rows come first and keep
+; the bank's fixed head, so the arithmetic that reads them is a shift.
+SMW_LevelGraphics_Rows:
+	!SMW_LevelGraphicsLevel #= 0
+	while !SMW_LevelGraphicsLevel < $0200
+		if defined("SMW_LevelGraphicsRow_!{SMW_LevelGraphicsLevel}")
+			db !{SMW_LevelGraphicsRow_!{SMW_LevelGraphicsLevel}}
+		else
+			db $FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF
+		endif
+		!SMW_LevelGraphicsLevel #= !SMW_LevelGraphicsLevel+1
+	endwhile
+SMW_LevelGraphics_AnimatedFiles:
+	!SMW_LevelGraphicsLevel #= 0
+	while !SMW_LevelGraphicsLevel < $0200
+		if defined("SMW_LevelGraphicsAnimated_!{SMW_LevelGraphicsLevel}")
+			db !{SMW_LevelGraphicsAnimated_!{SMW_LevelGraphicsLevel}}
+		else
+			db $FF
+		endif
+		!SMW_LevelGraphicsLevel #= !SMW_LevelGraphicsLevel+1
+	endwhile
 	assert pc() == SMW_LevelGraphics_Rows+!Define_SMW_LevelGraphicsRowsBytes+!Define_SMW_LevelGraphicsAnimatedBytes, "The level graphics tables do not end where their $200 rows of eight bytes and $200 animated files should. Check graphics/levels/level-graphics.asm."
 
 ; The reads the two bank $00 hooks land on, one per list, each in place of
@@ -307,7 +320,5 @@ SMW_LevelGraphics_Animated:
 	RTS
 
 	assert pc() == SMW_LevelGraphics_Rows+!Define_SMW_Block_LevelGraphics, "The level graphics block is not the size Config/PackedRuns.asm states. A stub that changed size changes what the palettes behind it are read past, so pin the new figure in Define_SMW_Block_LevelGraphics."
-	!SMW_LevelBankNext #= pc()
-	pullpc
 endif
 endmacro

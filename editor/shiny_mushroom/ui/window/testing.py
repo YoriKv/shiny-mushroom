@@ -56,7 +56,14 @@ from shiny_mushroom.ui.play_window import OverworldRun, PlayWindow
 from shiny_mushroom.ui.project_dialog import BuildDialog
 from shiny_mushroom.ui.settings_dialog import external_emulator
 from shiny_mushroom.ui.window.modes import EditorMode
-from shiny_mushroom.ui.window.parts import DISASSEMBLY, LEVEL_PARTS
+from shiny_mushroom.ui.window.parts import (
+    BUILD_ONLY,
+    DISASSEMBLY,
+    LEVEL_PARTS,
+    POINTER_PARTS,
+    RAW_FILES,
+    SOURCE_FILES,
+)
 
 __all__ = ["Testing"]
 
@@ -141,13 +148,55 @@ class Testing:
         self._show_play(None, None, overworld=run)
 
     def test_rom(self) -> None:
-        """Build the project's cartridge and open it, at its title screen.
+        """Play the whole cartridge, at its title screen, in the play window.
 
         File's row, because it tests no document in particular: it is the
-        cartridge, run. What lands in the emulator is the file
-        :meth:`export_rom` would copy -- the ordinary build, skipped when
-        nothing has moved -- so there is nothing here that could disagree with
-        what the project produces.
+        cartridge, run -- from the screen the game boots to, through the file
+        select and out onto the map, in the editor's own emulator. Nothing is
+        patched into it, which is exactly what separates this from Test Level:
+        what plays is the *built* image, so an edit that has not been saved
+        and assembled is not in it.
+
+        **Which is why it builds first where a build is owed.** A level test
+        carries an in-memory edit by patching the emulator's copy of the
+        cartridge; nothing can patch in a change to the code, and this run
+        does not patch at all. So a stale build is rebuilt through
+        :meth:`~shiny_mushroom.ui.main_window.MainWindow.rebuild_project` --
+        which asks about unsaved work, reopens what came out, and takes the
+        play session down with the cartridge it replaced.
+
+        A build that is *current* is asked the export's question instead, and
+        asked it first: the answer changes the question after it. Saving is
+        what puts a project ahead of its build, so work saved here leaves a
+        build owed, and the second line below is what then runs it. Discarding
+        leaves the build current and runs it, which is what discarding meant.
+        Neither is asked twice, because only one of them ever has anything
+        left to ask about.
+
+        A cartridge opened by hand has no build to owe, so it simply runs.
+        """
+        if not self._build_is_stale() and not self._may_export():
+            return
+        if self._build_is_stale() and not self.rebuild_project():
+            return
+        if self._path is None:
+            self._alert(
+                "There is no cartridge to test.",
+                detail="This run plays the open cartridge from its title "
+                "screen; File > Open Project opens one.",
+            )
+            return
+        self._show_play(None, None, cartridge=True)
+
+    def test_rom_external(self) -> None:
+        """Build the project's cartridge and open it *elsewhere*, at its title
+        screen.
+
+        :meth:`test_rom`'s run in somebody else's emulator: the file
+        :meth:`export_rom` would copy, handed to whatever is set in File >
+        Settings -- the ordinary build, skipped when nothing has moved -- so
+        there is nothing here that could disagree with what the project
+        produces.
 
         The run is of what has been *saved*: a build reads the project's
         overlay off disk, so the unsaved-work question an export asks is asked
@@ -158,7 +207,7 @@ class Testing:
     def test_level_external(self) -> None:
         """Build the cartridge and open it *where the canvas is*.
 
-        :meth:`test_rom`'s run with the one thing an emulator the editor
+        :meth:`test_rom_external`'s run with the one thing an emulator the editor
         merely launched cannot normally be asked for: a starting point. Mesen
         takes a Lua script on its command line and runs it against the machine,
         so the same warp the editor's own test window drives from Python is
@@ -206,8 +255,8 @@ class Testing:
             self._alert(
                 f"{emulator.name} cannot be told where to start.",
                 detail="Only Mesen runs a script the editor writes for it, "
-                "which is what a warp is. File > Test ROM opens the same "
-                "cartridge at its title screen.",
+                "which is what a warp is. File > Test ROM Externally opens "
+                "the same cartridge at its title screen.",
             )
             return
         if not self._may_export():
@@ -314,17 +363,17 @@ class Testing:
 
         Said every time, for the same reason the save says it every time: the
         run is about to be wrong in a way nothing in the picture shows.
+
+        The words are the standing notice's (:meth:`_play_notice`), so the two
+        cannot drift: which parts, and whether they outgrew their run or were
+        never patchable at all, is decided once.
         """
-        parts = self._skipped_parts()
-        if not parts:
+        line, detail = self._play_notice()
+        if not line:
             return
         self._alert(
             "This test run will not show everything the editor is holding.",
-            detail=f"It shows the cartridge's own {' and '.join(parts)}: the "
-            f"canvas has outgrown the room the built image gives it, or "
-            f"names a label only a build can resolve. Save and rebuild, then "
-            f"open the built image. Everything else in the run is as the "
-            f"editor has it.",
+            detail=f"{detail} Everything else in the run is as the editor has it.",
         )
 
     def _show_play(
@@ -332,27 +381,35 @@ class Testing:
         level: int | None,
         patches: Mapping[int, bytes] | None,
         overworld: OverworldRun | None = None,
+        *,
+        cartridge: bool = False,
     ) -> None:
         """Put a run up in the play window, building one only if there is none.
 
         The window is reused where there is one, and it is told the run afresh
         every time: the canvas may have moved on since it was opened, and
         restarting a level nobody is looking at would be worse than not
-        reusing it. Either kind of run goes through here, so which cartridge
+        reusing it. All three kinds of run go through here, so which cartridge
         the run is made on is said once.
 
         And what the run could **not** be made to carry is said once here too
-        -- both callers have just gathered their patches, so
-        :meth:`_note_skipped` holds the reading either kind of run needs.
+        -- the two that patch have just gathered their patches, so
+        :meth:`_note_skipped` holds the reading either of them needs.
         """
         if self._path is None:
             return
+        # A cartridge run carries nothing the editor holds, so the notice --
+        # which says which held edit could not be patched in -- has nothing to
+        # answer for, and left standing it would be the last run's.
+        notice = ("", "") if cartridge else self._play_notice()
         if self._play is not None:
-            if overworld is None:
+            if cartridge:
+                self._play.test_cartridge()
+            elif overworld is None:
                 self._play.test(level, patches)
             else:
                 self._play.test_overworld(overworld)
-            self._play.set_notice(*self._play_notice())
+            self._play.set_notice(*notice)
             self._play.raise_()
             self._play.activateWindow()
             return
@@ -360,9 +417,15 @@ class Testing:
         if session is None:
             return
         self._play = PlayWindow(
-            session, self._path, level, patches, self, overworld=overworld
+            session,
+            self._path,
+            level,
+            patches,
+            self,
+            overworld=overworld,
+            cartridge=cartridge,
         )
-        self._play.set_notice(*self._play_notice())
+        self._play.set_notice(*notice)
         self._play.closed.connect(self._forget_play)
         self._play.show()
 
@@ -417,24 +480,73 @@ class Testing:
     def _play_notice(self) -> tuple[str, str]:
         """What the test window says this run is not showing, and why.
 
-        Empty when everything the editor holds reached the image. The parts
-        are whatever the gatherers just skipped -- see :meth:`_note_skipped`
-        -- and the reason is one for all of them: the edit no longer fits the
-        room the built image gives it, and only a build re-places it.
+        Empty when everything the editor holds reached the image, and three
+        kinds of reading otherwise -- see :meth:`_note_skipped`.
 
-        :data:`DISASSEMBLY` is filed among them because it is the same reading
-        -- a build is owed -- but it is not a skipped part and does not take
-        their words: nothing outgrew anything, the cartridge is simply older
-        than the source it was built from. It is said only when there is no
-        skipped part to say instead, which is the more immediate of the two.
+        **A skipped part** is one a gatherer could not carry: the edit no
+        longer fits the room the built image gives it, and only a build
+        re-places it.
+
+        **A :data:`SOURCE_FILES` part** is a file of the project's own that
+        moved on disk since the cartridge was built. Nothing outgrew anything
+        and nothing was skipped: it is assembler text, and the run shows what
+        the last build made of it -- said in its own words, since the skipped
+        parts' would be false of it.
+
+        **A :data:`BUILD_ONLY` subject** was never patchable at all. The
+        strings and the music tables are saved as assembler text rather than
+        as bytes at a known offset, so there is nothing in
+        :mod:`shiny_mushroom.cart_patches` that could carry them and nothing
+        outgrew anything -- said in their own sentence rather than in the
+        skipped parts', which would be false of them.
+
+        :data:`DISASSEMBLY` is filed beside them because it is the same
+        reading -- a build is owed -- but it is none of them and does not
+        take their words: the cartridge is simply older than the source it was
+        built from. It is said only when there is nothing more immediate to
+        say instead. :data:`RAW_FILES` is filed for the same reason and never
+        said at all: every run patches a raw graphics file in, so the run is
+        showing the edit and has nothing to report.
         """
-        parts = [part for part in self._skipped_parts() if part != DISASSEMBLY]
-        if parts:
+        held = self._skipped.get(BUILD_ONLY, ())
+        sources = self._skipped.get(SOURCE_FILES, ())
+        parts = [
+            part
+            for source in sorted(self._skipped)
+            if source not in (BUILD_ONLY, SOURCE_FILES, RAW_FILES, DISASSEMBLY)
+            for part in self._skipped[source]
+        ]
+        if parts or sources or held:
+            said = []
+            if parts:
+                said.append(
+                    f"The {' and '.join(parts)} on the canvas no longer fits "
+                    f"the run of ROM the built image gives it, so it cannot be "
+                    f"patched in."
+                )
+            if sources:
+                said.append(
+                    f"The saved {' and '.join(sources)} changed on disk since "
+                    f"this cartridge was built, so the run shows the build's "
+                    f"copy."
+                )
+            if held:
+                said.append(
+                    f"The saved {' and '.join(held)} are assembler text a "
+                    f"build carries rather than bytes a run can be patched "
+                    f"with."
+                )
+            # The source files and the build-only subjects are already saved
+            # -- what they are waiting on is the assembler -- so a run showing
+            # only those is not asked to save anything first.
+            said.append(
+                "Rebuild, then open the built image."
+                if not parts
+                else "Save and rebuild, then open the built image."
+            )
             return (
-                f"Showing the cartridge's {' and '.join(parts)}",
-                f"The {' and '.join(parts)} on the canvas no longer fits the "
-                f"run of ROM the built image gives it, so it cannot be patched "
-                f"in. Save and rebuild, then open the built image.",
+                f"Showing the cartridge's {' and '.join([*parts, *sources, *held])}",
+                " ".join(said),
             )
         if DISASSEMBLY in self._skipped:
             return (
@@ -491,23 +603,10 @@ class Testing:
         if state is None:
             return None
         spawn, settings, flags = state
-        patches = (
-            self._layer2_pointer_patch()
-            | self._level_document_patch()
-            | self._world_map_patch()
-            | self._palette_patch()
-            | self._level_palette_patch()
-        )
-        # The overworld loads graphics too, so the project's edited files
-        # ride the way they do on a level load -- placed off whatever the
-        # patches above already claim of the free space.
-        patches |= cart_patches.saved_graphics_patch(
-            self._project,
-            self._rom,
-            self._addresses,
-            self._status_message,
-            taken=[range(at, at + len(run)) for at, run in patches.items()],
-        )
+        # The same set a direct run boots, minus the entrance override: the
+        # overworld loads graphics and Map16 tables too, and a level entered
+        # from the map has to find its blocks as the editor holds them.
+        patches = self._all_patches()
         return OverworldRun(
             submap=spawn.submap,
             x=spawn.x,
@@ -569,46 +668,86 @@ class Testing:
     def _test_patches(self) -> dict[int, bytes]:
         """:meth:`test_patches`' body, inside its one reading of the overlay."""
         assert self._snapshot is not None and self._rom is not None
-        # The project's saved graphics and Map16 tables first: they belong to
-        # no document, and a refresh that left them out would show the edit
-        # over the cartridge's stock tiles. The graphics may relocate, so what
-        # they claim is kept off the document's own relocation.
-        patches = self._saved_assets_patch()
-        # The Layer 2 pointer rides along: a repoint is a *saved* project
-        # fact, but the test window boots the ROM as it was last built.
-        patches |= self._layer2_pointer_patch() | self._level_document_patch(
-            taken=cart_patches.claimed(patches)
-        )
-        start = self._test_start_for()
-        if start is not None:
-            patches |= entrance_patch(
-                self._rom,
-                self._snapshot.level,
-                start,
-                vertical=bool(self._snapshot.screen_mode & LAYOUT_LAYER1_VERTICAL),
-                where=self._addresses,
-            )
-        # The third kind of edit at this seam: walking out of the level lands
-        # on the overworld, and it has to be the overworld the editor holds.
-        patches |= self._world_map_patch()
-        # And the fourth: the colours. The canvas gets them by recolouring the
-        # capture, which a running game cannot do -- it has to boot an image
-        # already wearing them.
-        patches |= self._palette_patch()
-        # The level's own palette rides the same way -- over the blob a build
-        # already placed, where there is one.
-        patches |= self._level_palette_patch()
-        return patches
+        return self._all_patches(entrance=self._entrance_patch())
 
-    def _saved_assets_patch(self) -> dict[int, bytes]:
-        """The project's saved graphics and Map16 tables, over the image."""
-        return cart_patches.saved_assets_patch(
+    def _entrance_patch(self) -> dict[int, bytes]:
+        """The test start's override of this level's entrance, where one is
+        set. A run entered *from the world map* has none: a level reached
+        through its own front door should show its edits, not a test start."""
+        assert self._snapshot is not None and self._rom is not None
+        start = self._test_start_for()
+        if start is None:
+            return {}
+        return entrance_patch(
+            self._rom,
+            self._snapshot.level,
+            start,
+            vertical=bool(self._snapshot.screen_mode & LAYOUT_LAYER1_VERTICAL),
+            where=self._addresses,
+        )
+
+    def _all_patches(
+        self,
+        entrance: Mapping[int, bytes] | None = None,
+        doc: Level | None = None,
+    ) -> dict[int, bytes]:
+        """Everything the editor holds and the project has saved, over the
+        image -- :func:`cart_patches.all_patches` with this window's own
+        documents handed in.
+
+        The held level document wins over the project's saved streams for the
+        level on the canvas; every *other* level's saved data rides along, so
+        a run that walks into one through a screen exit finds it as saved. The
+        colours have to be booted rather than recoloured, since a running game
+        cannot be asked to recolour itself, and the overworld the run lands on
+        has to be the one the editor holds.
+
+        ``doc`` stands in for the held document where a caller has one the
+        window has not committed -- a repoint's reload, carrying the header the
+        same dialog edited (`MainWindow._repoint_layer2`).
+
+        The gather's own reading rides with it: what the Layer 2 pointer arm
+        could not resolve goes where the level document's and the world map's
+        skipped parts go, so a repoint put back to stock clears it.
+        """
+        return cart_patches.all_patches(
             self._project,
             self._rom,
+            self._level,
             self._addresses,
             self._build_symbols(),
             self._status_message,
+            document=lambda taken: self._level_document_patch(doc, taken=taken),
+            map16=self._map16.held_tables,
+            held=[
+                *([entrance] if entrance else []),
+                self._world_map_patch(),
+                self._palette_patch(),
+                self._level_palette_patch(),
+            ],
+            note=lambda parts: self._note_skipped(POINTER_PARTS, parts),
         )
+
+    def _saved_assets_patch(self) -> dict[int, bytes]:
+        """The project's saved graphics over the image, with the Map16
+        tables the editor is holding -- saved or not, they are what the
+        sheet shows and so what a run has to agree with.
+
+        One reading of the overlay for the whole gather, because there is no
+        outer one: this is called from the catalogue's probe batches
+        (:meth:`~shiny_mushroom.ui.previews.Previews.send_batch`) rather than
+        from inside :meth:`test_patches`, and the arms below ask what is
+        edited and what is packed several times over.
+        """
+        with scanning_once():
+            return cart_patches.saved_assets_patch(
+                self._project,
+                self._rom,
+                self._addresses,
+                self._build_symbols(),
+                self._status_message,
+                map16=self._map16.held_tables,
+            )
 
     def _level_document_patch(
         self, doc: Level | None = None, taken: Sequence[range] = ()

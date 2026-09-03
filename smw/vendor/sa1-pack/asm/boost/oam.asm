@@ -36,46 +36,9 @@ pushpc
 ; $40:BC00 -> priority #3 buffer
 ; $40:BE00 -> priority #4 buffer
 
+if !sa1_hijacks_external == 0
 ORG $008494
-	LDA.B #oam_compress
-	STA $3180
-	LDA.B #oam_compress>>8
-	STA $3181
-	LDA.B #oam_compress>>16
-	STA $3182
-	JMP $1E80
-	
-	; Ensure alignment by 4 bytes
-	NOP #2
-    
-    ; $0084A8 - JSL to flush $0338+ to max buffer #3
-    JML call_nmstl_mockup_flush
-	
-	; $0084AC - (get_slot.asm) JSL to allocate MaxTile slots, for custom sprites.
-	JML call_oam_get_slot_sprite
-	
-	; $0084B0 - (get_slot.asm) JSL to allocate MaxTile slots, for general purpose.
-	JML call_oam_get_slot_general
-	
-	; $0084B4 - (get_slot.asm) JSL to allocate MaxTile slots, for general purpose.
-	JML call_finish_oam_write
-	
-	; $0084B8 - reserved for future expansion
-	NOP #4
-	
-	; $0084BC - reserved for future expansion
-	NOP #4
-	
-    ; $0084C0 - SA-1 Pack signature
-    dl $5A123
-    
-    ; $0084C3 - SA-1 Pack version
-    db 140
-
-    ; $0084C4 - Unused
-    NOP #4
-
-assert pc() <= $0084C8
+incsrc "../inline/008494.asm"
 
 ; This is one of favorite hijacks that many patches
 ; likes editing. Because of that, I'll NOP the entire
@@ -83,24 +46,7 @@ assert pc() <= $0084C8
 ; unlikely to get modified.
 
 org $008027
-	NOP #13		; If any routine hijack this, things won't blow up.
-	; PC is now $00:8034, aligned with the looping LDA #$008D opcode (low hijack probability)
-	
-	PEA.w $0040
-	PLB
-	
-	JML oam_init_tables	
-	NOP
-	
-oam_transfer_clear_invoker:
-	LDA #oam_clear_invoke_end-oam_clear_invoke-1
-	LDX #oam_clear_invoke
-	LDY #$8000
-	MVN $7F, oam_clear_invoke>>16
-	PLB
-	
-	; PC is now $00:804A, aligned with the original code.
-assert pc() <= $00804A
+incsrc "../inline/008027.asm"
 
 ; Some routines uses the "RTL" byte as JSL->RTS support byte,
 ; we can't modify it for safety reasons.
@@ -131,30 +77,7 @@ org $028380
     BNE candles_refresh
     
 org $028398
-candles:
-    SEP #$20
-    LDA #$09
-    STA $620F,y
-    LSR $788C
-    BCC +
-    LDA #$EA
-    STA $620E,y
-+   
-    REP #$20
-    JMP .back
-    
-.refresh
-    LDA $14
-    AND #$03
-    BNE +
-    JSL $01ACF9
-    BRA ++
-+
-    LDA $788C
-++  ASL #4
-    TSB $788C
-
-assert pc() <= $0283C4
+incsrc "../inline/028398.asm"
 
 org $028307
     NOP
@@ -168,6 +91,9 @@ org $028307
 candles_back:
 
 assert pc() <= $02831A
+else
+candles_back = $02831A
+endif
 
 pullpc
 

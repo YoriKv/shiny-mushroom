@@ -42,7 +42,13 @@ class KeyRouting:
         for the presses that reach the view with the action disabled.
         """
         key = event.key()
+        shifted = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
         step = ARROWS.get(key)
+        if step is not None and shifted and self._placing is not None:
+            # Something in hand: the resize keys shape what the next click
+            # places, exactly as they would shape it once placed.
+            self.resize_placing(*step)
+            return True
         if step is not None:
             if not self._selection:
                 # Nothing to move or resize, so the arrow means what it means
@@ -52,10 +58,21 @@ class KeyRouting:
                 # through for the same reason.
                 return False
             columns, rows = step
-            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+            if shifted:
                 self.resize_selection(columns, rows)
             else:
                 self.nudge_selection(columns, rows)
+            return True
+        if key == Qt.Key.Key_V and not (
+            event.modifiers() & ~Qt.KeyboardModifier.ShiftModifier
+        ):
+            # The held object's variant, or the armed one's: forward, and
+            # back with Shift. A bare key like the arrows, and for their
+            # reason: it is the picture's while the picture has the
+            # keyboard, and nobody else's.
+            if not self._selection and self._placing is None:
+                return False
+            self.cycle_variant(-1 if shifted else 1)
             return True
         if key in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
             self.delete_selection()
@@ -65,7 +82,9 @@ class KeyRouting:
             # were picked up in: arming a placement already dropped the
             # selection, so the thing in hand is the only thing Escape can mean
             # while one is armed.
-            if self._bg_placing is not None:
+            if self._area_pick is not None:
+                self._cancel_area_pick()
+            elif self._bg_placing is not None:
                 self._bg_stop_placing()
             elif self._placing is not None:
                 self._stop_placing()
@@ -126,6 +145,35 @@ class KeyRouting:
                 if action.shortcuts()
             ]
         )
+
+    @property
+    def hand_armed(self) -> bool:
+        """Whether the mode in front has a tool in hand -- a record or a
+        tile to place, a stamp, a Map16 word."""
+        if self._mode is EditorMode.WORLD:
+            return self._world.armed
+        if self._mode is EditorMode.MAP16:
+            return self._map16.armed
+        return (
+            self._placing is not None
+            or self._bg_placing is not None
+            or self._area_pick is not None
+        )
+
+    def put_hand_down(self) -> None:
+        """Put down whatever the mode in front has in hand, and nothing
+        else: the selection stays, unlike Escape over the picture, which
+        takes the hand first and the selection on the next press."""
+        if self._mode is EditorMode.WORLD:
+            self._world.stop_placing()
+        elif self._mode is EditorMode.MAP16:
+            self._map16.stop_placing()
+        elif self._area_pick is not None:
+            # A pick for the Level Graphics dialog's tiles page is a hand
+            # too: putting it down brings the dialog back with no area.
+            self._cancel_area_pick()
+        else:
+            self._stop_all_placing()
 
     def _wants_the_level_key(self, event: QKeyEvent) -> bool:
         """Whether ``event`` is a key the level's own commands must answer,
@@ -210,6 +258,24 @@ class KeyRouting:
         ):
             event.ignore()
             return True
+        if (
+            event.type() == QEvent.Type.KeyPress
+            and event.key() == Qt.Key.Key_Escape
+            and not event.modifiers()
+            and watched is not self.view
+            and isinstance(watched, QWidget)
+            and watched.window() is self
+            and self.hand_armed
+        ):
+            # Escape puts the tool down from wherever the keyboard is in this
+            # window -- a palette's list, a search box, a spin box -- because
+            # the ghost is on the picture whoever has the keys, and reaching
+            # for the canvas first to put it down is a step nobody meant.
+            # Only while something is in hand: with nothing armed the key is
+            # the widget's own, as it always was. A table editor is its own
+            # window and keeps Escape to close itself.
+            self.put_hand_down()
+            return True
         if watched is self.view and event.type() == QEvent.Type.KeyPress:
             if self._mode is EditorMode.WORLD:
                 # Escape, and the arrows while a sprite is selected -- those
@@ -238,6 +304,15 @@ class KeyRouting:
                     )
                     if self._world.arrow(step[0] * by, step[1] * by):
                         return True
+            elif self._mode is EditorMode.MAP16:
+                # Escape puts the tool, the float and the selection down in
+                # that order; Backspace deletes, as it does everywhere. The
+                # arrows fall through to the view's scrolling.
+                if event.key() == Qt.Key.Key_Escape and self._map16.escape():
+                    return True
+                if event.key() == Qt.Key.Key_Backspace and self._map16.can_copy:
+                    self._map16.delete_selection()
+                    return True
             elif self._doc is not None and self._edit_keys(event):
                 return True
         return super().eventFilter(watched, event)

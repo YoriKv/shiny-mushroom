@@ -85,8 +85,7 @@ class RomTable:
             return self.address
         if target_id in self.absent_targets:
             raise RomTableError(
-                f"{self.role}: {self.label} is not assembled on target "
-                f"{target_id}"
+                f"{self.role}: {self.label} is not assembled on target {target_id}"
             )
         return self.per_target.get(target_id, self.address)
 

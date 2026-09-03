@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QHBoxLayout,
     QLabel,
+    QPushButton,
     QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
@@ -46,6 +47,7 @@ from PySide6.QtWidgets import (
 
 from shiny_mushroom.audio import AudioMap, MusicBank, Segment
 from shiny_mushroom.hexnum import hexnum
+from shiny_mushroom.project_music import ImportedSong
 from shiny_mushroom.ui.tables import PickedCells, style_note, style_table
 from shiny_mushroom.ui.theme import blended
 from shiny_mushroom.ui.tips import wrap_tip
@@ -57,6 +59,7 @@ MUSIC_TAB = "&Music"
 SFX_TAB = "Sound &Effects"
 ARAM_TAB = "&ARAM"
 MAPPING_TAB = "Ma&pping"
+SONGS_TAB = "&Songs"
 
 MUSIC_HINT = (
     "Every song a music bank can play, and the value written to $1DFB to ask "
@@ -73,6 +76,59 @@ ARAM_HINT = (
     "engine, the sound effects and the samples are uploaded once and stay; the "
     "music window below them is rewritten every time the game changes context."
 )
+SONGS_HINT = (
+    "Songs this project imported, each carrying the samples it needs. They are "
+    "compiled by AddmusicK -- your own copy of it, named in File > Settings -- "
+    "and land in the music banks the cartridge reserves for them. Put a song's "
+    "package in the project's music folder, then Import."
+)
+
+SONGS_NOTE_NONE = (
+    "No songs imported. A package is an MML file with its samples in a folder "
+    "beside it, exactly as it is distributed; put one in {folder} and Import."
+)
+
+SONGS_NOTE_NO_TOOL = (
+    "AddmusicK is not set, so nothing can be compiled. File > Settings is "
+    "where to point at your own copy. Songs already imported keep working "
+    "without it -- it is needed to add one, not to have one."
+)
+
+SONGS_NOTE_FEATURE_OFF = (
+    "The custom-music feature is off, so a build carries none of these songs "
+    "and no level can play one. Project > Features is where it is turned on."
+)
+
+SONG_COLUMNS = (
+    "Value",
+    "Song",
+    "Length",
+    "Bytes",
+    "ARAM",
+    "Samples",
+    "Echo",
+    "Free ARAM",
+)
+
+#: Where an imported row keeps the music value it stands for, so a pick can
+#: say which song without re-parsing the cell's text.
+VALUE_ROLE = Qt.ItemDataRole.UserRole
+
+_SONG_NOTES = {
+    "Value": "What the game writes to the music mailbox to ask for this song.",
+    "Length": "How long it plays before looping, as AddmusicK measured it.",
+    "Bytes": "What its sequence costs in the cartridge. Its samples are shared "
+    "with every other song that uses them and are not counted here.",
+    "ARAM": "Where the sequence lands in the sound chip's memory, which every "
+    "song shares: only one is ever resident.",
+    "Samples": "How many waveforms it asks for, uploaded with it.",
+    "Echo": "What its echo buffer takes of the sound chip's memory.",
+    "Free ARAM": "What the sound chip has left with this song resident -- the "
+    "budget a song plays inside alone, and the number that runs out first. "
+    "From the compile's own report; a song imported before reports were kept "
+    "shows nothing until the next Import.",
+}
+
 MAPPING_HINT = (
     "How a level ends up playing something: three bits of its header pick a row "
     "of LevelMusicTable, the row holds a music value, and the value indexes the "
@@ -286,12 +342,19 @@ class AudioDialog(QDialog):
     repoint_asked = Signal(str, int, str)
     #: A header music setting should name another track: setting, define.
     track_asked = Signal(int, str)
+    #: The project's songs should be compiled into its cartridge again.
+    import_asked = Signal()
+    #: One imported song should be heard: the music value it answers to.
+    preview_asked = Signal(int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle(TITLE)
         self.setMinimumSize(860, 520)
         self._map: AudioMap | None = None
+        #: The imported songs' names by music value, for the Mapping tab: a
+        #: slot given an imported song holds a value no stock bank defines.
+        self._imported_names: dict[int, str] = {}
         #: One bar and one caption per music bank, keyed by the blob whose
         #: residency that reading assumes.
         self._bars: dict[str, AramBar] = {}
@@ -302,6 +365,7 @@ class AudioDialog(QDialog):
         self._tabs.addTab(self._build_sfx(), SFX_TAB)
         self._tabs.addTab(self._build_aram(), ARAM_TAB)
         self._tabs.addTab(self._build_mapping(), MAPPING_TAB)
+        self._tabs.addTab(self._build_songs(), SONGS_TAB)
 
         layout = QVBoxLayout(self)
         layout.addWidget(self._tabs, 1)
@@ -401,6 +465,37 @@ class AudioDialog(QDialog):
         layout.addWidget(self._aram_note)
         layout.addStretch(1)
         return page
+
+    def _build_songs(self) -> QWidget:
+        # Its own attribute, deliberately: the Music tab's table is
+        # ``_songs``, and sharing the name once left that tab empty with every
+        # reading landing here.
+        self._imports = self._table(SONG_COLUMNS, _SONG_NOTES)
+        self._imports.itemSelectionChanged.connect(self._import_selected)
+        self._imports.itemDoubleClicked.connect(lambda _item: self._preview_picked())
+        self._import = QPushButton("&Import", self)
+        self._import.clicked.connect(self.import_asked)
+        self._preview = QPushButton("&Preview", self)
+        self._preview.setToolTip(
+            wrap_tip(
+                "Hear the selected song now: its compile wrote a playable "
+                ".spc, which opens in the external emulator named in File > "
+                "Settings. No rebuild is needed."
+            )
+        )
+        self._preview.setEnabled(False)
+        self._preview.clicked.connect(self._preview_picked)
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(self._import)
+        row.addWidget(self._preview)
+        row.addStretch(1)
+        holder = QWidget(self)
+        holder.setLayout(row)
+        self._imports_note = QLabel(self)
+        self._imports_note.setWordWrap(True)
+        style_note(self._imports_note)
+        return self._page(SONGS_HINT, self._imports, self._imports_note, holder)
 
     def _build_mapping(self) -> QWidget:
         self._slots = self._table(SLOT_COLUMNS, _SLOT_NOTES)
@@ -511,6 +606,71 @@ class AudioDialog(QDialog):
                 )
         self._aram_note.setText(_aram_note(read))
 
+    def show_songs(
+        self,
+        songs: Sequence[ImportedSong],
+        folder: object,
+        tool: bool,
+        feature_on: bool = True,
+    ) -> None:
+        """Show what the project carries, and whether another could be added.
+
+        ``tool`` is whether an AddmusicK has been named at all. A project with
+        songs already in it is shown them either way: the tool is what adds
+        one, not what keeps one. ``feature_on`` is whether a build would carry
+        them, which the note says when it would not -- a tab full of songs
+        nothing can play is the one state worth a warning.
+        """
+        self._imports.setRowCount(len(songs))
+        for row, song in enumerate(songs):
+            priced = song.free_aram is not None
+            self._cells(
+                self._imports,
+                row,
+                (
+                    hexnum(song.value, 2),
+                    song.name,
+                    _clock(song.length) if priced else "--",
+                    f"{song.size:,}",
+                    hexnum(song.aram, 4),
+                    str(song.samples),
+                    f"{song.echo:,}" if priced else "--",
+                    f"{song.free_aram:,}" if priced else "--",
+                ),
+            )
+            self._imports.item(row, 0).setData(VALUE_ROLE, song.value)
+        self._imports.resizeColumnsToContents()
+        self._import.setEnabled(tool)
+        self._import_selected()
+        if songs and not feature_on:
+            self._imports_note.setText(SONGS_NOTE_FEATURE_OFF)
+        elif not tool:
+            self._imports_note.setText(SONGS_NOTE_NO_TOOL)
+        elif not songs:
+            self._imports_note.setText(SONGS_NOTE_NONE.format(folder=folder))
+        else:
+            total = sum(song.size for song in songs)
+            said = (
+                f"{len(songs)} song{'' if len(songs) == 1 else 's'}, "
+                f"{total:,} bytes of sequence in the music banks."
+            )
+            priced = [one for one in songs if one.free_aram is not None]
+            if priced:
+                tight = min(priced, key=lambda one: one.free_aram)
+                said += (
+                    f" {tight.name} leaves the least of the sound chip free: "
+                    f"{tight.free_aram:,} bytes."
+                )
+            self._imports_note.setText(
+                f"{said} Import again after changing a package; Preview "
+                f"plays one with no rebuild."
+            )
+        # The Mapping tab names slot values against these songs, so a reading
+        # painted before the songs arrived is repainted over them.
+        self._imported_names = {song.value: song.name for song in songs}
+        if self._map is not None:
+            self._fill_mapping(self._map)
+
     def _fill_mapping(self, read: AudioMap) -> None:
         self._slots.setRowCount(len(read.slots))
         for row, slot in enumerate(read.slots):
@@ -524,7 +684,7 @@ class AudioDialog(QDialog):
                     str(slot.slot),
                     slot.name,
                     hexnum(slot.value, 2),
-                    slot.song.label if slot.song is not None else "no such value",
+                    _slot_song(slot, self._imported_names),
                     f"{len(slot.levels)}   {levels}",
                 ),
             )
@@ -584,6 +744,21 @@ class AudioDialog(QDialog):
             return
         self.track_asked.emit(self._map.slots[row].slot, str(value))
 
+    def _import_selected(self) -> None:
+        self._preview.setEnabled(self._import_value() is not None)
+
+    def _import_value(self) -> int | None:
+        """The music value of the selected imported song, if one is picked."""
+        row = self._imports.currentRow()
+        item = self._imports.item(row, 0) if row >= 0 else None
+        held = item.data(VALUE_ROLE) if item is not None else None
+        return int(held) if held is not None else None
+
+    def _preview_picked(self) -> None:
+        value = self._import_value()
+        if value is not None:
+            self.preview_asked.emit(value)
+
     def _cells(self, table: QTableWidget, row: int, values: Sequence[str]) -> None:
         for column, value in enumerate(values):
             table.setItem(row, column, QTableWidgetItem(value))
@@ -594,6 +769,26 @@ class AudioDialog(QDialog):
                 self._aram_note.setText(_aram_note(self._map))
             return
         self._aram_note.setText(describe(segment))
+
+
+def _clock(seconds: float) -> str:
+    """A song length as m:ss, which is how somebody thinks of a song."""
+    if not seconds:
+        return "--"
+    return f"{int(seconds) // 60}:{int(seconds) % 60:02d}"
+
+
+def _slot_song(slot, imported: dict[int, str]) -> str:  # noqa: ANN001
+    """What a Mapping row's value plays, said against both kinds of song.
+
+    A stock value names a label in the level bank; an imported one is only in
+    the project's own list, and a value in neither is exactly that.
+    """
+    if slot.song is not None:
+        return slot.song.label
+    if slot.value in imported:
+        return f"{imported[slot.value]}   (imported)"
+    return "no such value"
 
 
 def _bank_note(bank: MusicBank) -> str:

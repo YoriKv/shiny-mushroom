@@ -24,7 +24,7 @@
 ; revolving brown platform and nowhere else. Unlike $1504 (and every other
 ; sprite table), it is also not cleared by the sprite table initialization
 ; routine.
-!RAM_SMW_NorSpr_Table7E1510 #= !Define_SMW_LowRAMLocation+$1510
+!RAM_SMW_NorSpr_Table7E1510 #= !Define_SMW_SprTable_1504+(!Define_SMW_MaxNormalSpriteSlot+$01)
 ; Miscellaneous sprite table, often used by the game for controlling the
 ; direction of vertical movement for a sprite. If a Reznor is spawned in
 ; sprite slot 7 and these four addresses add up to exactly 4, then the
@@ -82,7 +82,7 @@
 ; blocked above (ceiling) d - blocked below (floor) l - blocked to the left
 ; r - blocked to the right The goal tape in particular also uses this as a
 ; miscellaneous sprite table, for tracking its direction of movement.
-!RAM_SMW_NorSpr_Table7E1588 #= !Define_SMW_LowRAMLocation+$1588
+!RAM_SMW_NorSpr_Table7E1588 #= !Define_SMW_SprTable_157C+(!Define_SMW_MaxNormalSpriteSlot+$01)
 	!RAM_SMW_NorSpr_LevelCollisionFlags #= !RAM_SMW_NorSpr_Table7E1588
 ; Miscellaneous sprite table. In classic Piranha Plants, it is used to check
 ; if the sprite should be made visible and have interaction with the player.
@@ -101,7 +101,7 @@
 ; determine whether to draw any of the sprite at all.
 !RAM_SMW_NorSpr_Table7E15C4 #= !Define_SMW_SprTable_15C4
 ; Flag for whether the sprite is on Yoshi's tongue. #$00 = No; #$01 = Yes.
-!RAM_SMW_NorSpr_Table7E15D0 #= !Define_SMW_LowRAMLocation+$15D0
+!RAM_SMW_NorSpr_Table7E15D0 #= !Define_SMW_SprTable_15C4+(!Define_SMW_MaxNormalSpriteSlot+$01)
 	!RAM_SMW_NorSpr_OnYoshisTongue #= !RAM_SMW_NorSpr_Table7E15D0
 ; Flag to disable sprite interaction with objects. Ghost house ledge holes
 ; store their sprite index (plus one) to this to make sprites fall through
@@ -143,7 +143,7 @@
 ; their flags at $1779. Mainly used for handling the climbing net Koopas,
 ; but does also get used for e.g. sprites sinking in lava or being eaten by
 ; Baby Yoshi.
-!RAM_SMW_NorSpr_Table7E1632 #= !Define_SMW_LowRAMLocation+$1632
+!RAM_SMW_NorSpr_Table7E1632 #= !Define_SMW_SprTable_1626+(!Define_SMW_MaxNormalSpriteSlot+$01)
 	!RAM_SMW_NorSpr_CurrentLayerPriority #= !RAM_SMW_NorSpr_Table7E1632
 ; Miscellaneous sprite table. Table decrements once per frame. In SMW, it's
 ; used as e.g. a timer that, when it's zero, makes Ludwig face the player,

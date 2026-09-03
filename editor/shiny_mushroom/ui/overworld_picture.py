@@ -10,11 +10,6 @@ There are two buffers: the **base** map as the document draws it, and the
 **events** twin with every event replayed over it. :meth:`show_events` picks
 which one :attr:`image` answers with, so the toggle costs nothing once both
 are drawn; the mode keeps whichever exists patched as edits land.
-
-:class:`SheetPicture` is the same job for one stamp sheet drawn whole -- a
-separate class rather than a third buffer here, because it is a picture of a
-different thing at a different size, and the map's verbs (layers, the events
-twin, cells) mean nothing over it.
 """
 
 from __future__ import annotations
@@ -23,16 +18,12 @@ from collections.abc import Iterable
 
 from PySide6.QtGui import QImage
 
-from shiny_mushroom.level import BLOCK, TILE, Blocks
+from shiny_mushroom.level import BLOCK, Blocks
 from shiny_mushroom.overworld import (
     COLUMNS,
     ROWS,
-    WorldMap,
     WorldPainters,
-    render_sheet,
     render_world,
-    sheet_grid,
-    sheet_runs,
     world_runs,
 )
 from shiny_mushroom.overworld_snapshot import OverworldSnapshot
@@ -217,74 +208,3 @@ class WorldPicture:
         self._showing_events = False
         self._show_layer1 = True
         self._show_layer2 = True
-
-
-class SheetPicture:
-    """One stamp sheet's picture as it stands, and how to keep it standing.
-
-    :class:`WorldPicture`'s contract over a different buffer: render the
-    whole sheet, or patch the offsets an edit moved. Which sheet is drawn
-    rides in the picture, so a patch can never land on the other one's
-    pixels -- the two are different sizes.
-    """
-
-    def __init__(self) -> None:
-        self._pixels = bytearray()
-        self._image: QImage | None = None
-        self._small = False
-
-    @property
-    def image(self) -> QImage | None:
-        """The sheet's picture, or ``None`` before anything was rendered."""
-        return self._image
-
-    @property
-    def small(self) -> bool:
-        """Which sheet is drawn: the 2x2 sheet when true, the 6x6 otherwise.
-        Meaningless before a render."""
-        return self._small
-
-    def render(
-        self,
-        document: WorldMap,
-        snapshot: OverworldSnapshot,
-        *,
-        small: bool,
-        painter: Blocks | None = None,
-    ) -> QImage:
-        """Draw one whole sheet from the document's own bytes."""
-        picture = render_sheet(document, snapshot, small=small, painter=painter)
-        self._pixels = bytearray(picture.pixels)
-        self._image = pixels_to_image(self._pixels, picture.width, picture.height)
-        self._small = small
-        return self._image
-
-    def patch(
-        self,
-        document: WorldMap,
-        snapshot: OverworldSnapshot,
-        offsets: Iterable[int],
-        painter: Blocks | None = None,
-    ) -> QImage | None:
-        """Redraw just these sheet offsets -- what an edit costs.
-
-        The sheet is the one this picture holds; offsets belonging to the
-        other are skipped by :func:`~shiny_mushroom.overworld.sheet_runs`.
-        ``None`` before a render, which is also the honest answer: there is
-        nothing to patch.
-        """
-        if self._image is None:
-            return None
-        for offset, pixels in sheet_runs(
-            document, snapshot, offsets, small=self._small, painter=painter
-        ):
-            self._pixels[offset : offset + len(pixels)] = pixels
-        columns, rows = sheet_grid(small=self._small)
-        self._image = pixels_to_image(self._pixels, columns * TILE, rows * TILE)
-        return self._image
-
-    def forget(self) -> None:
-        """Drop the picture with the map it was of."""
-        self._pixels = bytearray()
-        self._image = None
-        self._small = False

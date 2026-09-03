@@ -46,6 +46,7 @@ from shiny_mushroom.level import Geometry, level_shape
 from shiny_mushroom.metadata import OBJECTS
 from shiny_mushroom.objects import EXTENDED_OBJECT, LevelObject, parse_objects
 from shiny_mushroom.rom_patches import (
+    extra_byte_counts,
     layer1_base,
     layer2_is_background,
     object_stream,
@@ -54,6 +55,7 @@ from shiny_mushroom.rom_patches import (
     vertical_level,
 )
 from shiny_mushroom.sprites import Sprite, name_of, parse_sprites
+from smw_tools.features import CUSTOM_SPRITES
 
 #: Every level number the cartridge has a pointer table entry for.
 LEVEL_COUNT = 0x200
@@ -330,10 +332,20 @@ def _read_level(
 def _read_sprites(
     rom: bytes, level: int, shape: Geometry, where: Addresses
 ) -> list[Sprite]:
-    """One level's sprite records, or none where they cannot be reached."""
+    """One level's sprite records, or none where they cannot be reached.
+
+    Walked and read with the cartridge's own custom-sprite facts -- the
+    extra-byte stride off its count table, the custom bit only where its
+    features say the loader reads one -- so what the search finds is what
+    the level places.
+    """
+    counts = extra_byte_counts(rom, where=where)
     try:
         return parse_sprites(
-            sprite_stream(rom, sprite_base(rom, level, where=where)), shape
+            sprite_stream(rom, sprite_base(rom, level, where=where), counts),
+            shape,
+            CUSTOM_SPRITES.id in where.base.features,
+            counts,
         )
     except (ValueError, IndexError):
         return []

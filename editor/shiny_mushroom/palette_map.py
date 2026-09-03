@@ -2,7 +2,7 @@
 
 The editor renders from a CGRAM the game's own loader wrote and an emulator
 captured, which is what makes the picture right without the editor knowing a
-format (:doc:`emulated-loader <../../docs/editor/emulated-loader>`). It is also
+format (``docs/editor/emulator-worker.md``). It is also
 what a palette edit runs into: a captured CGRAM is 256 colours with no record of
 where any of them came from, so recolouring one means recovering the mapping the
 capture threw away.

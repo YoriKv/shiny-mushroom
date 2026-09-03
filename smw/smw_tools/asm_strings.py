@@ -34,10 +34,10 @@ if TYPE_CHECKING:
 #: Where the game's text lives, under the base's game folder.
 STRINGS_DIR = Path("strings")
 
-#: The directives that put the standard font in force, as the shipped string
+#: The lines that put the standard font in force, as the shipped string
 #: fragments spell them: relative to the fragment's own folder, which is
-#: where asar resolves a `table` from.
-FONT_HEADER = ("cleartable", 'table "../tables/fonts/standard.txt"')
+#: where asar resolves an `incsrc` from.
+FONT_HEADER = ("cleartable", 'incsrc "../tables/fonts/standard.asm"')
 
 #: The message boxes: how many, and the box each is drawn in -- eight rows
 #: of eighteen tiles, off SMW_DisplayMessage's upload loop.
@@ -127,7 +127,7 @@ def _terminated(entry: bytes) -> list[bytes]:
 class TerminatedStrings(AsmRegion):
     """Labelled strings whose last tile carries bit 7, under a font table.
 
-    The form the game's text takes: tiles from ``tables/fonts/standard.txt``,
+    The form the game's text takes: tiles from ``tables/fonts/standard.asm``,
     the end of a string said by the high bit of its last tile rather than by
     a byte of its own, so a one-tile string is one byte and nothing is ever
     empty. Two shapes wear it -- the level-name parts, one string a label,
@@ -340,7 +340,7 @@ class TerminatedStrings(AsmRegion):
                 continue
             if skipping:
                 continue
-            if line == "cleartable" or line.startswith("table "):
+            if line in self.header:
                 continue
             if line.startswith("if ") or line.startswith("incsrc "):
                 raise AsmRegionError(f"{where}: {line!r} is off-grammar")
@@ -480,6 +480,9 @@ class MessageTables(TerminatedStrings):
         folder = self.path.parent
         for line in read_text(self.path).split("\n"):
             line = _comment_stripped(line)
+            # The header's own `incsrc` is the font, not a message.
+            if line in self.header:
+                continue
             if line.startswith("incsrc "):
                 parts.append(read_text(folder / line[7:].strip().strip('"')))
         return _joined(parts)
@@ -490,7 +493,7 @@ class MessageTables(TerminatedStrings):
         lines = [
             *self.header,
             "",
-            ";--- One file per message. The cleartable/table directives above set the",
+            ";--- One file per message. The cleartable and font incsrc above set the",
             ";--- text encoding these strings assemble against and must stay in force.",
             "",
             *(

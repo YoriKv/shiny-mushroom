@@ -469,6 +469,12 @@ DATA_008475:
 ; Routine responsible for packing the extra OAM bits from $0420 into the
 ; table at $0400.
 Main:
+if defined("Define_SMW_SA1")
+	; SA-1 Pack's own code sits here, from the vendored tree.
+namespace off
+incsrc "asm/inline/008494.asm"
+namespace SMW_CompressOAMTileSizeBuffer
+else
 	LDY.b #$1E
 Loop:
 	LDX.w DATA_008475,y
@@ -498,6 +504,7 @@ Loop:
 	DEY
 	BPL.b Loop
 	RTS
+endif
 namespace off
 endmacro
 
@@ -570,7 +577,7 @@ BonusStarCounterNumberTiles:
 ; there is a Yoshi coin in that spot. Change to [FC] to visually disable
 ; collected Yoshi Coins.
 Main:
-if !Define_SMW_GlobalCodeStatusWanted == !TRUE
+if !SMW_GlobalCode_StatusWanted == !TRUE
 	; The same five bytes as the read and the OR below. The project's own
 	; status bar code runs first, and the stub repeats the pair so the
 	; branch sees the flags it expects. See Config/GlobalCode.asm.
@@ -986,232 +993,232 @@ Main:
 if !Define_SMW_Global_UseIndividualPaletteFiles == !FALSE
 ; Shared background area colour. Back area colour 0 - 7
 Sky:
-.Setting00:		incbin "palettes/smw.pal":0-2
-.Setting01:		incbin "palettes/smw.pal":2-4
-.Setting02:		incbin "palettes/smw.pal":4-6
-.Setting03:		incbin "palettes/smw.pal":6-8
-.Setting04:		incbin "palettes/smw.pal":8-A
-.Setting05:		incbin "palettes/smw.pal":A-C
-.Setting06:		incbin "palettes/smw.pal":C-E
-.Setting07:		incbin "palettes/smw.pal":E-10
+.Setting00:		incbin "palettes/smw.pal":$0..$2
+.Setting01:		incbin "palettes/smw.pal":$2..$4
+.Setting02:		incbin "palettes/smw.pal":$4..$6
+.Setting03:		incbin "palettes/smw.pal":$6..$8
+.Setting04:		incbin "palettes/smw.pal":$8..$A
+.Setting05:		incbin "palettes/smw.pal":$A..$C
+.Setting06:		incbin "palettes/smw.pal":$C..$E
+.Setting07:		incbin "palettes/smw.pal":$E..$10
 
 ; BG Palette 0
 Background:
-.Setting00:		incbin "palettes/smw.pal":10-28
+.Setting00:		incbin "palettes/smw.pal":$10..$28
 ; BG Palette 1
-.Setting01:		incbin "palettes/smw.pal":28-40
+.Setting01:		incbin "palettes/smw.pal":$28..$40
 ; BG Palette 2
-.Setting02:		incbin "palettes/smw.pal":40-58
+.Setting02:		incbin "palettes/smw.pal":$40..$58
 ; BG Palette 3
-.Setting03:		incbin "palettes/smw.pal":58-70
+.Setting03:		incbin "palettes/smw.pal":$58..$70
 ; BG Palette 4
-.Setting04:		incbin "palettes/smw.pal":70-88
+.Setting04:		incbin "palettes/smw.pal":$70..$88
 ; BG Palette 5
-.Setting05:		incbin "palettes/smw.pal":88-A0
+.Setting05:		incbin "palettes/smw.pal":$88..$A0
 ; BG Palette 6
-.Setting06:		incbin "palettes/smw.pal":A0-B8
+.Setting06:		incbin "palettes/smw.pal":$A0..$B8
 ; BG Palette 7
-.Setting07:		incbin "palettes/smw.pal":B8-D0
+.Setting07:		incbin "palettes/smw.pal":$B8..$D0
 
 ; Palette 0 colours 8-F in levels.
-Layer3:			incbin "palettes/smw.pal":D0-F0
+Layer3:			incbin "palettes/smw.pal":$D0..$F0
 ; Palette 2 colours 2-7, FG Palette 0, in levels.
-Foreground:		incbin "palettes/smw.pal":F0-1B0
+Foreground:		incbin "palettes/smw.pal":$F0..$1B0
 ; Palette 4 colours 2-7 in levels.
-Objects:		incbin "palettes/smw.pal":1B0-1F8
+Objects:		incbin "palettes/smw.pal":$1B0..$1F8
 ; Ludwig palette, and palette A colours 2-7 in levels.
-InitBossFightLudwig:	incbin "palettes/smw.pal":1F8-204
+InitBossFightLudwig:	incbin "palettes/smw.pal":$1F8..$204
 ; Roy palette, and palette B colours 2-7 in levels.
-InitBossFighRoy:	incbin "palettes/smw.pal":204-21C
+InitBossFighRoy:	incbin "palettes/smw.pal":$204..$21C
 ; Morton palette, and palette D colours 2-7 in levels
-InitBossFightMorton:	incbin "palettes/smw.pal":21C-228
+InitBossFightMorton:	incbin "palettes/smw.pal":$21C..$228
 ; Mario Palette
-Mario:			incbin "palettes/smw.pal":228-23C
+Mario:			incbin "palettes/smw.pal":$228..$23C
 ; Luigi palette. Colours 6-F of palette 8 while small, big, or caped Luigi.
-Luigi:			incbin "palettes/smw.pal":23C-250
+Luigi:			incbin "palettes/smw.pal":$23C..$250
 ; Fire Mario's palette
-MarioFire:		incbin "palettes/smw.pal":250-264
+MarioFire:		incbin "palettes/smw.pal":$250..$264
 ; Fire Luigi palette. Colours 6-F of palette 8 while fire Luigi.
-LuigiFire:		incbin "palettes/smw.pal":264-278
+LuigiFire:		incbin "palettes/smw.pal":$264..$278
 ; Sprite palette 0, loaded to palettes E and F.
-Sprites:		incbin "palettes/smw.pal":278-2CC
-InitBossFightReznor:	incbin "palettes/smw.pal":2CC-2D8
+Sprites:		incbin "palettes/smw.pal":$278..$2CC
+InitBossFightReznor:	incbin "palettes/smw.pal":$2CC..$2D8
 ; Sprite palette 4, loaded to palettes E and F.
-InitBossFightBowser:	incbin "palettes/smw.pal":2D8-320
+InitBossFightBowser:	incbin "palettes/smw.pal":$2D8..$320
 ; Sprite palette 7, loaded to palettes E and F.
-BowserEnd:		incbin "palettes/smw.pal":320-338
+BowserEnd:		incbin "palettes/smw.pal":$320..$338
 ; YI Overworld Palette 4, Colours 1-7
-OW_Areas:		incbin "palettes/smw.pal":338-488
-OW_Objects:		incbin "palettes/smw.pal":488-4DC
-OW_Sprites:		incbin "palettes/smw.pal":4DC-53E
+OW_Areas:		incbin "palettes/smw.pal":$338..$488
+OW_Objects:		incbin "palettes/smw.pal":$488..$4DC
+OW_Sprites:		incbin "palettes/smw.pal":$4DC..$53E
 ; Contains the colors for the flashing lightning in Valley of Bowser.
-BowserLightningFlash:	incbin "palettes/smw.pal":53E-54C
-OW_Layer3:		incbin "palettes/smw.pal":54C-554
-DATA_00B5F4:		incbin "palettes/smw.pal":554-56C
+BowserLightningFlash:	incbin "palettes/smw.pal":$53E..$54C
+OW_Layer3:		incbin "palettes/smw.pal":$54C..$554
+DATA_00B5F4:		incbin "palettes/smw.pal":$554..$56C
 Flashing:
 	; Colours used in animation of Yoshi coin and yellow map spot.
 	; ($02DF,$035F,$27FF,$5FFF,$73FF,$5FFF,$27FF,$035F)
-.Yellow:		incbin "palettes/smw.pal":56C-57C
+.Yellow:		incbin "palettes/smw.pal":$56C..$57C
 	; Colors used in the animation of the red map spot.
 	; ($01BF,$001F,$001B,$0018,$0018,$001B,$001F,$01BF)
-.Red:			incbin "palettes/smw.pal":57C-58C
-TS_Layer3:		incbin "palettes/smw.pal":58C-59C
-DATA_00B63C:		incbin "palettes/smw.pal":59C-5AC
-UnknownBlueGradient:	incbin "palettes/smw.pal":5AC-5BC ; Beta Iggy/Larry platform?
-IggyLarryPlatform:	incbin "palettes/smw.pal":5BC-5CC
-Layer3Smasher:		incbin "palettes/smw.pal":5CC-5D4
+.Red:			incbin "palettes/smw.pal":$57C..$58C
+TS_Layer3:		incbin "palettes/smw.pal":$58C..$59C
+DATA_00B63C:		incbin "palettes/smw.pal":$59C..$5AC
+UnknownBlueGradient:	incbin "palettes/smw.pal":$5AC..$5BC ; Beta Iggy/Larry platform?
+IggyLarryPlatform:	incbin "palettes/smw.pal":$5BC..$5CC
+Layer3Smasher:		incbin "palettes/smw.pal":$5CC..$5D4
 YoshiBerry:
 	; Palettes 2 and 9, colours 9-F.
-.Red:			incbin "palettes/smw.pal":5D4-5E2
+.Red:			incbin "palettes/smw.pal":$5D4..$5E2
 	; Palettes 3 and A, colours 9-F.
-.Pink:			incbin "palettes/smw.pal":5E2-5F0
+.Pink:			incbin "palettes/smw.pal":$5E2..$5F0
 	; Palettes 4 and B, colours 9-F.
-.Green:			incbin "palettes/smw.pal":5F0-5FE
+.Green:			incbin "palettes/smw.pal":$5F0..$5FE
 
 ; Bowser palettes (8 palettes, 7 colours each)
 Bowser:
-.Normal:		incbin "palettes/smw.pal":5FE-60C
-.Fade01:		incbin "palettes/smw.pal":60C-61A
-.Fade02:		incbin "palettes/smw.pal":61A-628
-.Fade03:		incbin "palettes/smw.pal":628-636
-.Fade04:		incbin "palettes/smw.pal":636-644
-.Fade05:		incbin "palettes/smw.pal":644-652
-.Fade06:		incbin "palettes/smw.pal":652-660
-.Fade07:		incbin "palettes/smw.pal":660-66E
+.Normal:		incbin "palettes/smw.pal":$5FE..$60C
+.Fade01:		incbin "palettes/smw.pal":$60C..$61A
+.Fade02:		incbin "palettes/smw.pal":$61A..$628
+.Fade03:		incbin "palettes/smw.pal":$628..$636
+.Fade04:		incbin "palettes/smw.pal":$636..$644
+.Fade05:		incbin "palettes/smw.pal":$644..$652
+.Fade06:		incbin "palettes/smw.pal":$652..$660
+.Fade07:		incbin "palettes/smw.pal":$660..$66E
 
 ; The End palettes (3 palettes, 6 colours each; order is Luigi, Mario,
 ; Princess)
-EndingLuigi:		incbin "palettes/smw.pal":66E-67A
-EndingMario:		incbin "palettes/smw.pal":67A-686
-EndingToadstool:	incbin "palettes/smw.pal":686-692
-OW_AreasPassed:		incbin "palettes/smw.pal":692-7E2			; Note: Apparently, Lunar Magic 2.53 doesn't export all the shared palettes.
+EndingLuigi:		incbin "palettes/smw.pal":$66E..$67A
+EndingMario:		incbin "palettes/smw.pal":$67A..$686
+EndingToadstool:	incbin "palettes/smw.pal":$686..$692
+OW_AreasPassed:		incbin "palettes/smw.pal":$692..$7E2			; Note: Apparently, Lunar Magic 2.53 doesn't export all the shared palettes.
 
 else
 
 Sky:
-.Setting00:		incbin "palettes/Sky.tpl":6-8
-.Setting01:		incbin "palettes/Sky.tpl":8-A
-.Setting02:		incbin "palettes/Sky.tpl":A-C
-.Setting03:		incbin "palettes/Sky.tpl":C-E
-.Setting04:		incbin "palettes/Sky.tpl":E-10
-.Setting05:		incbin "palettes/Sky.tpl":10-12
-.Setting06:		incbin "palettes/Sky.tpl":12-14
-.Setting07:		incbin "palettes/Sky.tpl":14-16
+.Setting00:		incbin "palettes/Sky.tpl":$6..$8
+.Setting01:		incbin "palettes/Sky.tpl":$8..$A
+.Setting02:		incbin "palettes/Sky.tpl":$A..$C
+.Setting03:		incbin "palettes/Sky.tpl":$C..$E
+.Setting04:		incbin "palettes/Sky.tpl":$E..$10
+.Setting05:		incbin "palettes/Sky.tpl":$10..$12
+.Setting06:		incbin "palettes/Sky.tpl":$12..$14
+.Setting07:		incbin "palettes/Sky.tpl":$14..$16
 
 Background:
 .Setting00:
-	incbin "palettes/Background.tpl":8-14
-	incbin "palettes/Background.tpl":28-34
+	incbin "palettes/Background.tpl":$8..$14
+	incbin "palettes/Background.tpl":$28..$34
 .Setting01:
-	incbin "palettes/Background.tpl":48-54
-	incbin "palettes/Background.tpl":68-74
+	incbin "palettes/Background.tpl":$48..$54
+	incbin "palettes/Background.tpl":$68..$74
 .Setting02:
-	incbin "palettes/Background.tpl":88-94
-	incbin "palettes/Background.tpl":A8-B4
+	incbin "palettes/Background.tpl":$88..$94
+	incbin "palettes/Background.tpl":$A8..$B4
 .Setting03:
-	incbin "palettes/Background.tpl":C8-D4
-	incbin "palettes/Background.tpl":E8-F4
+	incbin "palettes/Background.tpl":$C8..$D4
+	incbin "palettes/Background.tpl":$E8..$F4
 .Setting04:
-	incbin "palettes/Background.tpl":108-114
-	incbin "palettes/Background.tpl":128-134
+	incbin "palettes/Background.tpl":$108..$114
+	incbin "palettes/Background.tpl":$128..$134
 .Setting05:
-	incbin "palettes/Background.tpl":148-154
-	incbin "palettes/Background.tpl":168-174
+	incbin "palettes/Background.tpl":$148..$154
+	incbin "palettes/Background.tpl":$168..$174
 .Setting06:
-	incbin "palettes/Background.tpl":188-194
-	incbin "palettes/Background.tpl":1A8-1B4
+	incbin "palettes/Background.tpl":$188..$194
+	incbin "palettes/Background.tpl":$1A8..$1B4
 .Setting07:
-	incbin "palettes/Background.tpl":1C8-1D4
-	incbin "palettes/Background.tpl":1E8-1F4
+	incbin "palettes/Background.tpl":$1C8..$1D4
+	incbin "palettes/Background.tpl":$1E8..$1F4
 Layer3:
-	incbin "palettes/smw.pal":D0-F0
+	incbin "palettes/smw.pal":$D0..$F0
 Foreground:
-	incbin "palettes/smw.pal":F0-1B0
+	incbin "palettes/smw.pal":$F0..$1B0
 Objects:
-	incbin "palettes/smw.pal":1B0-1F8
+	incbin "palettes/smw.pal":$1B0..$1F8
 InitBossFightLudwig:
-	incbin "palettes/smw.pal":1F8-204
+	incbin "palettes/smw.pal":$1F8..$204
 InitBossFighRoy:
-	incbin "palettes/smw.pal":204-21C
+	incbin "palettes/smw.pal":$204..$21C
 InitBossFightMorton:
-	incbin "palettes/smw.pal":21C-228
+	incbin "palettes/smw.pal":$21C..$228
 Mario:
-	incbin "palettes/smw.pal":228-23C
+	incbin "palettes/smw.pal":$228..$23C
 Luigi:
-	incbin "palettes/smw.pal":23C-250
+	incbin "palettes/smw.pal":$23C..$250
 MarioFire:
-	incbin "palettes/smw.pal":250-264
+	incbin "palettes/smw.pal":$250..$264
 LuigiFire:
-	incbin "palettes/smw.pal":264-278
+	incbin "palettes/smw.pal":$264..$278
 Sprites:
-	incbin "palettes/smw.pal":278-2CC
+	incbin "palettes/smw.pal":$278..$2CC
 InitBossFightReznor:
-	incbin "palettes/Mode7.tpl":6-12
+	incbin "palettes/Mode7.tpl":$6..$12
 InitBossFightBowser:
-	incbin "palettes/Mode7.tpl":26-6E
+	incbin "palettes/Mode7.tpl":$26..$6E
 BowserEnd:
-	incbin "palettes/smw.pal":320-338
+	incbin "palettes/smw.pal":$320..$338
 OW_Areas:
-	incbin "palettes/smw.pal":338-488
+	incbin "palettes/smw.pal":$338..$488
 OW_Objects:
-	incbin "palettes/smw.pal":488-4DC
+	incbin "palettes/smw.pal":$488..$4DC
 OW_Sprites:
-	incbin "palettes/smw.pal":4DC-53E
+	incbin "palettes/smw.pal":$4DC..$53E
 BowserLightningFlash:
-	incbin "palettes/Bowser.tpl":106-114
+	incbin "palettes/Bowser.tpl":$106..$114
 OW_Layer3:
-	incbin "palettes/smw.pal":54C-554
+	incbin "palettes/smw.pal":$54C..$554
 DATA_00B5F4:
-	incbin "palettes/smw.pal":554-56C
+	incbin "palettes/smw.pal":$554..$56C
 Flashing:
 .Yellow:
-	incbin "palettes/smw.pal":56C-57C
+	incbin "palettes/smw.pal":$56C..$57C
 .Red:
-	incbin "palettes/smw.pal":57C-58C
+	incbin "palettes/smw.pal":$57C..$58C
 TS_Layer3:
-	incbin "palettes/smw.pal":58C-59C
+	incbin "palettes/smw.pal":$58C..$59C
 DATA_00B63C:
-	incbin "palettes/smw.pal":59C-5AC
+	incbin "palettes/smw.pal":$59C..$5AC
 UnknownBlueGradient:
-	incbin "palettes/smw.pal":5AC-5BC ; Beta Iggy/Larry platform?
+	incbin "palettes/smw.pal":$5AC..$5BC ; Beta Iggy/Larry platform?
 IggyLarryPlatform:
-	incbin "palettes/IggyLarryPlatform.tpl":6-16
+	incbin "palettes/IggyLarryPlatform.tpl":$6..$16
 Layer3Smasher:
-	incbin "palettes/smw.pal":5CC-5D4
+	incbin "palettes/smw.pal":$5CC..$5D4
 YoshiBerry:
 .Red:
-	incbin "palettes/smw.pal":5D4-5E2
+	incbin "palettes/smw.pal":$5D4..$5E2
 .Pink:
-	incbin "palettes/smw.pal":5E2-5F0
+	incbin "palettes/smw.pal":$5E2..$5F0
 .Green:
-	incbin "palettes/smw.pal":5F0-5FE
+	incbin "palettes/smw.pal":$5F0..$5FE
 
 Bowser:
 .Normal:
-	incbin "palettes/Bowser.tpl":6-14
+	incbin "palettes/Bowser.tpl":$6..$14
 .Fade01:
-	incbin "palettes/Bowser.tpl":26-34
+	incbin "palettes/Bowser.tpl":$26..$34
 .Fade02:
-	incbin "palettes/Bowser.tpl":46-54
+	incbin "palettes/Bowser.tpl":$46..$54
 .Fade03:
-	incbin "palettes/Bowser.tpl":66-74
+	incbin "palettes/Bowser.tpl":$66..$74
 .Fade04:
-	incbin "palettes/Bowser.tpl":86-94
+	incbin "palettes/Bowser.tpl":$86..$94
 .Fade05:
-	incbin "palettes/Bowser.tpl":A6-B4
+	incbin "palettes/Bowser.tpl":$A6..$B4
 .Fade06:
-	incbin "palettes/Bowser.tpl":C6-D4
+	incbin "palettes/Bowser.tpl":$C6..$D4
 .Fade07:
-	incbin "palettes/Bowser.tpl":E6-F4
+	incbin "palettes/Bowser.tpl":$E6..$F4
 
 EndingLuigi:
-	incbin "palettes/smw.pal":66E-67A
+	incbin "palettes/smw.pal":$66E..$67A
 EndingMario:
-	incbin "palettes/smw.pal":67A-686
+	incbin "palettes/smw.pal":$67A..$686
 EndingToadstool:
-	incbin "palettes/smw.pal":686-692
+	incbin "palettes/smw.pal":$686..$692
 OW_AreasPassed:
-	incbin "palettes/smw.pal":692-7E2
+	incbin "palettes/smw.pal":$692..$7E2
 endif
 namespace off
 endmacro
@@ -1697,14 +1704,20 @@ else
 	CLC				;\ Disable emulation mode.
 	XCE				;/
 	REP.b #$38			; AXY->16, Disable decimal mode.
-	LDA.w #!Define_SMW_DirectPageLocation	;\ Initialize direct page to 0x0000.
+	LDA.w #!Define_SMW_DirectPageLocation	;\ Initialize the direct page.
 	TCD				;/
-	LDA.w #!RAM_SMW_Misc_StartOfStack	;\ Initialize stack pointer to $01FF.
+	LDA.w #!RAM_SMW_Misc_StartOfStack	;\ Initialize the stack pointer.
 	TCS				;/
 endif
 	; This is code is responsible for uploading the OAM clear routine to
 	; $7F8000. The uploaded routine is essentially an unrolled loop which
 	; stores #$F0 to all of the OAM mirror($0200) Y positions.
+if defined("Define_SMW_SA1")
+	; SA-1 Pack's own code sits here, from the vendored tree.
+namespace off
+incsrc "asm/inline/008027.asm"
+namespace SMW_InitAndMainLoop
+else
 	LDA.w #$F0A9			;\ "LDA #$F0"
 	STA.l !RAM_SMW_Sprites_ResetSpriteOAMRt	;/
 	LDX.w #$017D
@@ -1721,6 +1734,7 @@ CODE_008034:
 	DEX
 	DEX
 	BPL.b CODE_008034
+endif
 	SEP.b #$30			; AXY->8
 #LM000Hijack_Bank00RTL:
 	LDA.b #$6B			;\ "RTL"
@@ -1736,7 +1750,7 @@ endif
 	JSR.w SMW_InitializeFirst8KBOfRAM_Main	; Clear out $0000-$1FFF and $7F837B/D.
 	JSR.w SMW_HandleSPCUploads_UploadSamples			; Optimization: Why isn't this part of UploadSPCEngine? UploadSamples is only referenced by the upcoming JSR.w.
 	JSR.w SMW_SetupHDMAWindowingEffects_Main	; Set up DMA for window settings.
-if !Define_SMW_GlobalCodeInitWanted == !TRUE
+if !SMW_GlobalCode_InitWanted == !TRUE
 	; The same five bytes as the OAM pair below. The project's own boot
 	; code runs once here, with the RAM cleared and the SPC engine up, and
 	; the stub repeats the pair. See Config/GlobalCode.asm.
@@ -1752,8 +1766,13 @@ GlobalCodeInitReturn:
 ; complete before executing the code of the next frame. One of the frame
 ; counters ($13) is also incremented here.
 CODE_00806B:
+if defined("Define_SMW_SA1")
+	JMP.w ram_main_loop_start
+	NOP
+else
 	LDA.b !RAM_SMW_Flag_Lagging					;\ Optimization: This wait for V_Blank can be improved with a WAI.
 	BEQ.b CODE_00806B						;/
+endif
 #SA1Pack_MainLoopStartLocation:
 	CLI				; Enable interrupts.
 if ver_is_smasw_europe(!Define_Global_ROMToAssemble)
@@ -1788,7 +1807,7 @@ CODE_3080B2:
 CODE_3080D6:
 endif
 	INC.b !RAM_SMW_Counter_GlobalFrames	; Increment global frame counter.
-if !Define_SMW_FrameHookWanted == !TRUE
+if !SMW_FrameHookWanted == !TRUE
 	; The same five bytes as the call and the store below. The project's
 	; own frame code runs around the game mode's: the global main routine
 	; and the mode's own code first, the displaced call through the RTL
@@ -1885,10 +1904,14 @@ endif
 	BNE.b CODE_0081AA
 else
 	; SMW's NMI routine.
+if defined("Define_SMW_SA1")
+	JML.l snes_nmi
+else
 	SEI				; Disable interrupts to prevent interrupting an interrupt.
 	PHP							;\ Optimization: PHP/PLP is not necessary here as the interrupt call already preserves the processor flags
 								;/ Can be replaced with PHD/PLD to allow the direct page register to be modified safely.
 	REP.b #$30			; Make A, X and Y 16-bit (pointless?)
+endif
 	PHA
 	PHX
 	PHY
@@ -2037,7 +2060,11 @@ NMINotSpecialLv:
 	BEQ.b CODE_008292		; /
 CODE_00827A:
 #SA1Pack_IRQTriggerHack1:
+if defined("Define_SMW_SA1")
+	LDX.b #$81
+else
 	LDA.b #$81
+endif
 	LDY.w !RAM_SMW_Misc_CurrentlyActiveBossEndCutscene	; \
 	CPY.b #$08			;  |If not playing ending movie, branch to $82A1
 	BNE.b CODE_0082A1		; /
@@ -2055,9 +2082,17 @@ CODE_008294:
 	STZ.w !REGISTER_VCountTimerHi
 	STZ.b !RAM_SMW_Flag_IRQToUse
 #SA1Pack_IRQTriggerHack2:
+if defined("Define_SMW_SA1")
+	LDX.b #$A1
+CODE_0082A1:
+	BRA.b +
+	NOP
++
+else
 	LDA.b #$A1
 CODE_0082A1:
 	STA.w !REGISTER_IRQNMIAndJoypadEnableFlags	; NMI, V/H Count, and Joypad Enable
+endif
 	STZ.w !REGISTER_BG3HorizScrollOffset	; \  ; BG 3 Horizontal Scroll Offset- Write twice register
 	STZ.w !REGISTER_BG3HorizScrollOffset	;  |Set Layer 3 horizontal and vertical ; BG 3 Horizontal Scroll Offset
 	STZ.w !REGISTER_BG3VertScrollOffset	;  |scroll to x00 ; BG 3 Vertical Scroll Offset ; Write twice register
@@ -2071,9 +2106,13 @@ EndofVBlank:
 	RTL
 else
 #SA1Pack_EndOfSNESNMI:
+if defined("Define_SMW_SA1")
+	JML.l snes_nmi_end
+else
 	REP.b #$30			; \ Pull all ; Index (16 bit) Accum (16 bit)
 	PLB				;  |
 	PLY				;  |
+endif
 	PLX				;  |
 	PLA				;  |
 	PLP				; /
@@ -2191,7 +2230,7 @@ else
 	BEQ.b CODE_00A328
 	LDY.b #!CGRAM_SMW_DynamicPlayerPalette	; \ Set Address for CG-RAM Write to x86
 	STY.w !REGISTER_CGRAMAddress
-	LDA.w #(!REGISTER_WriteToCGRAMPort&$0000FF<<8)+$00
+	LDA.w #((!REGISTER_WriteToCGRAMPort&$0000FF)<<8)+$00
 	STA.w DMA[$02].Parameters	; Parameters for DMA Transfer
 	LDA.w !RAM_SMW_Pointer_PlayerPaletteLo	; \ Get location of palette from $0D82-$0D83
 	STA.w DMA[$02].SourceLo
@@ -2203,7 +2242,7 @@ else
 CODE_00A328:
 	LDY.b #$80			; \ Set VRAM Address Increment Value to x80
 	STY.w !REGISTER_VRAMAddressIncrementValue
-	LDA.w #(!REGISTER_WriteToVRAMPortLo&$0000FF<<8)+$01
+	LDA.w #((!REGISTER_WriteToVRAMPortLo&$0000FF)<<8)+$01
 	STA.w DMA[$02].Parameters	; Parameters for DMA Transfer
 	LDA.w #!VRAM_SMW_SpriteGFXLocationLo+$07F0
 	STA.w !REGISTER_VRAMAddressLo	; Address for VRAM Read/Write (Low Byte)
@@ -2392,19 +2431,25 @@ namespace SMW_UploadOAMBuffer
 ; Routine responsible for DMAing the sprite OAM data from its RAM mirror at
 ; $7E0200-$7E041F (544 bytes) to register $2104.
 Main:
-	STZ.w DMA[$00].Parameters	; Use DMA channel 0; increment, one register write once.
+	STZ.w DMA[!Define_SMW_OAMUploadDMAChannel].Parameters	; Use DMA channel 0; increment, one register write once.
 	REP.b #$20			; A->16
 	STZ.w !REGISTER_OAMAddressLo	; Clear the sprite OAM index.
-	LDA.w #(SMW_OAMBuffer[$00].XDisp&$0000FF<<8)+(!REGISTER_OAMDataWritePort&$0000FF)	;\
-	STA.w DMA[$00].Destination	;| Set channel 0's destination to $2104 (data for OAM write)
+	LDA.w #((SMW_OAMBuffer[$00].XDisp&$0000FF)<<8)+(!REGISTER_OAMDataWritePort&$0000FF)	;\
+	STA.w DMA[!Define_SMW_OAMUploadDMAChannel].Destination	;| Set channel 0's destination to $2104 (data for OAM write)
 	LDA.w #(SMW_OAMBuffer[$00].XDisp&$00FF00)>>8	;| and the source to $000200 (OAM table).
-	STA.w DMA[$00].SourceHi		;/
+	STA.w DMA[!Define_SMW_OAMUploadDMAChannel].SourceHi		;/
 	LDA.w #$0220			;\ Set the size to be 544 bytes.
-	STA.w DMA[$00].SizeLo		;/
-	LDY.b #$01			;\ Begin DMA transfer on channel 0.
+	STA.w DMA[!Define_SMW_OAMUploadDMAChannel].SizeLo		;/
+	LDY.b #($01<<!Define_SMW_OAMUploadDMAChannel)			;\ Begin DMA transfer on channel 0.
 	STY.w !REGISTER_DMAEnable	;/
 	SEP.b #$20			; A->8
+if defined("Define_SMW_SA1")
+	; SA-1 Pack: Ignore the $3F behavior on OAM upload.
+	RTS
+	db $80	; the tail of the LDA.b below, which the hijack leaves unreached
+else
 	LDA.b #$80			;\ Set OAM object priority bit.
+endif
 	STA.w !REGISTER_OAMAddressHi	;/
 	LDA.b !RAM_SMW_Mirror_OAMAddressLo	;\ Set OAM index to $3F.
 	STA.w !REGISTER_OAMAddressLo	;/
@@ -2429,10 +2474,10 @@ Main:
 	LDX.b #$06
 CODE_008DBB:
 	LDA.w PARAMS_StBr1,x
-	STA.w DMA[$01].Parameters,x
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].Parameters,x
 	DEX
 	BPL.b CODE_008DBB
-	LDA.b #$02			; \ Activate DMA channel 1
+	LDA.b #($01<<!Define_SMW_TilemapUploadDMAChannel)			; \ Activate DMA channel 1
 	STA.w !REGISTER_DMAEnable	; /  ; Regular DMA Channel Enable
 	STZ.w !REGISTER_VRAMAddressIncrementValue	; Set VRAM Address Increment Value to x00 ; VRAM Address Increment Value
 	LDA.b #!VRAM_SMW_Layer3TilemapVRAMLocation+$63	; \
@@ -2442,10 +2487,10 @@ CODE_008DBB:
 	LDX.b #$06
 CODE_008DD8:
 	LDA.w PARAMS_StBr2,x
-	STA.w DMA[$01].Parameters,x
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].Parameters,x
 	DEX
 	BPL.b CODE_008DD8
-	LDA.b #$02			; \ Activate DMA channel 1
+	LDA.b #($01<<!Define_SMW_TilemapUploadDMAChannel)			; \ Activate DMA channel 1
 	STA.w !REGISTER_DMAEnable	; /  ; Regular DMA Channel Enable
 	RTS
 
@@ -2473,7 +2518,7 @@ Main:
 	STX.w !REGISTER_VRAMAddressIncrementValue
 	LDA.w #!VRAM_SMW_SpriteGFXLocationLo
 	STA.w !REGISTER_VRAMAddressLo	; Address for VRAM Read/Write (Low Byte)
-	LDA.w #(!REGISTER_WriteToVRAMPortLo&$0000FF<<8)+$01
+	LDA.w #((!REGISTER_WriteToVRAMPortLo&$0000FF)<<8)+$01
 	STA.w DMA[$02].Parameters	; Parameters for DMA Transfer
 	LDA.w #!RAM_SMW_Graphics_DecompressedLoadingLetters
 	STA.w DMA[$02].SourceLo		; A Address (Low Byte)
@@ -2522,7 +2567,7 @@ Main:
 	REP.b #$20							;\ LM: Hijacks this location if the level ExAnimation feature is used (1.60+)
 	LDY.b #$80							;| This routine is for uploading the animation data to VRAM.
 	STY.w !REGISTER_VRAMAddressIncrementValue			;/
-	LDA.w #(!REGISTER_WriteToVRAMPortLo&$0000FF<<8)+$01
+	LDA.w #((!REGISTER_WriteToVRAMPortLo&$0000FF)<<8)+$01
 	STA.w DMA[$02].Parameters	; Parameters for DMA Transfer
 	LDY.b #!RAM_SMW_Graphics_DecompressedGFX33>>16
 	STY.w DMA[$02].SourceBank	; A Address Bank
@@ -2623,7 +2668,7 @@ Main:
 	STY.w !REGISTER_VRAMAddressIncrementValue
 	LDA.w #!VRAM_SMW_SpriteGFXLocationLo+$04A0
 	STA.w !REGISTER_VRAMAddressLo	; Address for VRAM Read/Write (Low Byte)
-	LDA.w #(!REGISTER_WriteToVRAMPortLo&$0000FF<<8)+$01
+	LDA.w #((!REGISTER_WriteToVRAMPortLo&$0000FF)<<8)+$01
 	STA.w DMA[$02].Parameters	; Parameters for DMA Transfer
 	LDA.w #!RAM_SMW_Graphics_DecompressedOverworldGFX+$0100
 	STA.w DMA[$02].SourceLo		; A Address (Low Byte)
@@ -2669,7 +2714,7 @@ Main:
 	REP.b #$20			; A->16
 	LDY.b #$80
 	STY.w !REGISTER_VRAMAddressIncrementValue
-	LDA.w #(!REGISTER_WriteToVRAMPortLo&$0000FF<<8)+$01
+	LDA.w #((!REGISTER_WriteToVRAMPortLo&$0000FF)<<8)+$01
 	STA.w DMA[$02].Parameters	; Parameters for DMA Transfer
 	LDA.w #!VRAM_SMW_Layer1GFXVRAMLocation_Mode7+$0800
 	STA.w !REGISTER_VRAMAddressLo	; Address for VRAM Read/Write (Low Byte)
@@ -2694,7 +2739,7 @@ CODE_0098EF:
 	LDA.w #!RAM_SMW_Misc_Mode7BossTilemap
 	STA.b !RAM_SMW_Misc_ScratchRAM02
 	STZ.w !REGISTER_VRAMAddressIncrementValue
-	LDA.w #(!REGISTER_WriteToVRAMPortLo&$0000FF<<8)+$00
+	LDA.w #((!REGISTER_WriteToVRAMPortLo&$0000FF)<<8)+$00
 	STA.w DMA[$02].Parameters	; Parameters for DMA Transfer
 	LDX.b #!RAM_SMW_Misc_Mode7BossTilemap>>16
 	STX.w DMA[$02].SourceBank	; A Address Bank
@@ -2752,7 +2797,7 @@ CODE_00A4A0:
 	LDA.b [!RAM_SMW_Misc_ScratchRAM00],y
 	STA.w !REGISTER_CGRAMAddress	; Address for CG-RAM Write
 	REP.b #$20			; A->16
-	LDA.w #(!REGISTER_WriteToCGRAMPort&$0000FF<<8)+$00
+	LDA.w #((!REGISTER_WriteToCGRAMPort&$0000FF)<<8)+$00
 	STA.w DMA[$02].Parameters	; Parameters for DMA Transfer
 	INY
 	TYA
@@ -2825,7 +2870,7 @@ Main:
 	STA.w !REGISTER_VRAMAddressIncrementValue			;/
 	LDY.w #!VRAM_SMW_Layer1GFXVRAMLocation+$0750
 	STY.w !REGISTER_VRAMAddressLo	; Address for VRAM Read/Write (Low Byte)
-	LDY.w #(!REGISTER_WriteToVRAMPortLo&$0000FF<<8)+$01
+	LDY.w #((!REGISTER_WriteToVRAMPortLo&$0000FF)<<8)+$01
 	STY.w DMA[$02].Parameters	; Parameters for DMA Transfer
 	LDY.w #!RAM_SMW_Graphics_DecompressedOverworldGFX
 	STY.w DMA[$02].SourceLo		; A Address (Low Byte)
@@ -2870,7 +2915,7 @@ Main:
 	LDX.b #$06
 CODE_00A53C:
 	LDA.w PARAMS_00A586,x
-	STA.w DMA[$01].Parameters,x
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].Parameters,x
 	DEX
 	BPL.b CODE_00A53C
 	LDA.w !RAM_SMW_Player_CurrentCharacterX4Lo
@@ -2880,13 +2925,13 @@ CODE_00A53C:
 	LDA.w !RAM_SMW_Overworld_MarioMap,x
 	BEQ.b NotOnMainMap					; Note: !Define_SMW_Overworld_MainMap
 	LDA.b #$60
-	STA.w DMA[$01].SourceHi		; A Address (High Byte)
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].SourceHi		; A Address (High Byte)
 NotOnMainMap:
-	LDA.w DMA[$01].SourceHi		; A Address (High Byte)
+	LDA.w DMA[!Define_SMW_TilemapUploadDMAChannel].SourceHi		; A Address (High Byte)
 	CLC
 	ADC.w DATA_00A525,y
-	STA.w DMA[$01].SourceHi		; A Address (High Byte)
-	LDA.b #$02
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].SourceHi		; A Address (High Byte)
+	LDA.b #($01<<!Define_SMW_TilemapUploadDMAChannel)
 	STA.w !REGISTER_DMAEnable	; Regular DMA Channel Enable
 	LDA.b #$80
 	STA.w !REGISTER_VRAMAddressIncrementValue
@@ -2898,10 +2943,10 @@ NotOnMainMap:
 	LDX.b #$06
 CODE_00A577:
 	LDA.w PARAMS_00A58D,x
-	STA.w DMA[$01].Parameters,x
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].Parameters,x
 	DEX
 	BPL.b CODE_00A577
-	LDA.b #$02
+	LDA.b #($01<<!Define_SMW_TilemapUploadDMAChannel)
 	STA.w !REGISTER_DMAEnable	; Regular DMA Channel Enable
 	RTS
 
@@ -3087,7 +3132,7 @@ namespace SMW_LoadStripeImage
 ; $84CD - JSL $00871E
 UploadToVRAM:
 	REP.b #$10			; XY->16
-	STA.w DMA[$01].SourceBank	; A Address Bank
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].SourceBank	; A Address Bank
 	LDY.w #$0000			; Set index to 0
 CODE_008726:
 	LDA.b [!RAM_SMW_Misc_ScratchRAM00],y	;\ Branch if bit 7 isn't set (i.e. end of data).
@@ -3106,7 +3151,7 @@ CODE_00872D:
 	ASL				;|
 	ROL.b !RAM_SMW_Misc_ScratchRAM07	;/
 	LDA.b #!REGISTER_WriteToVRAMPortLo	;\ Set register to $2118.
-	STA.w DMA[$01].Destination	;/
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].Destination	;/
 	LDA.b [!RAM_SMW_Misc_ScratchRAM00],y	; Re-read line header byte 3
 	AND.b #$40			; \
 	LSR				;  |
@@ -3115,7 +3160,7 @@ CODE_00872D:
 	STA.b !RAM_SMW_Misc_ScratchRAM05	; /
 	STZ.b !RAM_SMW_Misc_ScratchRAM06
 	ORA.b #$01
-	STA.w DMA[$01].Parameters	; Parameters for DMA Transfer
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].Parameters	; Parameters for DMA Transfer
 #LM170Hijack_VRAMRearrangement3:
 	REP.b #$20			; A->16
 	LDA.b !RAM_SMW_Misc_ScratchRAM03				;\ Note: Layer GFX locations must be hardcoded due to this routine.
@@ -3130,25 +3175,25 @@ CODE_00872D:
 	TYA
 	CLC
 	ADC.b !RAM_SMW_Misc_ScratchRAM00
-	STA.w DMA[$01].SourceLo		; A Address (Low Byte)
-	STX.w DMA[$01].SizeLo		; Number Bytes to Transfer (Low Byte) (DMA)
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].SourceLo		; A Address (Low Byte)
+	STX.w DMA[!Define_SMW_TilemapUploadDMAChannel].SizeLo		; Number Bytes to Transfer (Low Byte) (DMA)
 	LDA.b !RAM_SMW_Misc_ScratchRAM05	;\
 	BEQ.b CODE_008795		;|
 	SEP.b #$20			;| A->8
 	LDA.b !RAM_SMW_Misc_ScratchRAM07	;|
 	STA.w !REGISTER_VRAMAddressIncrementValue	;|
-	LDA.b #$02			;|
+	LDA.b #($01<<!Define_SMW_TilemapUploadDMAChannel)			;|
 	STA.w !REGISTER_DMAEnable	;|
 	LDA.b #!REGISTER_WriteToVRAMPortHi	;|
-	STA.w DMA[$01].Destination	;| Set up RLE if applicable.
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].Destination	;| Set up RLE if applicable.
 	REP.b #$21			;| A->16, CLC
 	LDA.b !RAM_SMW_Misc_ScratchRAM03	;|
 	STA.w !REGISTER_VRAMAddressLo	;|
 	TYA				;|
 	ADC.b !RAM_SMW_Misc_ScratchRAM00	;|
 	INC				;|
-	STA.w DMA[$01].SourceLo		;|
-	STX.w DMA[$01].SizeLo		;/
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].SourceLo		;|
+	STX.w DMA[!Define_SMW_TilemapUploadDMAChannel].SizeLo		;/
 	LDX.w #$0002
 CODE_008795:
 	STX.b !RAM_SMW_Misc_ScratchRAM03
@@ -3160,7 +3205,7 @@ CODE_008795:
 	LDA.b !RAM_SMW_Misc_ScratchRAM07	;\
 	ORA.b #$80			;| Set direction.
 	STA.w !REGISTER_VRAMAddressIncrementValue	;/
-	LDA.b #$02			;\ Enable DMA on channel 1.
+	LDA.b #($01<<!Define_SMW_TilemapUploadDMAChannel)			;\ Enable DMA on channel 1.
 	STA.w !REGISTER_DMAEnable	;/
 	JMP.w CODE_008726
 namespace off
@@ -3197,10 +3242,10 @@ HorizontalLayer1Level:
 	LDX.b #$06
 CODE_0087D3:
 	LDA.w PARAMS_008A16,x
-	STA.w DMA[$01].Parameters,x
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].Parameters,x
 	DEX
 	BPL.b CODE_0087D3
-	LDA.b #$02			; \ Enable DMA channel 1
+	LDA.b #($01<<!Define_SMW_TilemapUploadDMAChannel)			; \ Enable DMA channel 1
 	STA.w !REGISTER_DMAEnable	; /  ; Regular DMA Channel Enable
 	STY.w !REGISTER_VRAMAddressIncrementValue
 	LDA.w !RAM_SMW_Blocks_Layer1VRAMUploadAddressHi
@@ -3212,10 +3257,10 @@ CODE_0087D3:
 	LDX.b #$06
 CODE_0087F5:
 	LDA.w PARAMS_008A1D,x
-	STA.w DMA[$01].Parameters,x
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].Parameters,x
 	DEX
 	BPL.b CODE_0087F5
-	LDA.b #$02
+	LDA.b #($01<<!Define_SMW_TilemapUploadDMAChannel)
 	STA.w !REGISTER_DMAEnable	; \ Enable DMA channel 1 ; Regular DMA Channel Enable
 	STY.w !REGISTER_VRAMAddressIncrementValue	; /  ; VRAM Address Increment Value
 	LDA.w !RAM_SMW_Blocks_Layer1VRAMUploadAddressHi
@@ -3226,10 +3271,10 @@ CODE_0087F5:
 	LDX.b #$06
 CODE_008815:
 	LDA.w PARAMS_008A24,x
-	STA.w DMA[$01].Parameters,x
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].Parameters,x
 	DEX
 	BPL.b CODE_008815
-	LDA.b #$02			; \ Enable DMA channel 1
+	LDA.b #($01<<!Define_SMW_TilemapUploadDMAChannel)			; \ Enable DMA channel 1
 	STA.w !REGISTER_DMAEnable	; /  ; Regular DMA Channel Enable
 	STY.w !REGISTER_VRAMAddressIncrementValue
 	LDA.w !RAM_SMW_Blocks_Layer1VRAMUploadAddressHi
@@ -3242,10 +3287,10 @@ CODE_008815:
 	LDX.b #$06
 CODE_008838:
 	LDA.w PARAMS_008A2B,x
-	STA.w DMA[$01].Parameters,x
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].Parameters,x
 	DEX
 	BPL.b CODE_008838
-	LDA.b #$02			; \ Enable DMA channel 1
+	LDA.b #($01<<!Define_SMW_TilemapUploadDMAChannel)			; \ Enable DMA channel 1
 	STA.w !REGISTER_DMAEnable	; /  ; Regular DMA Channel Enable
 	JMP.w DoneUpdatingLayer1	; Done with Layer 1, skip down to handle Layer 2.
 
@@ -3259,10 +3304,10 @@ VerticalLayer1Leve1:
 	LDX.b #$06
 CODE_00885C:
 	LDA.w PARAMS_008A16,x
-	STA.w DMA[$01].Parameters,x
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].Parameters,x
 	DEX
 	BPL.b CODE_00885C
-	LDA.b #$02
+	LDA.b #($01<<!Define_SMW_TilemapUploadDMAChannel)
 	STA.w !REGISTER_DMAEnable	; Regular DMA Channel Enable
 	STY.w !REGISTER_VRAMAddressIncrementValue
 	LDA.w !RAM_SMW_Blocks_Layer1VRAMUploadAddressHi
@@ -3274,12 +3319,12 @@ CODE_00885C:
 	LDX.b #$06
 CODE_00887E:
 	LDA.w PARAMS_008A1D,x
-	STA.w DMA[$01].Parameters,x
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].Parameters,x
 	DEX
 	BPL.b CODE_00887E
 	LDA.b #$40
-	STA.w DMA[$01].SizeLo		; Number Bytes to Transfer (Low Byte) (DMA)
-	LDA.b #$02
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].SizeLo		; Number Bytes to Transfer (Low Byte) (DMA)
+	LDA.b #($01<<!Define_SMW_TilemapUploadDMAChannel)
 	STA.w !REGISTER_DMAEnable	; Regular DMA Channel Enable
 	STY.w !REGISTER_VRAMAddressIncrementValue
 	LDA.w !RAM_SMW_Blocks_Layer1VRAMUploadAddressHi
@@ -3291,10 +3336,10 @@ CODE_00887E:
 	LDX.b #$06
 CODE_0088A5:
 	LDA.w PARAMS_008A24,x
-	STA.w DMA[$01].Parameters,x
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].Parameters,x
 	DEX
 	BPL.b CODE_0088A5
-	LDA.b #$02
+	LDA.b #($01<<!Define_SMW_TilemapUploadDMAChannel)
 	STA.w !REGISTER_DMAEnable	; Regular DMA Channel Enable
 	STY.w !REGISTER_VRAMAddressIncrementValue
 	LDA.w !RAM_SMW_Blocks_Layer1VRAMUploadAddressHi
@@ -3308,12 +3353,12 @@ CODE_0088A5:
 	LDX.b #$06
 CODE_0088CA:
 	LDA.w PARAMS_008A2B,x
-	STA.w DMA[$01].Parameters,x
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].Parameters,x
 	DEX
 	BPL.b CODE_0088CA
 	LDA.b #$40
-	STA.w DMA[$01].SizeLo		; Number Bytes to Transfer (Low Byte) (DMA)
-	LDA.b #$02
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].SizeLo		; Number Bytes to Transfer (Low Byte) (DMA)
+	LDA.b #($01<<!Define_SMW_TilemapUploadDMAChannel)
 	STA.w !REGISTER_DMAEnable	; Regular DMA Channel Enable
 
 DoneUpdatingLayer1:
@@ -3339,10 +3384,10 @@ HorizontalLayer2Level:
 	LDX.b #$06
 CODE_008906:
 	LDA.w PARAMS_008A32,x
-	STA.w DMA[$01].Parameters,x
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].Parameters,x
 	DEX
 	BPL.b CODE_008906
-	LDA.b #$02			;\
+	LDA.b #($01<<!Define_SMW_TilemapUploadDMAChannel)			;\
 	STA.w !REGISTER_DMAEnable	;/Regular DMA Channel Enable
 	STY.w !REGISTER_VRAMAddressIncrementValue
 	LDA.w !RAM_SMW_Blocks_Layer2VRAMUploadAddressHi
@@ -3354,10 +3399,10 @@ CODE_008906:
 	LDX.b #$06
 CODE_008928:
 	LDA.w PARAMS_008A39,x
-	STA.w DMA[$01].Parameters,x
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].Parameters,x
 	DEX
 	BPL.b CODE_008928
-	LDA.b #$02
+	LDA.b #($01<<!Define_SMW_TilemapUploadDMAChannel)
 	STA.w !REGISTER_DMAEnable	; Regular DMA Channel Enable
 	STY.w !REGISTER_VRAMAddressIncrementValue
 	LDA.w !RAM_SMW_Blocks_Layer2VRAMUploadAddressHi
@@ -3368,10 +3413,10 @@ CODE_008928:
 	LDX.b #$06
 CODE_008948:
 	LDA.w PARAMS_008A40,x
-	STA.w DMA[$01].Parameters,x
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].Parameters,x
 	DEX
 	BPL.b CODE_008948
-	LDA.b #$02
+	LDA.b #($01<<!Define_SMW_TilemapUploadDMAChannel)
 	STA.w !REGISTER_DMAEnable	; Regular DMA Channel Enable
 	STY.w !REGISTER_VRAMAddressIncrementValue
 	LDA.w !RAM_SMW_Blocks_Layer2VRAMUploadAddressHi
@@ -3384,10 +3429,10 @@ CODE_008948:
 	LDX.b #$06
 CODE_00896B:
 	LDA.w PARAMS_008A47,x
-	STA.w DMA[$01].Parameters,x
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].Parameters,x
 	DEX
 	BPL.b CODE_00896B
-	LDA.b #$02
+	LDA.b #($01<<!Define_SMW_TilemapUploadDMAChannel)
 	STA.w !REGISTER_DMAEnable	; Regular DMA Channel Enable
 	JMP.w DoneUpdatingLayer2	; Done with Layer 2; return.
 
@@ -3401,10 +3446,10 @@ VerticalLayer2Leve1:
 	LDX.b #$06
 CODE_00898F:
 	LDA.w PARAMS_008A32,x
-	STA.w DMA[$01].Parameters,x
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].Parameters,x
 	DEX
 	BPL.b CODE_00898F
-	LDA.b #$02
+	LDA.b #($01<<!Define_SMW_TilemapUploadDMAChannel)
 	STA.w !REGISTER_DMAEnable	; Regular DMA Channel Enable
 	STY.w !REGISTER_VRAMAddressIncrementValue
 	LDA.w !RAM_SMW_Blocks_Layer2VRAMUploadAddressHi
@@ -3416,12 +3461,12 @@ CODE_00898F:
 	LDX.b #$06
 CODE_0089B1:
 	LDA.w PARAMS_008A39,x
-	STA.w DMA[$01].Parameters,x
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].Parameters,x
 	DEX
 	BPL.b CODE_0089B1
 	LDA.b #$40
-	STA.w DMA[$01].SizeLo		; Number Bytes to Transfer (Low Byte) (DMA)
-	LDA.b #$02
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].SizeLo		; Number Bytes to Transfer (Low Byte) (DMA)
+	LDA.b #($01<<!Define_SMW_TilemapUploadDMAChannel)
 	STA.w !REGISTER_DMAEnable	; Regular DMA Channel Enable
 	STY.w !REGISTER_VRAMAddressIncrementValue
 	LDA.w !RAM_SMW_Blocks_Layer2VRAMUploadAddressHi
@@ -3433,10 +3478,10 @@ CODE_0089B1:
 	LDX.b #$06
 CODE_0089D8:
 	LDA.w PARAMS_008A40,x
-	STA.w DMA[$01].Parameters,x
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].Parameters,x
 	DEX
 	BPL.b CODE_0089D8
-	LDA.b #$02
+	LDA.b #($01<<!Define_SMW_TilemapUploadDMAChannel)
 	STA.w !REGISTER_DMAEnable	; Regular DMA Channel Enable
 	STY.w !REGISTER_VRAMAddressIncrementValue
 	LDA.w !RAM_SMW_Blocks_Layer2VRAMUploadAddressHi
@@ -3450,12 +3495,12 @@ CODE_0089D8:
 	LDX.b #$06
 CODE_0089FD:
 	LDA.w PARAMS_008A47,x
-	STA.w DMA[$01].Parameters,x
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].Parameters,x
 	DEX
 	BPL.b CODE_0089FD
 	LDA.b #$40
-	STA.w DMA[$01].SizeLo		; Number Bytes to Transfer (Low Byte) (DMA)
-	LDA.b #$02
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].SizeLo		; Number Bytes to Transfer (Low Byte) (DMA)
+	LDA.b #($01<<!Define_SMW_TilemapUploadDMAChannel)
 	STA.w !REGISTER_DMAEnable	; Regular DMA Channel Enable
 
 DoneUpdatingLayer2:
@@ -3522,9 +3567,13 @@ Main:
 if ver_is_smasw(!Define_Global_ROMToAssemble) == 0
 	; SMW's IRQ routine.
 	SEI				; Set Interrupt flag so routine can start
+if defined("Define_SMW_SA1")
+	NOP #4
+else
 	PHP					; Optimization: Same deal about PHP/PLP as with the NMI routine above.
 	REP.b #$30
 	PHA
+endif
 	PHX
 	PHY
 	PHB
@@ -3541,7 +3590,11 @@ IRQNMIEnding:
 	STA.w !REGISTER_IRQNMIAndJoypadEnableFlags	; Enable NMI Interrupt and Automatic Joypad reading
 	LDY.b #$1F
 SA1Pack_RemoveJSRToWaitForHBlank2:
+if defined("Define_SMW_SA1")
+	NOP #3
+else
 	JSR.w SMW_WaitForHBlank_Entry2
+endif
 	LDA.b !RAM_SMW_Mirror_Layer3XPosLo	;\ Adjust scroll settings for layer 3
 	STA.w !REGISTER_BG3HorizScrollOffset	;|
 	LDA.b !RAM_SMW_Mirror_Layer3XPosHi	;|
@@ -3560,9 +3613,13 @@ if ver_is_smasw(!Define_Global_ROMToAssemble)
 	RTL
 else
 #SA1Pack_EndOfSNESIRQ:
+if defined("Define_SMW_SA1")
+	JML.l snes_nmi_end2
+else
 	REP.b #$30			; AXY->16
 	PLB				;\ Pull everything back
 	PLY				;|
+endif
 	PLX				;|
 	PLA				;|
 	PLP				;/
@@ -3577,7 +3634,11 @@ CODE_0083BA:
 	STA.w !REGISTER_IRQNMIAndJoypadEnableFlags	; #$81 -> NMI / Controller Enable reg
 	LDY.b #$14
 #SA1Pack_RemoveJSRToWaitForHBlank3:
+if defined("Define_SMW_SA1")
+	NOP #3
+else
 	JSR.w SMW_WaitForHBlank_Entry2
+endif
 	JSR.w SMW_SetMode7PPUPointersAndLayer1Scroll_Main
 	BRA.b CODE_0083A8
 
@@ -3610,7 +3671,11 @@ namespace SMW_Mode7Layer1Scroll
 Main:
 	STA.w !REGISTER_IRQNMIAndJoypadEnableFlags	; A -> NMI/Joypad Auto-Read/HV-Count Control Register ; NMI, V/H Count, and Joypad Enable
 #SA1Pack_RemoveJSRToWaitForHBlank1:
+if defined("Define_SMW_SA1")
+	NOP #3
+else
 	JSR.w SMW_WaitForHBlank_Main					; Note: This routine is called during VBlank and IRQ. This JSR.w SMW_is useless if in the former.
+endif
 	NOP #2
 	LDA.b #!BGModeAndTileSizeSetting_Mode07Enable	; \Write Screen register
 	STA.w !REGISTER_BGModeAndTileSizeSetting	; / ; BG Mode and Tile Size Setting
@@ -3858,7 +3923,11 @@ NoLayer1Shaking:
 	JSR.w SMW_UpdateCurrentPlayerPositionRAM_Main	; Update X/Y pos
 	JSR.w SMW_GameMode14_InLevel_CODE_00C47E	;>Mario interaction
 	JSL.l SMW_ProcessNormalSprites_Main	;>handle sprites
+if defined("Define_SMW_SA1")
+	JSL.l level_mode_optimize
+else
 	JSL.l Bank02			;>misc timers?
+endif
 	PLA
 	STA.b !RAM_SMW_Mirror_CurrentLayer1YPosHi	;| Return layers to original position
 	PLA
@@ -3886,7 +3955,11 @@ CODE_0086CF:
 	BPL.b CODE_0086CF
 	SEP.b #$30			; AXY->8
 	LDA.b #$F0			;\ Clear out OAM.
+if defined("Define_SMW_SA1")
+	JSL.l oam_clear_invoke
+else
 	JSL.l !RAM_SMW_Sprites_ResetSpriteOAMRt+$012E	;/
+endif
 	RTS
 namespace off
 endmacro
@@ -3955,8 +4028,13 @@ DATA_00C478:
 	db $30,$33,$33,$30,$01,$00
 
 CODE_00C47E:
+if defined("Define_SMW_SA1")
+	JSL.l level_mode_optimize_00C47E
+	RTS
+else
 	STZ.b !RAM_SMW_Player_HidePlayerTileFlags
 	LDA.w !RAM_SMW_UnusedRAM_GotInvincibleStarFromGoal			;\ Optimization: Unused function
+endif
 	BPL.b CODE_00C48C							;|
 	JSL.l SMW_GivePlayerStarPower_Main					;|
 	STZ.w !RAM_SMW_UnusedRAM_GotInvincibleStarFromGoal			;/
@@ -4120,8 +4198,14 @@ Return00C592:
 	RTS
 
 HandlePlayerState:
+if defined("Define_SMW_SA1")
+	JSL.l level_mode_mario_animation
+	RTS
+	db $00	; the tail of the JSL.l below, which the hijack leaves unreached
+else
 	LDA.b !RAM_SMW_Player_CurrentState
 	JSL.l SMW_ExecutePtr_Absolute
+endif
 
 PlayerStatePtrs:
 base $000000
@@ -4236,7 +4320,7 @@ namespace SMW_SpawnMountedYoshiOnLevelLoad
 Main:
 	LDA.b #!Define_SMW_Sound1DFA_TurnOnYoshiDrum
 	STA.w !RAM_SMW_IO_SoundCh2	; / Play sound effect
-	LDX.b #!Define_SMW_MaxNormalSpriteSlot-$0B
+	LDX.b #!Define_SMW_StockMaxNormalSpriteSlot-$0B
 	LDA.w !RAM_SMW_Flag_DisableBonusGameSprite
 	BNE.b CODE_00FC98
 	LDX.b #$05
@@ -4246,21 +4330,26 @@ Main:
 	JSL.l SMW_FindFreeNormalSpriteSlot_HighPriority	; \ X = First free sprite slot, #$03 if none free
 	TYX
 	BPL.b CODE_00FC98
-	LDX.b #!Define_SMW_MaxNormalSpriteSlot-$08
+	LDX.b #!Define_SMW_StockMaxNormalSpriteSlot-$08
 CODE_00FC98:
 	LDA.b #!Define_SMW_NorSprStatus08_Normal	; \ Status = Normal
 	STA.w !RAM_SMW_NorSpr_CurrentStatus,x
+if defined("Define_SMW_SA1")
+	; SA-1 Pack: Regenerating Yoshi when transitioning screens.
+	JSL.l YOSHI_SET2
+else
 	LDA.b #!Define_SMW_SpriteID_NorSpr035_Yoshi	; \ Sprite = Yoshi
 	STA.b !RAM_SMW_NorSpr_SpriteID,x
+endif
 	LDA.b !RAM_SMW_Player_XPosLo	; \ Yoshi X position = Mario X position
-	STA.b !RAM_SMW_NorSpr_XPosLo,x
+	STA.b !RAM_SMW_NorSpr_XPosLo_x
 	LDA.b !RAM_SMW_Player_XPosHi
 	STA.w !RAM_SMW_NorSpr_XPosHi,x
 	LDA.b !RAM_SMW_Player_YPosLo	; \ Yoshi's Y position = Mario Y position - #$10
 	SEC				; | Mario Y position = Mario Y position - #$10
 	SBC.b #$10
 	STA.b !RAM_SMW_Player_YPosLo
-	STA.b !RAM_SMW_NorSpr_YPosLo,x
+	STA.b !RAM_SMW_NorSpr_YPosLo_x
 	LDA.b !RAM_SMW_Player_YPosHi
 	SBC.b #$00
 	STA.b !RAM_SMW_Player_YPosHi
@@ -4389,8 +4478,13 @@ BeginDecompression:
 	LDY.w #$0000			; start at beginning of destination
 CODE_00B8E3:
 #LM182Hijack_CustomCompressionPatch:
+if defined("Define_SMW_SA1")
+	JSL.l CodeStart
+	RTS
+else
 	JSR.w ReadByte						;\ LM: Hijacks this when installing either of the optional compression routine hijacks (1.82+)
 	CMP.b #$FF						;/
+endif
 	BNE.b CODE_00B8ED		; |Compressed graphics files ends with xFF IIRC
 	SEP.b #$10			; | XY->8
 	RTS
@@ -4669,10 +4763,10 @@ Main:
 	LDX.b #$06
 CODE_008D10:
 	LDA.w PARAMS_008D90,x
-	STA.w DMA[$01].Parameters,x	; Load up the DMA regs
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].Parameters,x	; Load up the DMA regs
 	DEX				; DMA Source = 8C:8118 (...)
 	BPL.b CODE_008D10		; Dest = $2118, Transfer: #$08 bytes
-	LDA.b #$02
+	LDA.b #($01<<!Define_SMW_TilemapUploadDMAChannel)
 	STA.w !REGISTER_DMAEnable	; Do the DMA ; Regular DMA Channel Enable
 	LDA.b #$80			; \ Set VRAM mode = same as above
 	STA.w !REGISTER_VRAMAddressIncrementValue	;  |Address = #$5042 ; VRAM Address Increment Value
@@ -4683,10 +4777,10 @@ CODE_008D10:
 	LDX.b #$06
 CODE_008D2F:
 	LDA.w PARAMS_008D97,x
-	STA.w DMA[$01].Parameters,x
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].Parameters,x
 	DEX
 	BPL.b CODE_008D2F
-	LDA.b #$02
+	LDA.b #($01<<!Define_SMW_TilemapUploadDMAChannel)
 	STA.w !REGISTER_DMAEnable	; Start DMA ; Regular DMA Channel Enable
 	LDA.b #$80			; \prep VRAM for another write
 	STA.w !REGISTER_VRAMAddressIncrementValue	;  | ; VRAM Address Increment Value
@@ -4697,10 +4791,10 @@ CODE_008D2F:
 	LDX.b #$06
 CODE_008D4E:
 	LDA.w PARAMS_008D9E,x
-	STA.w DMA[$01].Parameters,x
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].Parameters,x
 	DEX
 	BPL.b CODE_008D4E
-	LDA.b #$02			; \Start Transfer
+	LDA.b #($01<<!Define_SMW_TilemapUploadDMAChannel)			; \Start Transfer
 	STA.w !REGISTER_DMAEnable	; / ; Regular DMA Channel Enable
 	LDA.b #$80			; \
 	STA.w !REGISTER_VRAMAddressIncrementValue	;  |Set up VRAM once more ; VRAM Address Increment Value
@@ -4711,10 +4805,10 @@ CODE_008D4E:
 	LDX.b #$06
 CODE_008D6D:
 	LDA.w PARAMS_008DA5,x
-	STA.w DMA[$01].Parameters,x
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].Parameters,x
 	DEX
 	BPL.b CODE_008D6D
-	LDA.b #$02			; \Transfer
+	LDA.b #($01<<!Define_SMW_TilemapUploadDMAChannel)			; \Transfer
 	STA.w !REGISTER_DMAEnable	; / ; Regular DMA Channel Enable
 	LDX.b #(SMW_StatusBarTilemap_ThirdRowEnd-SMW_StatusBarTilemap_SecondRow-$02)/2
 	LDY.b #SMW_StatusBarTilemap_ThirdRowEnd-SMW_StatusBarTilemap_SecondRow-$02
@@ -5162,7 +5256,7 @@ CODE_009DB5:
 	REP.b #$30
 	TAX
 	CLC
-	ADC.w #!SRAM_SMW_MarioA_Backup
+	ADC.w #!SRAM_SMW_MarioA_Backup-!SRAM_SMW_MarioA_StartLocation	; The backup's offset from the first file: an index, not an address
 	TAY
 CODE_009DC4:
 	PHX
@@ -5721,14 +5815,14 @@ CODE_0092C8:
 	LDA.w PARAMS_009318,x
 	STA.w HDMA[$06].Parameters,x
 	LDA.w PARAMS_00931D,x
-	STA.w HDMA[$07].Parameters,x
+	STA.w HDMA[!Define_SMW_WindowHDMAChannel].Parameters,x
 	DEX
 	BPL.b CODE_0092C8
 	LDA.b #$00			;\ HDMA channels 5,6, and 7 all use data bank 00 and 00 only!
 	STA.w HDMA[$05].IndirectSourceBank	;|Data Bank (H-DMA)
 	STA.w HDMA[$06].IndirectSourceBank	;|Data Bank (H-DMA)
-	STA.w HDMA[$07].IndirectSourceBank	;/Data Bank (H-DMA)
-	LDA.b #$E0			;\ Enable HDMAs on channels 5, 6, and 7.
+	STA.w HDMA[!Define_SMW_WindowHDMAChannel].IndirectSourceBank	;/Data Bank (H-DMA)
+	LDA.b #($60|($01<<!Define_SMW_WindowHDMAChannel))			;\ Enable HDMAs on channels 5, 6, and 7.
 	STA.w !RAM_SMW_Mirror_HDMAEnable	;/
 Main:
 	REP.b #$30			; AXY->16
@@ -8519,10 +8613,10 @@ Main:
 	LDX.b #$06
 CODE_00860E:
 	LDA.w PARAMS_008649,x
-	STA.w DMA[$01].Parameters,x
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].Parameters,x
 	DEX
 	BPL.b CODE_00860E
-	LDY.b #$02			; DMA something to VRAM, my guess is a tilemap...
+	LDY.b #($01<<!Define_SMW_TilemapUploadDMAChannel)			; DMA something to VRAM, my guess is a tilemap...
 	STY.w !REGISTER_DMAEnable	; Regular DMA Channel Enable
 	LDA.b #$38			;\ YXPCCCTT to use for the blank tile.
 	STA.b !RAM_SMW_Misc_ScratchRAM00	;/
@@ -8534,11 +8628,11 @@ CODE_00860E:
 	LDX.b #$06			; And Repeat the DMA
 CODE_00862F:
 	LDA.w PARAMS_008649,x
-	STA.w DMA[$01].Parameters,x
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].Parameters,x
 	DEX
 	BPL.b CODE_00862F
 	LDA.b #!REGISTER_WriteToVRAMPortHi	; \but change desination address to $2119
-	STA.w DMA[$01].Destination	; / ; B Address
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].Destination	; / ; B Address
 	STY.w !REGISTER_DMAEnable	; Start DMA ; Regular DMA Channel Enable
 	STZ.b !RAM_SMW_Mirror_OAMAddressLo	; Clear the current OAM address.
 	JSL.l !RAM_SMW_Sprites_ResetSpriteOAMRt	;\ Clear OAM data.
@@ -8567,6 +8661,18 @@ Main:
 	LDX.w #$1FFE				;/ Most likely used to prevent VRAM corruption
 CODE_008A53:
 #SA1Pack_VectorJMLsAndClearSA1RAM:
+if defined("Define_SMW_SA1")
+	JSL.l ClearStack
+	RTS
+	NOP #4
+	JML.l mmc_rom_reset
+	; The Super MMC's bank-switch values, read back by the pack's own MMC code.
+if !Define_Global_ROMSize > !ROMSize_4MB
+	db $04,$05,$06,$07
+else
+	db $80,$81,$82,$83
+endif
+else
 	STZ.b !RAM_SMW_Misc_ScratchRAM00,x	;>Clears out (in 16-bit) $0000-$0100 and $01FF-$1FFE
 CODE_008A55:
 	DEX				;\Decrement x twice
@@ -8577,6 +8683,13 @@ CODE_008A55:
 	BPL.b CODE_008A55		;/without clearing (pretty inefficient, due to not having a seperate loop).
 CODE_008A61:
 	CPX.w #$FFFE			;\If index goes invalid (past $0000), break out the loop.
+endif
+if defined("Define_SMW_SA1")
+	; SA-1 Pack's own code sits here, from the vendored tree.
+namespace off
+incsrc "asm/inline/008A64.asm"
+namespace SMW_InitializeFirst8KBOfRAM
+else
 	BNE.b CODE_008A53		;/(and clear selected address)
 	LDA.w #$0000			;\
 	STA.l !RAM_SMW_Misc_StripeImageUploadIndexLo	;| Initialize the stripe image and palette upload tables.
@@ -8584,6 +8697,7 @@ CODE_008A61:
 	SEP.b #$30			;| AXY->8
 	LDA.b #$FF			;|
 	STA.l SMW_StripeImageUploadTable[$00].LowByte	;/
+endif
 	RTS
 namespace off
 endmacro
@@ -8596,8 +8710,15 @@ namespace SMW_ClearOverworldAndCutsceneRAM
 
 Main:
 	REP.b #$10			; XY->16
+if defined("Define_SMW_SA1")
+	; SA-1 Pack: This is a special hijack used to reset the values in all IRAM
+	; sprite tables to 0. It gets called on level load.
+	JSL.l SPRITE_IRAM_RESET
+	NOP
+else
 	SEP.b #$20			; A->8
 	LDX.w #$00BD
+endif
 CODE_00A1AD:
 	STZ.b !RAM_SMW_Mirror_CurrentLayer1XPosLo,x	; |Clear RAM addresses $1A-$D7
 	DEX
@@ -8643,8 +8764,8 @@ Sub:
 	DEY
 CODE_00FBBC:
 	CLC
-	ADC.b !RAM_SMW_NorSpr_XPosLo,x
-	STA.b !RAM_SMW_NorSpr_XPosLo,x
+	ADC.b !RAM_SMW_NorSpr_XPosLo_x
+	STA.b !RAM_SMW_NorSpr_XPosLo_x
 	TYA
 	ADC.w !RAM_SMW_NorSpr_XPosHi,x
 	STA.w !RAM_SMW_NorSpr_XPosHi,x
@@ -8884,7 +9005,11 @@ CODE_00BFBC:
 	DEC
 	PHK
 	PER.w TileGenerationPtr-$01
+if defined("Define_SMW_SA1")
+	JML.l CheckForSA1
+else
 	JML.l SMW_ExecutePtr_Absolute	; $9C - Tile generated
+endif
 
 TileGenerationPtr:
 	dw SMW_GenericPage00Tile_SetItemMemory		; Empty Tile (Sets Item Memory)
@@ -9115,8 +9240,12 @@ Main:
 ; the actual graphics of the tile. Both $00C074 and $00C0C1 use it (the
 ; former jumps to it, and it immediately follows the latter).
 CODE_00C0FB:
+if defined("Define_SMW_SA1")
+	JSL.l level_mode_stripe_help
+else
 	LDA.b !RAM_SMW_Misc_LevelLayoutFlags
 	STA.b !RAM_SMW_Misc_ScratchRAM00
+endif
 	LDA.w !RAM_SMW_Misc_CurrentLayerBeingProcessedLo
 	BEQ.b CODE_00C106
 	LSR.b !RAM_SMW_Misc_ScratchRAM00
@@ -11476,7 +11605,11 @@ Main:
 	JSR.w SMW_CheckWhichControllersArePluggedIn_Main
 	INC.b !RAM_SMW_Counter_LocalFrames	; Increase alternate frame counter
 	JSL.l !RAM_SMW_Sprites_ResetSpriteOAMRt
+if defined("Define_SMW_SA1")
+	JSL.l overworld_main
+else
 	JSL.l Bank04			; (Bank 4.asm)
+endif
 	JMP.w SMW_CompressOAMTileSizeBuffer_Main
 namespace off
 endmacro
@@ -12569,10 +12702,15 @@ TilePriority:
 	db $30			; Overworld Border/Mode 7 room
 
 Main:
+if defined("Define_SMW_SA1")
+	JML.l level_mode_optimize_00E2BD
+	db $78	; the tail of the LDA.b below, which the hijack leaves unreached
+else
 	PHB				;\
 	PHK				;|start of a routine?
 	PLB				;/
 	LDA.b !RAM_SMW_Player_HidePlayerTileFlags	;\
+endif
 	CMP.b #$FF			;| If mario is completely
 	BEQ.b CODE_00E2CA		;/ disappeared
 	JSL.l CODE_01EA70
@@ -17346,11 +17484,11 @@ Main:
 	LDX.b #$04			; Index for DMA set up
 -:
 	LDA.w PARAMS_009277,x		;\ Set up DMA settings for $4370-$4374.
-	STA.w HDMA[$07].Parameters,x	;|  (controls, destination, source)
+	STA.w HDMA[!Define_SMW_WindowHDMAChannel].Parameters,x	;|  (controls, destination, source)
 	DEX				;|
 	BPL.b -				;/
 	LDA.b #$00			; Set HDMA data bank to $00.
-	STA.w HDMA[$07].IndirectSourceBank	; Data Bank (H-DMA)
+	STA.w HDMA[!Define_SMW_WindowHDMAChannel].IndirectSourceBank	; Data Bank (H-DMA)
 EndHDMA:
 	STZ.w !RAM_SMW_Mirror_HDMAEnable	; Disable HDMA.
 ClearWindowTable:
@@ -17413,7 +17551,7 @@ else
 endif
 	BCC.b WindowHDMAenable
 CODE_0092A0:
-	LDA.b #$80			;\ Enable HDMA on channel 7.
+	LDA.b #($01<<!Define_SMW_WindowHDMAChannel)			;\ Enable HDMA on channel 7.
 	STA.w !RAM_SMW_Mirror_HDMAEnable	;/
 	SEP.b #$10			; XY->8
 	RTS
@@ -17743,7 +17881,7 @@ namespace SMW_UnusedYoshiRelatedRoutine
 ; be turned to green and without wings. Note that the routine overwrites the
 ; Y register. $00F6CE: [$10] X speed given to Yoshi.
 Main:
-	LDY.b #!Define_SMW_MaxNormalSpriteSlot	; \ Unreachable instructions
+	LDY.b #!Define_SMW_StockMaxNormalSpriteSlot	; \ Unreachable instructions
 ADDR_00FC25:
 	LDA.w !RAM_SMW_NorSpr_CurrentStatus,y	; / Status = Carried
 	CMP.b #!Define_SMW_NorSprStatus08_Normal
@@ -17811,7 +17949,7 @@ namespace SMW_ClearOutNormalSpriteSlots
 
 ; Unreachable, but can be JSL'ed to clear out the sprite status table.
 ADDR_00FA10: 						;\ Note: Unused RTL varient of above routine.
-	LDX.b #!Define_SMW_MaxNormalSpriteSlot		;|
+	LDX.b #!Define_SMW_StockMaxNormalSpriteSlot		;|
 -:							;|
 	STZ.w !RAM_SMW_NorSpr_CurrentStatus,x		;|
 	DEX						;|
@@ -18038,8 +18176,13 @@ CODE_00CA83:
 TitleScreenEntry:
 KeyholeEntry:
 #SA1Pack_OptimizeThisRoutine:
+if defined("Define_SMW_SA1")
+	JSL.l Circle_SwitchCPU
+	RTS
+else
 	REP.b #$30			; AXY->16
 	AND.w #$00FF			; Keep lower byte of A
+endif
 	ASL
 	DEC				; |Set Y to ((2A-1)*2)
 	ASL
@@ -18120,7 +18263,7 @@ CODE_00CAFE:
 	DEC.b !RAM_SMW_Misc_ScratchRAM01
 	BNE.b CODE_00CABD
 CODE_00CB0A:
-	LDA.b #$80
+	LDA.b #($01<<!Define_SMW_WindowHDMAChannel)
 	; Change from '8D' to '0C' to not make HDMA gradients act strangely at the
 	; end of the level (goal tape). Of course, you should still avoid using
 	; HDMA channel 7 if this is all you change.
@@ -18137,6 +18280,12 @@ KeyholeHDMAData:
 	incbin "geometry/shapes/keyhole.bin"
 
 CODE_00CC14:
+if defined("Define_SMW_SA1")
+	; SA-1 Pack's own code sits here, from the vendored tree.
+namespace Circle
+incsrc "asm/inline/00CC14.asm"
+namespace SMW_UpdateHDMAWindowBuffer
+else
 	PHY
 	LDA.b !RAM_SMW_Misc_ScratchRAM01
 	STA.w !REGISTER_DividendHi	; Dividend (High-Byte)
@@ -18165,6 +18314,7 @@ CODE_00CC14:
 	STA.b !RAM_SMW_Misc_ScratchRAM02
 	PLY
 	RTS
+endif
 namespace off
 endmacro
 
@@ -18673,11 +18823,11 @@ namespace SMW_NorSpr029_KoopaKids_Status01
 
 SetPlatformKoopaKidsInitialPosition:
 	LDA.b #$A0
-	STA.b !RAM_SMW_NorSpr_XPosLo,x
+	STA.b !RAM_SMW_NorSpr_XPosLo_x
 	LDA.b #$00
 	STA.w !RAM_SMW_NorSpr_XPosHi,x
 	LDA.b #$00
-	STA.b !RAM_SMW_NorSpr_YPosLo,x
+	STA.b !RAM_SMW_NorSpr_YPosLo_x
 	LDA.b #$00
 	STA.w !RAM_SMW_NorSpr_YPosHi,x
 	RTL
@@ -18926,7 +19076,7 @@ ADDR_00FF25:
 SyncLayer3ScrollToLayer1:
 	LDA.w !RAM_SMW_NorSpr_XPosHi,x
 	XBA
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x
 	REP.b #$20			; A->16
 	SEC
 	SBC.b !RAM_SMW_Mirror_CurrentLayer1XPosLo
@@ -18938,7 +19088,7 @@ SyncLayer3ScrollToLayer1:
 	SEP.b #$20			; A->8
 	LDA.w !RAM_SMW_NorSpr_YPosHi,x
 	XBA
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x
 	REP.b #$20			; A->16
 	SEC
 	SBC.b !RAM_SMW_Mirror_CurrentLayer1YPosLo
@@ -18959,7 +19109,7 @@ namespace SMW_NorSpr089_Layer3Smasher_Status08
 UpdateLayer3SmasherPosition:
 	LDA.w !RAM_SMW_NorSpr_XPosHi,x
 	XBA
-	LDA.b !RAM_SMW_NorSpr_XPosLo,x
+	LDA.b !RAM_SMW_NorSpr_XPosLo_x
 	REP.b #$20			; A->16
 	CMP.w #$FF00
 	BMI.b CODE_00FF73
@@ -18972,7 +19122,7 @@ CODE_00FF76:
 	SEP.b #$20			; A->8
 	LDA.w !RAM_SMW_NorSpr_YPosHi,x
 	XBA
-	LDA.b !RAM_SMW_NorSpr_YPosLo,x
+	LDA.b !RAM_SMW_NorSpr_YPosLo_x
 	REP.b #$20			; A->16
 	STA.b !RAM_SMW_Misc_ScratchRAM00
 	LDA.w #$00A0

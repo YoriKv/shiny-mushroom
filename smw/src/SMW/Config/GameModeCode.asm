@@ -35,9 +35,9 @@ includeonce
 ;# bank pointed at its own bank, and an RTL to return by.
 ;#
 ;# The rows and the code they name are two incsrc'd fragments the editor
-;# regenerates (code/gamemode/), read from the end of the ROM map like the
-;# levels' own code, because the code is variable-size and may hijack the
-;# game.
+;# regenerates (code/gamemode/), emitted in the level bank's sequence like
+;# the levels' own code, once every bank has emitted, because the code is
+;# variable-size and may hijack the game.
 ;#
 ;# The define needs a cartridge assembled at 1 MB or larger, for the level
 ;# bank the stubs share with the levels' code.
@@ -55,25 +55,48 @@ endif
 !Define_SMW_GameModeCount #= $2A
 !Define_SMW_GameModeCodeRowsBytes #= !Define_SMW_GameModeCount*$0002
 
+; Which entry points exist, so a fragment line naming anything else is
+; refused at the line rather than declaring a row no table ever reads.
+!SMW_GameModeCode_InitKnown	#= !TRUE
+!SMW_GameModeCode_MainKnown	#= !TRUE
+!SMW_GameModeCode_EndKnown	#= !TRUE
+
 ;#############################################################################################################
 ;# The fragment's lines: one mode's routine at one moment, or every mode's.
 ;#############################################################################################################
 
 ; One mode's routine at one entry point, as the label the mode's own file
-; defines. Placed at the mode's own row of the named table, so the
-; fragment's lines may come in any order. The row is a word: every routine
-; is in this bank.
+; defines. The line declares the row as a define keyed on the table and
+; the mode, and the placement below emits each table row by row from those
+; -- so the fragment's lines may come in any order, a mode the fragment
+; names twice keeps the later line, and nothing is written anywhere but in
+; sequence. The row is a word: every routine is in this bank. The mode is
+; evaluated first so the key is one spelling whatever the line wrote.
 macro SMW_GameModeCode(table, mode, routine)
+	assert defined("SMW_GameModeCode_<table>Known"), "A game mode code row names an entry point that is not init, main or end. Check code/gamemode/gamemode-code.asm."
 	assert (<mode>) < !Define_SMW_GameModeCount, "A game mode code row names a mode the game does not dispatch. Check code/gamemode/gamemode-code.asm."
-	assert ((<routine>)>>$10) == !Define_SMW_LevelBank, "A game mode's code is not in the level bank. Every routine the rows name is assembled into it, so the rows can be words. Check code/gamemode/."
-	pushpc
-	org !SMW_GameModeCode_<table>At+((<mode>)*$0002)
-	dw <routine>
-	pullpc
+	!SMW_GameModeCodeKey #= <mode>
+	!{SMW_GameModeCodeRow_<table>_!{SMW_GameModeCodeKey}} = <routine>
+endmacro
+
+; One table, a word per mode: the mode's routine where the fragment named
+; one, the routine that does nothing where it did not.
+macro SMW_GameModeCode_Rows(table)
+	!SMW_GameModeCodeRow #= 0
+	while !SMW_GameModeCodeRow < !Define_SMW_GameModeCount
+		if defined("SMW_GameModeCodeRow_<table>_!{SMW_GameModeCodeRow}")
+			assert ((!{SMW_GameModeCodeRow_<table>_!{SMW_GameModeCodeRow}})>>$10) == !Define_SMW_LevelBank, "A game mode's code is not in the level bank. Every routine the rows name is assembled into it, so the rows can be words. Check code/gamemode/."
+			dw !{SMW_GameModeCodeRow_<table>_!{SMW_GameModeCodeRow}}
+		else
+			dw SMW_GameModeCode_None
+		endif
+		!SMW_GameModeCodeRow #= !SMW_GameModeCodeRow+1
+	endwhile
 endmacro
 
 ; A routine every mode runs at one entry point, ahead of the mode's own row.
 macro SMW_GameModeCodeAll(table, routine)
+	assert defined("SMW_GameModeCode_<table>Known"), "A game mode code line names an entry point that is not init, main or end. Check code/gamemode/gamemode-code.asm."
 	!SMW_GameModeCode_All<table> = <routine>
 endmacro
 
@@ -96,35 +119,35 @@ endmacro
 
 ;#############################################################################################################
 ;# Where it goes: the tables, the two routines the frame stub calls, and
-;# the modes' own code, all in the level bank. Placed from the end of each
-;# ROM map, after every bank has emitted, so a file that hijacks the game
-;# lands.
+;# the modes' own code, all in the level bank, behind the levels' own code
+;# in the bank's one sequence (Config/LevelBank.asm) -- placed once every
+;# bank has emitted, so a file that hijacks the game lands.
 ;#############################################################################################################
 
-; Place the tables, the routines and the modes' code. Called from the end of
-; each ROM map.
+; Place the tables, the routines and the modes' code. Called from
+; %SMW_PlaceLevelBank.
 macro SMW_PlaceGameModeCode()
 if !Define_SMW_GameModeCode == !TRUE
-	pushpc
-	org !SMW_LevelBankNext
 	assert SMW_InitAndMainLoop_GameModePtrs_GameMode29_DoNothingOnTheEndScreen == (!Define_SMW_GameModeCount-1)*$0002, "The game dispatches a different number of modes than Config/GameModeCode.asm states in Define_SMW_GameModeCount."
 
 ; What a row names until a fragment line names something else: nothing to
-; run. In front of the tables so their fill can name it.
+; run. In front of the tables so their rows can name it.
 SMW_GameModeCode_None:
 	RTL
 
+; The rows fragment, code/gamemode/gamemode-code.asm: one %SMW_GameModeCode
+; line per mode and entry point, each declaring its row and emitting
+; nothing, and the tool's `*` as %SMW_GameModeCodeAll. Read here, in front
+; of the tables it fills.
+	incsrc "code/gamemode/gamemode-code.asm"
+
 ; One row per mode per entry point.
 SMW_GameModeCode_InitRows:
-	!SMW_GameModeCode_InitAt #= pc()
-	fillword SMW_GameModeCode_None : fill !Define_SMW_GameModeCodeRowsBytes
+	%SMW_GameModeCode_Rows(Init)
 SMW_GameModeCode_MainRows:
-	!SMW_GameModeCode_MainAt #= pc()
-	fillword SMW_GameModeCode_None : fill !Define_SMW_GameModeCodeRowsBytes
+	%SMW_GameModeCode_Rows(Main)
 SMW_GameModeCode_EndRows:
-	!SMW_GameModeCode_EndAt #= pc()
-	fillword SMW_GameModeCode_None : fill !Define_SMW_GameModeCodeRowsBytes
-	incsrc "code/gamemode/gamemode-code.asm"
+	%SMW_GameModeCode_Rows(End)
 	assert pc() == SMW_GameModeCode_InitRows+($0003*!Define_SMW_GameModeCodeRowsBytes), "The game mode code tables do not end where their three tables should. Check code/gamemode/gamemode-code.asm."
 
 ; Before the game's own routine: the mode's init on its first frame, its
@@ -162,7 +185,5 @@ SMW_GameModeCode_Data:
 	incsrc "code/gamemode/gamemode-code-data.asm"
 	assert (pc()>>$10) == !Define_SMW_LevelBank, "A game mode's code file left the level bank: an org into the game needs a pushpc/pullpc bracket around it, or the rest of the file assembles over the game. Check code/gamemode/."
 	assert pc() <= !Loc_SMW_LevelBank_RunEnd, "The game modes' code has outgrown the level bank: less fits in it than the editor was told. Check code/gamemode/."
-	!SMW_LevelBankNext #= pc()
-	pullpc
 endif
 endmacro

@@ -29,12 +29,12 @@ same choice under another handle -- the window routes its picks to the tab.
 What is armed is the dock's typed payload, so a click dispatches on what is
 in hand rather than on bookkeeping of its own.
 
-**A stamp sheet drawn whole is the one picture that is not the map.** Either
-stamp tab offers it (:meth:`OverworldMode.set_sheet_view`), and while it is
-up every gesture is on that sheet's entries -- there is nothing else under
-the pointer to mean. It is the same document under a different picture, so
-one history, one dirty flag and one Ctrl+S span both, and an undo made on the
-map reaches an edit made on the sheet.
+**The stamp sheets' contents are drawn elsewhere, on this document.** The
+Map16 environment (Go > Map16 Tiles) puts either sheet on the canvas and
+commits what it draws through :meth:`OverworldMode.commit_stamps`, so one
+history, one dirty flag and one Ctrl+S span both, and an undo made on the
+map reaches an edit made on a sheet. While it holds the canvas this mode
+keeps its picture current and shows nothing (:meth:`OverworldMode.lend_canvas`).
 
 Edits re-render locally -- only the cells that changed are patched -- so no
 placement costs an emulator round trip.
@@ -47,10 +47,10 @@ from dataclasses import dataclass, replace
 from enum import Enum, auto
 
 from PySide6.QtCore import QObject, QPoint, QRect, QSize, Qt
-from PySide6.QtGui import QColor, QImage
+from PySide6.QtGui import QColor, QImage, QPainter
 
 from shiny_mushroom.edit import History
-from shiny_mushroom.fields import Action, Choice
+from shiny_mushroom.fields import Choice
 from shiny_mushroom.hexnum import hexnum, hexspot
 from shiny_mushroom.level import BLOCK, TILE, Blocks
 from shiny_mushroom.overworld import (
@@ -109,10 +109,6 @@ from shiny_mushroom.overworld import (
     replayed_steps,
     repointed,
     sheet_at,
-    sheet_blocks,
-    sheet_grid,
-    sheet_spot,
-    sheet_tile,
     smoke_positions,
     spawn_cell,
     spawn_for_cell,
@@ -179,6 +175,7 @@ from shiny_mushroom.tile_clipboard import (
     FloatController,
     FloatingSelection,
     FloatStep,
+    GridStamp,
     SelectionMark,
     TileClipboard,
     centred,
@@ -192,8 +189,8 @@ from shiny_mushroom.ui.canvas import (
     Overlay,
 )
 from shiny_mushroom.ui.canvas_view import CanvasView
-from shiny_mushroom.ui.context_menu import SEPARATOR, Row
-from shiny_mushroom.ui.gestures import box_between
+from shiny_mushroom.ui.gestures import box_between, grab_stamp, snapped_box
+from shiny_mushroom.ui.map16_words import flipped_words, mirrored, mirrored_words
 from shiny_mushroom.ui.overlays import (
     DASH_LENGTH,
     MARQUEE_COLOR,
@@ -227,7 +224,7 @@ from shiny_mushroom.ui.overworld_events import (
     subs_at,
     subs_markers,
 )
-from shiny_mushroom.ui.overworld_picture import SheetPicture, WorldPicture
+from shiny_mushroom.ui.overworld_picture import WorldPicture
 from shiny_mushroom.ui.overworld_sprites import (
     EMPTY_OPACITY,
     SpriteDrag,
@@ -255,9 +252,10 @@ from shiny_mushroom.ui.tile_palette import (
     Layer1Tile,
     Layer2Word,
     PaletteTab,
+    SilentPick,
     SpritePick,
     StampBlock,
-    TilePaletteDock,
+    TilePalette,
     TransferRow,
 )
 from shiny_mushroom.ui.world_marks import (
@@ -277,7 +275,6 @@ class Kind(Enum):
     CELLS = auto()  # Layer 1 16x16 cells, keyed by cell_index
     TILES = auto()  # Layer 2 8x8 tiles, keyed by layer2_index
     STAMPS = auto()  # event stamp placements, keyed by sheet offset
-    SHEET = auto()  # stamp sheet entries drawn whole, keyed by sheet offset
     SPRITES = auto()  # sprite slots
     WARPS = auto()  # star and pipe warp entries, keyed by table entry
     EXITS = auto()  # path-exit entries, keyed by table entry
@@ -402,21 +399,21 @@ def _kind_of(table: TransferTable) -> Kind:
     return Kind.EXITS if table is EXITS else Kind.WARPS
 
 
+def _counted(count: int, noun: str) -> str:
+    """``count`` of ``noun``, with the ``s`` where English wants one."""
+    return f"{count} {noun}{'' if count == 1 else 's'}"
+
+
 #: The kinds whose marquee is drawn while it is being swept.
 #:
 #: A box is worth drawing where the box and the selection are different
-#: things: it reaches across the picture and catches whichever *records* it
-#: touches, so it has to be visible while the ants are somewhere else. Boxing
-#: a **tilemap** -- Layer 1's cells, Layer 2's tiles, a sheet's -- is not that.
-#: Every spot inside the box is caught, so the ants already outline the box
-#: itself and a second rectangle in another colour is one statement drawn
-#: twice.
+#: things: it reaches across the picture by the pixel and catches whichever
+#: *records* it touches -- a stamp does not fill the tilemap it sits on --
+#: so it has to be visible while the ants are somewhere else. Boxing a
+#: **tilemap** -- Layer 1's cells, Layer 2's tiles -- is not that. Every spot
+#: inside the box is caught, so the ants already outline the box itself and a
+#: second rectangle in another colour is one statement drawn twice.
 BOXED_KINDS = frozenset({Kind.SPRITES, Kind.STAMPS, Kind.WARPS, Kind.EXITS})
-
-#: Why a drag over the stamps held nothing. Said rather than left silent: a
-#: gesture that works on one picture and not on the next reads as broken, and
-#: the focus is the whole difference between them.
-BOX_NEEDS_FOCUS = "Focus one event to box its stamps"
 
 
 @dataclass(frozen=True)
@@ -429,23 +426,10 @@ class WorldClipboard(TileClipboard):
     sprite number for sprites, and the units are the kind's own: cells, 8x8
     tiles, or map pixels.
 
-    The kind is where the copy came *from*, which is not always where it
-    goes: :data:`WORD_KINDS` land in whichever word picture is up.
+    The kind is where the copy came *from*, which is where it goes back.
     """
 
     kind: Kind
-
-
-#: The kinds whose payload is a 16-bit tilemap word on a grid of 8x8 tiles:
-#: Layer 2's tiles and a stamp sheet's entries.
-#:
-#: The same material in three editors -- Layer 2, the 6x6 sheet and the 2x2 --
-#: because a stamp entry *is* a tilemap word, split across two parallel tables
-#: only because the game stores it that way. So one clipboard serves all
-#: three, and what a copy becomes is decided by the picture it is put down on
-#: rather than the one it was taken off. Cells and sprites stay out: a Map16
-#: tile counts in 16x16 cells and a sprite number is not a tile at all.
-WORD_KINDS = frozenset({Kind.TILES, Kind.SHEET})
 
 
 @dataclass(frozen=True)
@@ -483,7 +467,6 @@ class TransferCopy:
 _COPY_NOUNS = {
     Kind.CELLS: "cell",
     Kind.TILES: "tile",
-    Kind.SHEET: "sheet tile",
     Kind.SPRITES: "sprite",
     Kind.WARPS: WARPS.noun,
     Kind.EXITS: EXITS.noun,
@@ -518,14 +501,11 @@ def _layer2_spot(tx: int, ty: int) -> int | None:
 
 
 #: The tabs each kind is selected and edited on -- one kind per Editing row,
-#: the stamps' row standing for both sheet tabs. Stamp placements and the
-#: sheet entries behind them share those two: the row is the same material,
-#: and the sheet-drawing button is which end of it the canvas is showing.
+#: the stamps' row standing for both sheet tabs.
 _LAYER_TABS = {
     Kind.CELLS: (PaletteTab.LAYER1,),
     Kind.TILES: (PaletteTab.LAYER2,),
     Kind.STAMPS: STAMP_TABS,
-    Kind.SHEET: STAMP_TABS,
     Kind.SPRITES: (PaletteTab.SPRITES,),
     Kind.WARPS: (PaletteTab.TRANSFERS,),
     Kind.EXITS: (PaletteTab.TRANSFERS,),
@@ -620,9 +600,6 @@ NO_VIEW_NOTE = (
 
 #: The refusal for a stamp block placed with no event focused.
 NO_FOCUS_NOTE = "Focus one event in the Event box to add a stamp to it."
-
-#: What the properties panel says over a sheet with nothing picked.
-NOTHING_SELECTED_SHEET = "Click a tile of the sheet to see what it is."
 
 #: The refusal for a sprite placement with nowhere to land.
 NO_EMPTY_SLOT = "Every sprite slot is in use -- delete or retype one first."
@@ -887,8 +864,6 @@ class _WorldFloat(FloatController[Selection, WorldMap]):
     def place(self, document: WorldMap, placed: dict[int, int]) -> WorldMap:
         if self.kind is Kind.CELLS:
             return document.placed(placed)
-        if self.kind is Kind.SHEET:
-            return document.stamp_words_placed(placed)
         return document.layer2_placed(placed)
 
     def covering(
@@ -902,11 +877,6 @@ class _WorldFloat(FloatController[Selection, WorldMap]):
             return [
                 (*cell_at(index), document.tile(index))
                 for index in sorted(self.mode.selection.keys)
-            ]
-        if self.kind is Kind.SHEET:
-            return [
-                (*sheet_tile(offset), document.stamp_word(offset))
-                for offset in sorted(self.mode.selection.keys)
             ]
         spots = []
         for index in sorted(self.mode.selection.keys):
@@ -1044,7 +1014,7 @@ class OverworldMode(QObject):
         canvas: Canvas,
         view: CanvasView,
         properties: PropertiesDock,
-        palette: TilePaletteDock,
+        palette: TilePalette,
         status: Callable[[str], None],
         changed: Callable[[], None],
     ) -> None:
@@ -1074,10 +1044,17 @@ class OverworldMode(QObject):
         self._marquee: tuple[QPoint, QPoint] | None = None
         self._marquee_from: frozenset[int] = frozenset()
         self._marquee_kind: Kind = Kind.CELLS
+        #: A right drag in flight, grabbing a region to stamp with: where it
+        #: began and where the pointer is, in image pixels. Its own state
+        #: rather than :attr:`_marquee`'s, because the two gestures can never
+        #: share a button and mean different things on release.
+        self._stamp_grab: tuple[QPoint, QPoint] | None = None
         #: What is in hand, exactly as the palette armed it, and where the
         #: pointer is offering to put it -- a cell index for a Layer 1 tile, a
         #: Layer 2 entry index for a word, a pixel pair for a sprite.
-        self._placing: Layer1Tile | Layer2Word | SpritePick | None = None
+        self._placing: (
+            Layer1Tile | Layer2Word | SpritePick | StampBlock | SilentPick | None
+        ) = None
         self._placing_at: int | tuple[int, int] | None = None
         #: The armed thing's picture, for the ghost. A Layer 1 tile reuses its
         #: palette thumbnail; a Layer 2 word is rendered when armed.
@@ -1090,11 +1067,11 @@ class OverworldMode(QObject):
         #: :class:`_WorldFloat`.
         self._hand = _WorldFloat(self)
         self._picture = WorldPicture()
-        #: One stamp sheet drawn whole, when the palette asked for it on the
-        #: canvas. The map's picture is kept beside it rather than dropped,
-        #: so coming back costs a ``set_image`` and no render.
-        self._sheet = SheetPicture()
-        self._sheet_up = False
+        #: Whether another mode holds the canvas while this document is
+        #: edited through it -- the Map16 environment drawing a stamp sheet.
+        #: While lent, the picture and the marks are kept up to date and not
+        #: shown; :meth:`activate` takes the canvas back.
+        self._canvas_lent = False
         #: Whether the palette's tab was a stamp tab when it last changed --
         #: what tells leaving the stamps from a move between two other
         #: layers, which the events view has no business following. See
@@ -1144,6 +1121,10 @@ class OverworldMode(QObject):
         #: gesture's own answer is kept beside them -- see
         #: :meth:`_held_placements`.
         self._stamp_hits: frozenset[tuple[int, int]] = frozenset()
+        #: The silent slots a box caught beside those placements -- the
+        #: events' other records on the picture, ringed, listed and nudged
+        #: with them. Slots caught alone are a silent-kind selection instead.
+        self._silent_hits: frozenset[int] = frozenset()
         #: A destination pick in flight: which transfer ("warp" or "exit"),
         #: its table entry, and the trigger cell whose panel started it. The
         #: next click on a cell retargets the entry there; Escape or a right
@@ -1256,10 +1237,7 @@ class OverworldMode(QObject):
 
     @property
     def image(self) -> QImage | None:
-        """The picture as it stands -- what entering the mode shows: the
-        sheet while one is up, the map otherwise."""
-        if self._sheet_up and self._sheet.image is not None:
-            return self._sheet.image
+        """The picture as it stands -- what entering the mode shows."""
         return self._picture.image
 
     @property
@@ -1412,6 +1390,7 @@ class OverworldMode(QObject):
         self.history = History(document)
         self.selection = EMPTY_SELECTION
         self._marquee = None
+        self._stamp_grab = None
         self._placing = None
         self._placing_at = None
         self._placing_image = None
@@ -1424,6 +1403,7 @@ class OverworldMode(QObject):
         self._destroy_drag = None
         self._subs_drag = None
         self._stamp_hits = frozenset()
+        self._silent_hits = frozenset()
         self._picking_link = None
         self._submap = 0
         self._region = QRect(*submap_region(0))
@@ -1448,14 +1428,9 @@ class OverworldMode(QObject):
             raster_to_image(raster)
             for raster in tile_thumbnails(snapshot, painter=self._painter)
         ]
-        # A new map is a new document, and the sheet picture was of the old
-        # one's bytes: it goes down with them.
-        self._sheet.forget()
-        self._sheet_up = False
         self._palette.set_tiles(self._thumbnails)
         self._palette.set_layer2(self._draw_layer2)
         self._palette.set_stamps(self._draw_stamps if self.document.stamps else None)
-        self._palette.set_sheet_editing(False)
         self._build_sprite_visuals()
         self._player_image = player_marker_image(snapshot.player())
         self._palette.set_sprites(self._sprite_offers())
@@ -1476,6 +1451,7 @@ class OverworldMode(QObject):
         self.history = None
         self.selection = EMPTY_SELECTION
         self._marquee = None
+        self._stamp_grab = None
         self._placing = None
         self._placing_at = None
         self._placing_image = None
@@ -1488,6 +1464,7 @@ class OverworldMode(QObject):
         self._destroy_drag = None
         self._subs_drag = None
         self._stamp_hits = frozenset()
+        self._silent_hits = frozenset()
         self._picking_link = None
         self.test_spawn = None
         self.completed = {}
@@ -1500,8 +1477,6 @@ class OverworldMode(QObject):
         self.clipboard = None
         self._cursor = None
         self._picture.forget()
-        self._sheet.forget()
-        self._sheet_up = False
         self._replayed = None
         self._focus_event = None
         self._focus_tiles = ()
@@ -1515,10 +1490,19 @@ class OverworldMode(QObject):
         self._palette.set_tiles([])
         self._palette.set_layer2(None)
         self._palette.set_stamps(None)
-        self._palette.set_sheet_editing(False)
         self._palette.set_sprites([])
         self._palette.set_transfers([])
         self._view.set_hover_cursor(None)
+
+    def _show_active_picture(self) -> bool:
+        """Put the map on the canvas, with the page grid that goes with it
+        -- and say whether there was one."""
+        if self._picture.image is not None:
+            self._canvas.set_image(self._picture.image)
+            self._canvas.set_screen_size(PAGE)
+            self._canvas.set_screen_notes(self._screen_notes())
+            return True
+        return False
 
     def activate(self) -> None:
         """Put this mode's picture and marks on the canvas.
@@ -1528,19 +1512,45 @@ class OverworldMode(QObject):
         nothing here runs while the mode is dormant -- the window routes
         gestures only while it is up.
         """
-        if self._sheet_up and self._sheet.image is not None:
-            _across, _down, side = sheet_blocks(small=self._sheet.small)
-            self._canvas.set_image(self._sheet.image)
-            self._canvas.set_screen_size(QSize(side * TILE, side * TILE), labels=False)
-            self._canvas.set_screen_notes({})
-        elif self._picture.image is not None:
-            self._canvas.set_image(self._picture.image)
-            self._canvas.set_screen_size(PAGE)
-            self._canvas.set_screen_notes(self._screen_notes())
-        else:
+        self._canvas_lent = False
+        if not self._show_active_picture():
             return
         self._refresh_marks()
         self._describe_selection()
+
+    def lend_canvas(self) -> None:
+        """Another mode is taking the canvas while this document stays
+        editable through it: keep the picture and the marks current, show
+        neither. :meth:`activate` takes the canvas back."""
+        self._canvas_lent = True
+
+    @property
+    def canvas_lent(self) -> bool:
+        return self._canvas_lent
+
+    def commit_stamps(self, document: WorldMap) -> bool:
+        """Make ``document`` -- this one with its stamp sheets edited -- the
+        present, as one undo step with no selection mark: the Map16
+        environment's way of drawing on a sheet, so the edit sits on the
+        map's own history and an undo pressed over the map takes it back.
+        Says whether anything was committed."""
+        if self.history is None:
+            return False
+        before = self.history.level
+        self._commit(document)
+        return self.history.level is not before
+
+    @property
+    def framed_snapshot(self) -> OverworldSnapshot | None:
+        """The capture under the framed submap's palette -- what every offer
+        and the stamp sheets are drawn in."""
+        if self._snapshot is None:
+            return None
+        cgrams = self.palette_cgrams
+        index = max(0, min(self._palette_index, len(cgrams) - 1))
+        if index == 0 or not cgrams:
+            return self._snapshot
+        return replace(self._snapshot, cgram=cgrams[index])
 
     # -- the events view -------------------------------------------------------
 
@@ -1759,87 +1769,6 @@ class OverworldMode(QObject):
         )
         return True
 
-    # -- one sheet on the canvas ----------------------------------------------
-
-    @property
-    def sheet_view(self) -> bool:
-        """Whether the canvas is showing a stamp sheet instead of the map."""
-        return self._sheet_up
-
-    @property
-    def sheet_small(self) -> bool:
-        """Which sheet is up: the 2x2 sheet when true, the 6x6 otherwise.
-        Meaningless with the map on the canvas."""
-        return self._sheet.small
-
-    def set_sheet_view(self, on: bool, small: bool = False) -> None:
-        """Put one whole stamp sheet on the canvas, or give the canvas back
-        to the map.
-
-        The same document under a different picture -- one history, one
-        dirty flag, one Ctrl+S -- so the swap commits nothing and an undo
-        reaches across it. What does change is what the pixels *are*: the
-        map's frame, tile marks, sprite markers and event set all describe
-        cells that are not on the canvas, so they stay behind with it, and a
-        selection made on one picture is put down rather than carried to
-        the other, whose grid its keys mean nothing in.
-
-        The block grid rides the canvas's screen grid: a sheet's cells are
-        its blocks, drawn as boundaries and nothing more -- what a block is
-        is said by the status line and the properties heading, over the
-        artwork the eye is here for.
-        """
-        if not self.ready or not self.document.stamps:
-            on = False
-        if on == self._sheet_up and (not on or small == self._sheet.small):
-            return
-        # A tool, a float and a selection all belong to the picture they were
-        # taken up over: the sheet's grid is not the map's, and a key means
-        # nothing across the swap.
-        self.stop_placing()
-        self._hand.land()
-        self.selection = EMPTY_SELECTION
-        self._marquee = None
-        self._stamp_hits = frozenset()
-        self._cursor = None
-        self._sheet_up = on
-        if on:
-            assert self._snapshot is not None
-            self._canvas.set_image(
-                self._sheet.render(
-                    self.document, self._snapshot, small=small, painter=self._painter
-                )
-            )
-            _across, _down, side = sheet_blocks(small=small)
-            self._canvas.set_screen_size(QSize(side * TILE, side * TILE), labels=False)
-            self._canvas.set_screen_notes({})
-            self._status(
-                f"Drawing the {side}x{side} stamp sheet -- "
-                "every block that uses a tile changes with it"
-            )
-        else:
-            self._sheet.forget()
-            # Whatever was drawn on the sheet shows wherever its block is
-            # stamped, and the twin was left alone while the map was off the
-            # canvas: one replay brings it back to the document.
-            if self._picture.has_events:
-                self._retwin(self.document)
-            if self._picture.image is not None:
-                self._canvas.set_image(self._picture.image)
-            self._canvas.set_screen_size(PAGE)
-            self._canvas.set_screen_notes(self._screen_notes())
-        self._palette.set_sheet_editing(on)
-        self._settle_selection()
-
-    def _sheet_of(self, point: QPoint) -> int | None:
-        """The sheet offset under ``point`` on the sheet picture."""
-        return self._sheet_spot(point.x() // TILE, point.y() // TILE)
-
-    def _sheet_spot(self, tx: int, ty: int) -> int | None:
-        """The shown sheet's addressing for a paste's
-        :func:`~shiny_mushroom.tile_clipboard.landing`."""
-        return sheet_spot(tx, ty, small=self._sheet.small)
-
     # -- layers, submaps and palettes -----------------------------------------
 
     @property
@@ -1923,10 +1852,9 @@ class OverworldMode(QObject):
 
         Only while nothing is in hand: framing brings the palette, and a
         palette switch puts the hand down (see :meth:`set_palette`), which
-        would cost a placement its brush mid-gesture. And only over the map:
-        a point on a sheet names a sheet entry, not a place on any submap.
+        would cost a placement its brush mid-gesture.
         """
-        if self._sheet_up or not self._auto_select or self._placing is not None:
+        if not self._auto_select or self._placing is not None:
             return
         if point.y() < PAGE_ROWS * BLOCK:
             submap = 0
@@ -2033,11 +1961,13 @@ class OverworldMode(QObject):
         the picture that is known not to have changed.
 
         ``offers`` is what a **live preview** turns off. Everything the dock
-        offers -- a thumbnail per tile, the sprite artwork, the 8x8 sheet -- is
-        redrawn by :meth:`_refresh_offers`, and a colour dragged in the picker
-        asks for this eight times a second. The map itself follows every frame;
-        the offers catch up when the pick is finished, which is the one moment
-        anybody looks at them.
+        offers -- a thumbnail per tile, the sprite artwork, the 8x8 sheet, the
+        ghost under the pointer -- is redrawn by :meth:`_refresh_offers`, and a
+        colour dragged in the picker asks for this eight times a second. The
+        map itself follows every frame; the offers catch up when the pick is
+        finished, which is the one moment anybody looks at them. A sheet on
+        the canvas holds its colours for the drag with them, rather than
+        being swapped out for the map underneath.
         """
         if self._snapshot is None:
             return
@@ -2075,19 +2005,19 @@ class OverworldMode(QObject):
         self._palette.set_tiles(self._thumbnails)
         self._palette.set_layer2(self._draw_layer2)
         self._palette.set_stamps(self._draw_stamps if self.document.stamps else None)
-        if self._sheet_up:
-            # The sheet is drawn under the framed map's palette, like every
-            # offer the dock previews, so a pick moves its pixels too.
-            self._canvas.set_image(
-                self._sheet.render(
-                    self.document,
-                    self._snapshot,
-                    small=self._sheet.small,
-                    painter=self._painter,
-                )
-            )
         self._build_sprite_visuals()
         self._palette.set_sprites(self._sprite_offers())
+        if self._placing is not None:
+            # The ghost under the pointer is an offer too -- it previews what
+            # a click will draw -- so it follows the colours with the rest,
+            # and after the thumbnails it may be taken from.
+            self._placing_image = self._ghost_for(self._placing)
+            # And the dock is told what is still in hand: the setters above
+            # drop it, which is right when the offer itself changed and
+            # wrong here, where the same tiles came back in new colours.
+            # Otherwise the panel shows nothing held while a click still
+            # places.
+            self._palette.hold(self._placing)
         self._refresh_marks()
 
     def _build_sprite_visuals(self) -> None:
@@ -2186,8 +2116,7 @@ class OverworldMode(QObject):
             )
         else:
             self._picture.forget_events()
-        if self._picture.image is not None:
-            self._canvas.set_image(self._picture.image)
+        self._show_active_picture()
 
     def _redraw_everything(self) -> None:
         """Render both buffers afresh and put the active one on the canvas."""
@@ -2205,8 +2134,7 @@ class OverworldMode(QObject):
         # for a picture nobody is looking at.
         if self._picture.showing_events:
             self._render_events()
-        if self._picture.image is not None:
-            self._canvas.set_image(self._picture.image)
+        self._show_active_picture()
 
     # -- gestures, routed from the window -------------------------------------
 
@@ -2239,7 +2167,7 @@ class OverworldMode(QObject):
             # and the next one down when that is what is already held. The
             # selection is the row itself: a placement's block of sheet
             # bytes, a slot, an event. The block's own bytes stay reachable
-            # through the sheets and the eyedropper.
+            # through the eyedropper and the Map16 environment's sheets.
             records = self._records_at(point)
             if records:
                 self._select_record(self._cycled(records))
@@ -2251,6 +2179,7 @@ class OverworldMode(QObject):
             # cartridge carrying no placements is the case that reaches it --
             # and the noted row goes down with the gesture that noted it.
             self._stamp_hits = frozenset()
+            self._silent_hits = frozenset()
         if index is None:
             if kind is Kind.STAMPS and self._tile_of(point) is not None:
                 self._status(
@@ -2286,8 +2215,8 @@ class OverworldMode(QObject):
         modifiers: Qt.KeyboardModifier = Qt.KeyboardModifier.NoModifier,
     ) -> None:
         self._auto_frame(point)
-        if isinstance(self._placing, (SpritePick, StampBlock)):
-            # One sprite -- or one entry-table row -- per click: a stroke of
+        if isinstance(self._placing, (SpritePick, StampBlock, SilentPick)):
+            # One sprite -- or one table row -- per click: a stroke of
             # thirteen slots or a row per crossed tile is never what a drag
             # means.
             self._place(point, Qt.KeyboardModifier.NoModifier)
@@ -2347,11 +2276,13 @@ class OverworldMode(QObject):
         # the focused event when one is held, the source's own otherwise.
         record = self._grabbed_record(point)
         self._stamp_hits = frozenset()
+        self._silent_hits = frozenset()
         if record is not None:
             if record.kind is Kind.STAMPS:
                 event, entry = record.keys
                 drag = self._placement_drag(event, entry, point)
                 self._stamp_hits = frozenset({(event, entry)})
+                self._silent_hits = frozenset()
                 # Taking hold of a placement selects the row it stands on.
                 keys = self._placement_keys(event, entry)
                 if modifiers & Qt.KeyboardModifier.ControlModifier:
@@ -2360,6 +2291,7 @@ class OverworldMode(QObject):
                         return
                     drag = duplicated
                     self._stamp_hits = frozenset()
+                    self._silent_hits = frozenset()
                 self.selection = Selection(Kind.STAMPS, keys)
                 self._stamp_drag = drag
             elif record.kind is Kind.SILENT:
@@ -2376,13 +2308,10 @@ class OverworldMode(QObject):
                 self._subs_drag = SubsDrag.begun(self.document, subs_event, point)
             self._settle_selection()
             return
-        if self._active_kind() is Kind.STAMPS and self._focus_event is None:
-            # A box needs a rule for what "the selection" means across entry
-            # tables, and the events view showing every event's work at once
-            # has none to offer. Focusing one *is* that rule -- see
-            # :meth:`_boxed_placements` -- so the box waits for a focus rather
-            # than inventing an answer.
-            self._status(BOX_NEEDS_FOCUS)
+        if self._active_kind() is Kind.STAMPS and not self._picture.showing_events:
+            # No stamp is on the picture for a box to touch -- the same
+            # answer a click there gives, for the same reason.
+            self._status(NO_VIEW_NOTE)
             return
         self._marquee = (point, point)
         self._marquee_kind = self._active_kind()
@@ -2574,6 +2503,14 @@ class OverworldMode(QObject):
                 self._refresh_marks()
             self._status(hexspot(point.x(), point.y(), 3))
             return
+        if isinstance(self._placing, SilentPick):
+            # A slot in hand lands where a slot of its layer can: a stamp on
+            # any tile, clamped like a block; a Layer 1 write on a cell.
+            spot = self._silent_ghost_spot(self._placing, point)
+            if spot != self._placing_at:
+                self._placing_at = spot
+                self._refresh_marks()
+            return
         if isinstance(self._placing, StampBlock):
             # A block in hand lands on any tile -- its ghost is the block's
             # own footprint, clamped to the page half like a stamp drag.
@@ -2639,46 +2576,105 @@ class OverworldMode(QObject):
             self._placing_at = None
             self._refresh_marks()
 
-    def note_pointer(self, point: QPoint) -> None:
-        """Take ``point`` as where the pointer is, for a paste to land on.
+    def right_clicked(self, point: QPoint | None) -> None:
+        """The right button is the eyedropper: pick up what is under the
+        pointer, and put the hand down where there is nothing to pick.
 
-        What a context menu's Paste says: the pointer left the picture for
-        the menu, and the place it left from is the place the row is about.
+        One rule with two halves. A pick that fills the hand replaces
+        whatever was in it, so the button re-arms as fast as it arms; a
+        press that finds nothing -- the surround, a tab that arms nothing --
+        is picking up nothing, which is how a tool is put down without
+        finding a piece of map to do it over. A destination pick in hand is
+        always put down first: it is a gesture, not a thing, and no pick
+        replaces it. What cannot be armed but can be held -- a transfer
+        entry -- is selected instead, as a plain click would select it.
         """
-        self._cursor = QPoint(point)
-
-    def right_clicked(self) -> bool:
-        """Put down what is in hand, reporting whether there was anything.
-
-        The right button's first meaning, and the only one it has while a
-        tile, a sprite, a block or a destination pick is armed. With nothing
-        armed it means the context menu instead, which is the window's to
-        show -- so ``False`` is "nothing was put down, ask what is here".
-        A floating paste is not "in hand" in this sense: it is a selection,
-        and the menu's rows are about it.
-        """
-        if self._picking_link is None and self._placing is None:
-            return False
+        if not self.ready:
+            return
+        if point is None or self._picking_link is not None:
+            self.stop_placing()
+            return
+        if self.pick_up(point):
+            return
         self.stop_placing()
-        return True
+        self.select_under(point)
 
-    @property
-    def can_pick(self) -> bool:
-        """Whether the eyedropper has a hand to fill on the current tab --
-        see :meth:`pick_up` for the one tab that arms nothing."""
-        return self._sheet_up or self._palette.tab is not PaletteTab.TRANSFERS
+    def right_drag_begun(self, point: QPoint) -> None:
+        """A right drag grabs a region to stamp with, on the tile grids --
+        cells, Layer 2 tiles. The record-shaped kinds
+        have no region to grab, and a right drag over them stays nothing."""
+        if not self.ready or self._grab_kind() is None:
+            return
+        self._stamp_grab = (QPoint(point), QPoint(point))
+        self._refresh_marks()
+
+    def right_drag_moved(self, point: QPoint) -> None:
+        if self._stamp_grab is None:
+            return
+        self._stamp_grab = (self._stamp_grab[0], QPoint(point))
+        self._refresh_marks()
+
+    def right_drag_ended(self, point: QPoint) -> None:
+        if self._stamp_grab is None:
+            return
+        start, _ = self._stamp_grab
+        self._stamp_grab = None
+        kind = self._grab_kind()
+        if kind is None:
+            self._refresh_marks()
+            return
+        armed = False
+
+        def arm(stamp: GridStamp) -> None:
+            # Through the palette's own arming, like the eyedropper: the
+            # ghost and the hint follow as they do for a single pick. The
+            # marks refresh on the way -- `_armed` settles the selection.
+            nonlocal armed
+            armed = True
+            self._palette.arm(stamp)
+
+        grab_stamp(
+            box_between(start, point),
+            self._side_of(kind),
+            self._payload_at(kind),
+            self.pick_up,
+            arm,
+        )
+        if not armed:
+            self._refresh_marks()
+
+    def _grab_kind(self) -> Kind | None:
+        """The tile grid a right drag would grab from, or ``None`` where the
+        active kind keeps no grid of values -- sprites, stamps, transfers."""
+        kind = self._active_kind()
+        if kind is Kind.TILES and not self.document.layer2:
+            return None
+        return kind if kind in (Kind.CELLS, Kind.TILES) else None
+
+    def _payload_at(self, kind: Kind) -> Callable[[int, int], object | None]:
+        """What a grid spot holds under ``kind``, as the arming payload a
+        stamp's leaf is -- what :func:`grab_stamp` sweeps the region with."""
+        spot = self._spot_of(kind)
+
+        def payload_at(x: int, y: int) -> object | None:
+            index = spot(x, y)
+            if index is None:
+                return None
+            if kind is Kind.CELLS:
+                return Layer1Tile(self.document.tile(index))
+            return Layer2Word(self.document.layer2_entry(index))
+
+        return payload_at
 
     def select_under(self, point: QPoint) -> None:
         """Hold what is under ``point``, unless it is held already.
 
-        What a right click does before its menu opens: the rows are about the
-        thing under the pointer, so that thing is selected first -- exactly
-        as a plain click would select it -- and a selection the pointer is
-        already on is kept whole, so a group is not collapsed to the one
-        record the menu was opened over. Nothing under the pointer keeps the
-        selection too: the menu's Paste and the test-run rows need no
-        selection, and dropping one to show them would be a gesture nobody
-        made.
+        What a right click falls back to when nothing there can be armed:
+        the thing under the pointer is held -- exactly as a plain click
+        would hold it -- and a selection the pointer is already on is kept
+        whole, so a group is not collapsed to the one record the click
+        landed on. Nothing under the pointer keeps the selection too:
+        dropping one would be a gesture nobody made.
         """
         if not self.ready or self._placing is not None or self._picking_link:
             return
@@ -2701,80 +2697,13 @@ class OverworldMode(QObject):
                 return
         self.clicked(point, Qt.KeyboardModifier.NoModifier)
 
-    def context_rows(self, point: QPoint | None) -> list[Row | None]:
-        """The mode's own rows for the context menu at ``point``: the
-        eyedropper, the properties panel's buttons for what is held, and the
-        middle click's test-run setup -- each the gesture it names, reached
-        from under the pointer. The clipboard rows are the window's, since
-        they are the Edit menu's own actions.
-        """
-        if not self.ready:
-            return []
-        rows: list[Row | None] = []
-        if self.can_pick:
-            rows.append(
-                Row(
-                    "Pick",
-                    lambda: None if point is None else self.pick_up(point),
-                    enabled=point is not None,
-                    shortcut="Alt+click",
-                )
-            )
-        rows.append(SEPARATOR)
-        # The panel's buttons -- Set destination..., Delete entry, Delete row
-        # -- fired exactly as the buttons fire them: the key, and a one.
-        for field in self._properties.actions():
-            assert isinstance(field.kind, Action)
-            if field.key == LOAD_PATH:
-                # The window offers this one itself, further down the menu,
-                # as the Level menu's own row -- a button here would double it.
-                continue
-            rows.append(
-                Row(
-                    field.kind.caption,
-                    lambda key=field.key: self.commit_field(key, 1),
-                )
-            )
-        rows.append(SEPARATOR)
-        if point is not None and not self._sheet_up:
-            index = self._cell_of(point)
-            if index is not None:
-                rows.append(
-                    Row(
-                        "Test run starts at the game's own spawn"
-                        if self.test_spawn == index
-                        else "Start test runs here",
-                        lambda: self.middle_clicked(
-                            point, Qt.KeyboardModifier.NoModifier
-                        ),
-                        shortcut="Middle-click",
-                    )
-                )
-                if self.document.translevels[index]:
-                    state = self.completed.get(index)
-                    rows.append(
-                        Row(
-                            "Mark complete for test runs"
-                            if state is None
-                            else "Mark complete with the secret exit"
-                            if state is False
-                            else "Unmark complete for test runs",
-                            lambda: self.middle_clicked(
-                                point, Qt.KeyboardModifier.ControlModifier
-                            ),
-                            shortcut="Ctrl+middle-click",
-                        )
-                    )
-        return rows
-
     # -- test-run setup -------------------------------------------------------
 
     def middle_clicked(self, point: QPoint, modifiers: Qt.KeyboardModifier) -> None:
         """A middle click is test-run setup, as it is in the level editor:
         plain sets or clears the spawn, Ctrl on a level tile cycles whether it
-        counts as already complete. A sheet has no cells to start a run on,
-        so the click means nothing there."""
-        if not self.ready or self._sheet_up:
+        counts as already complete."""
+        if not self.ready:
             return
         self._auto_frame(point)
         index = self._cell_of(point)
@@ -2930,24 +2859,34 @@ class OverworldMode(QObject):
                 QPoint((tx + dx) * TILE, (ty + dy) * TILE)
             )
             document = document.stamp_relocated(event, entry, moved.destination)
+        # And the silent slots the same box caught, each in its own grain.
+        for slot in sorted(self._silent_hits):
+            if slot < document.shape.silent:
+                document = self._silent_moved(document, slot, dx, dy)
         self._commit(document)
         return True
 
     def _nudge_silent(self, dx: int, dy: int) -> bool:
-        """Move the selected silent slot ``(dx, dy)`` in its layer's own
-        grain -- 8x8 tiles for a stamp, held to its page half like a stamp
-        drag, 16x16 cells for a Layer 1 write -- because the step is a
+        """Move the selected silent slots ``(dx, dy)`` in each one's layer's
+        own grain -- 8x8 tiles for a stamp, held to its page half like a
+        stamp drag, 16x16 cells for a Layer 1 write -- because the step is a
         statement about the record, exactly as a warp trigger's is."""
-        (slot,) = self.selection.keys
-        event, layer, _location, tile = self.document.silent_entry(slot)
-        x, y, stamped, side = silent_spot(self.document, slot)
+        document = self.document
+        for slot in sorted(self.selection.keys):
+            document = self._silent_moved(document, slot, dx, dy)
+        self._commit(document)
+        return True
+
+    @staticmethod
+    def _silent_moved(document: WorldMap, slot: int, dx: int, dy: int) -> WorldMap:
+        """``document`` with silent slot ``slot`` stepped ``(dx, dy)`` in its
+        layer's grain, clamped as its drag is."""
+        event, layer, _location, tile = document.silent_entry(slot)
+        x, y, stamped, side = silent_spot(document, slot)
         drag = SilentDrag(slot, stamped, side, (0, 0), x, y)
         grain = TILE if stamped else BLOCK
         moved = drag.moved(QPoint((x + dx) * grain, (y + dy) * grain))
-        self._commit(
-            self.document.silent_entry_set(slot, event, layer & 1, moved.location, tile)
-        )
-        return True
+        return document.silent_entry_set(slot, event, layer & 1, moved.location, tile)
 
     def _nudge_destroy(self, dx: int, dy: int) -> bool:
         """Move the selected destroyed-tile slot ``(dx, dy)`` cells."""
@@ -3018,32 +2957,91 @@ class OverworldMode(QObject):
     # -- placement ------------------------------------------------------------
 
     def _armed(self, payload: object) -> None:
-        if isinstance(payload, Layer1Tile):
-            self._placing = payload
-            self._placing_image = self._thumbnails[payload.number]
-        elif isinstance(payload, SpritePick):
-            self._placing = payload
-            self._placing_image = self._marker_image(payload.sprite_id)
-        elif isinstance(payload, Layer2Word):
-            assert self._snapshot is not None
-            self._placing = payload
-            (raster,) = layer2_thumbnails(
-                self._snapshot, [payload.word], painter=self._painter
-            )
-            self._placing_image = raster_to_image(raster)
-        elif isinstance(payload, StampBlock):
-            assert self._painter is not None
-            self._placing = payload
-            self._placing_image = raster_to_image(
-                stamp_block_raster(self.document, payload.sheet, self._painter)
-            )
-        else:
+        image = self._ghost_for(payload)
+        if image is None:
             return
+        self._placing = payload
+        self._placing_image = image
         self._placing_at = None
         self._hand.land()
         self.selection = EMPTY_SELECTION
         self._view.set_hover_cursor(Qt.CursorShape.CrossCursor)
         self._settle_selection()
+
+    def _ghost_for(self, payload: object) -> QImage | None:
+        """``payload``'s follow-the-pointer ghost, or ``None`` where it is
+        nothing this mode places.
+
+        Drawn from the capture and the palette in force, which is why it is
+        asked again whenever those move (:meth:`_refresh_offers`) rather
+        than only when the tool is picked up: the ghost is a promise about
+        what a click will draw, and a stale one lies.
+        """
+        if isinstance(payload, Layer1Tile):
+            if not 0 <= payload.number < len(self._thumbnails):
+                return None
+            return self._thumbnails[payload.number]
+        if isinstance(payload, SpritePick):
+            return self._marker_image(payload.sprite_id)
+        if isinstance(payload, Layer2Word):
+            assert self._snapshot is not None
+            (raster,) = layer2_thumbnails(
+                self._snapshot, [payload.word], painter=self._painter
+            )
+            return raster_to_image(raster)
+        if isinstance(payload, StampBlock):
+            assert self._painter is not None
+            return raster_to_image(
+                stamp_block_raster(self.document, payload.sheet, self._painter)
+            )
+        if isinstance(payload, SilentPick):
+            if payload.stamped:
+                assert self._painter is not None
+                return raster_to_image(
+                    stamp_block_raster(self.document, payload.tile, self._painter)
+                )
+            if not 0 <= payload.tile < len(self._thumbnails):
+                return None
+            return self._thumbnails[payload.tile]
+        if isinstance(payload, GridStamp):
+            return self._stamp_image(payload)
+        return None
+
+    def _stamp_image(self, stamp: GridStamp) -> QImage:
+        """The grabbed region's own picture, for the ghost: each leaf's
+        thumbnail composed at its offset in the region."""
+        words = isinstance(stamp.leaf, Layer2Word)
+        side = TILE if words else BLOCK
+        image = QImage(
+            stamp.width * side,
+            stamp.height * side,
+            QImage.Format.Format_ARGB32_Premultiplied,
+        )
+        image.fill(Qt.GlobalColor.transparent)
+        if words:
+            assert self._snapshot is not None
+            tiles = [
+                raster_to_image(raster)
+                for raster in layer2_thumbnails(
+                    self._snapshot,
+                    [leaf.word for _, _, leaf in stamp.entries],
+                    painter=self._painter,
+                )
+            ]
+        else:
+            tiles = [self._thumbnails[leaf.number] for _, _, leaf in stamp.entries]
+        painter = QPainter(image)
+        for (dx, dy, _), tile in zip(stamp.entries, tiles, strict=True):
+            painter.drawImage(QRect(dx * side, dy * side, side, side), tile)
+        painter.end()
+        return image
+
+    @property
+    def armed(self) -> bool:
+        """Whether a tool is in hand: a tile, a word, a sprite pick, a
+        stamp -- or a destination pick, which is a gesture held the same
+        way."""
+        return self._placing is not None or self._picking_link is not None
 
     def stop_placing(self) -> None:
         """Put down what is in hand, if anything -- a destination pick
@@ -3127,6 +3125,10 @@ class OverworldMode(QObject):
             if index is None:
                 return None
             return to.placed({index: self._placing.number})
+        if isinstance(self._placing, GridStamp):
+            return self._stamp_applied(to, self._placing, point)
+        if isinstance(self._placing, SilentPick):
+            return self._silent_placed(to, self._placing, point)
         if isinstance(self._placing, StampBlock):
             if not to.events:
                 self._status("This map carries no event placements to add to.")
@@ -3142,6 +3144,7 @@ class OverworldMode(QObject):
             self._stamp_hits = frozenset(
                 {(self._focus_event, len(to.events[self._focus_event]))}
             )
+            self._silent_hits = frozenset()
             self.selection = Selection(
                 Kind.STAMPS,
                 frozenset(
@@ -3153,11 +3156,6 @@ class OverworldMode(QObject):
             )
             self._say_row_count(self._focus_event, "added", placed.events)
             return placed
-        if self._sheet_up:
-            offset = self._sheet_of(point)
-            if offset is None:
-                return None
-            return to.stamp_words_placed({offset: self._placing.word})
         if not to.layer2:
             # A document that carries no Layer 2. The palette offers the tab
             # whatever the map holds, so the reach is refused here as the
@@ -3169,6 +3167,97 @@ class OverworldMode(QObject):
             return None
         return to.layer2_placed({index: self._placing.word})
 
+    def _stamp_applied(
+        self, to: WorldMap, stamp: GridStamp, point: QPoint
+    ) -> WorldMap | None:
+        """``to`` with the grabbed region laid down, its top-left cell under
+        ``point``. Which grid it lands on is the stamp's own -- the leaf type
+        it was grabbed as -- not the tab's: a region of cells stays a region
+        of cells wherever it is put down."""
+        if isinstance(stamp.leaf, Layer1Tile):
+            kind = Kind.CELLS
+        elif to.layer2:
+            kind = Kind.TILES
+        else:
+            self._status("This map carries no Layer 2 to place into.")
+            return None
+        side = self._side_of(kind)
+        spot = self._spot_of(kind)
+        left, top = point.x() // side, point.y() // side
+        changes: dict[int, int] = {}
+        for dx, dy, leaf in stamp.entries:
+            index = spot(left + dx, top + dy)
+            if index is None:
+                continue
+            changes[index] = leaf.number if isinstance(leaf, Layer1Tile) else leaf.word
+        if not changes:
+            return None
+        if kind is Kind.CELLS:
+            return to.placed(changes)
+        return to.layer2_placed(changes)
+
+    def _silent_placed(
+        self, to: WorldMap, pick: SilentPick, point: QPoint
+    ) -> WorldMap | None:
+        """``to`` with a new silent slot appended under ``point``: the copied
+        slot's layer and tile, landing where the pointer is in the layer's
+        own grain -- a stamp clamped to its page half like a block, a Layer
+        1 write on the cell -- and named for the focused event, or the
+        copy's own event without a focus. Priced exactly as the table's own
+        add is (:meth:`add_silent_row`), and the new slot becomes the
+        selection, so the panel opens on it."""
+        if not to.silent:
+            self._status("This map carries no silent-tiles block to add to.")
+            return None
+        shape = to.shape
+        capacity = table_capacity(SILENT_REGION)
+        if capacity is not None and shape.silent >= capacity:
+            self._status(
+                f"No room for a silent slot -- the block is at the {capacity} "
+                "slots its scan reaches"
+            )
+            return None
+        location = self._silent_landing(pick, point)
+        if location is None:
+            return None
+        event = self._focus_event if self._focus_event is not None else pick.event
+        grown = to.silent_entry_inserted(event, pick.layer & 1, location, pick.tile)
+        refused = self._no_room_for(
+            "a silent slot", grown, SILENT_REGION, shape.silent < STOCK_SHAPE.silent
+        )
+        if refused is not None:
+            return None
+        self._stamp_hits = frozenset()
+        self._silent_hits = frozenset()
+        self.selection = Selection(Kind.SILENT, frozenset({shape.silent}))
+        self._status(
+            f"Silent slot {shape.silent} added to event {hexnum(event)} -- "
+            f"{shape.silent + 1} slots{self._spare_said(SILENT_REGION)}"
+        )
+        return grown
+
+    def _silent_landing(self, pick: SilentPick, point: QPoint) -> int | None:
+        """Where a slot like ``pick`` lands from ``point``, as its table
+        stores it -- a Layer 2 entry offset for a stamp, a cell index for a
+        Layer 1 write -- or ``None`` off the map."""
+        if pick.stamped:
+            if self._tile_of(point) is None:
+                return None
+            return self._block_drop(StampBlock(pick.tile), point).destination
+        return self._cell_of(point)
+
+    def _silent_ghost_spot(
+        self, pick: SilentPick, point: QPoint
+    ) -> int | tuple[int, int] | None:
+        """Where the ghost of a slot like ``pick`` sits under ``point``: a
+        tile pair for a stamp, a cell index for a Layer 1 write."""
+        if pick.stamped:
+            if self._tile_of(point) is None:
+                return None
+            drag = self._block_drop(StampBlock(pick.tile), point)
+            return (drag.tx, drag.ty)
+        return self._cell_of(point)
+
     def _block_drop(self, block: StampBlock, point: QPoint) -> StampDrag:
         """Where the armed block would land from ``point``: its origin on
         the pointed-at tile, clamped to the page half exactly as a stamp
@@ -3176,47 +3265,57 @@ class OverworldMode(QObject):
         event = self._focus_event if self._focus_event is not None else 0
         return StampDrag(event, -1, block.side, (0, 0), 0, 0, block.sheet).moved(point)
 
-    def pick_up(self, point: QPoint) -> None:
-        """The eyedropper: put what is under the pointer in hand, on its tab.
+    def pick_up(self, point: QPoint) -> bool:
+        """The eyedropper: put what is under the pointer in hand, on its tab,
+        reporting whether anything was picked.
 
         Each layer picks its own, whatever the picture is showing: Layer 2
         picks the map's own entry even where a stamp is drawn over it, and a
         stamp tab picks the whole block behind the stamped tile, armed to be
-        placed again. Over a sheet it picks that entry, which is the only
-        thing there. A sprite marker answers first on the sprite layer, as
+        placed again. A sprite marker answers first on the sprite layer, as
         it does for a click; on the tile layers it is scenery.
 
         A map carrying no Layer 2 keeps every gesture on cells -- see
         :meth:`_active_kind` -- and the eyedropper with them. The transfer
         row has no eyedropper at all: its tab arms nothing, so there is no
-        hand for one to fill.
+        hand for one to fill, and ``False`` is how a right click there knows
+        to fall back to selecting.
         """
-        if self._sheet_up:
-            offset = self._sheet_of(point)
-            if offset is not None:
-                self._palette.pickup(Layer2Word(self.document.stamp_word(offset)))
-            return
         if self._palette.tab is PaletteTab.TRANSFERS:
-            return
+            return False
         slot = self._slot_at(point)
         if slot is not None and self.document.sprite(slot).sprite_id:
             self._palette.pickup(SpritePick(self.document.sprite(slot).sprite_id))
-            return
+            return True
         if self._palette.tab in STAMP_TABS:
+            # A silent slot's mark answers first, as it does for a click: the
+            # slot is copied whole -- layer, tile and event -- to be added
+            # again, where a stamped block alone would lose the record.
+            silent = silent_all_at(self._silent_markers(), point)
+            if silent:
+                event, layer, _location, tile = self.document.silent_entry(
+                    silent[0].slot
+                )
+                self._palette.pickup(SilentPick(layer & 1, tile, event))
+                return True
             offset = self._stamp_of(point)
-            if offset is not None:
-                _block, row, column, small = sheet_at(offset)
-                side = 2 if small else 6
-                self._palette.pickup(StampBlock(offset - (row * side + column)))
-            return
+            if offset is None:
+                return False
+            _block, row, column, small = sheet_at(offset)
+            side = 2 if small else 6
+            self._palette.pickup(StampBlock(offset - (row * side + column)))
+            return True
         if self._palette.tab is PaletteTab.LAYER2 and self.document.layer2:
             index = self._tile_of(point)
-            if index is not None:
-                self._palette.pickup(Layer2Word(self.document.layer2_entry(index)))
-            return
+            if index is None:
+                return False
+            self._palette.pickup(Layer2Word(self.document.layer2_entry(index)))
+            return True
         index = self._cell_of(point)
-        if index is not None:
-            self._palette.pickup(Layer1Tile(self.document.tile(index)))
+        if index is None:
+            return False
+        self._palette.pickup(Layer1Tile(self.document.tile(index)))
+        return True
 
     # -- editable properties ---------------------------------------------------
 
@@ -3332,14 +3431,10 @@ class OverworldMode(QObject):
 
             def rebuild(document: WorldMap) -> object:
                 return SubsRow(document, subs_event)
-        elif self.selection.kind in (Kind.TILES, Kind.SHEET, Kind.STAMPS):
+        elif self.selection.kind in (Kind.TILES, Kind.STAMPS):
             on_tiles = self.selection.kind is Kind.TILES
             record = Layer2Entry if on_tiles else StampEntry
-            describe = (
-                layer2_fields
-                if on_tiles or self.selection.kind is Kind.SHEET
-                else self._stamp_fields
-            )
+            describe = layer2_fields if on_tiles else self._stamp_fields
 
             def rebuild(document: WorldMap) -> object:
                 # The keys read live rather than captured: a placement
@@ -3452,9 +3547,7 @@ class OverworldMode(QObject):
 
     # -- the clipboard ---------------------------------------------------------
     #
-    # Copy, cut, paste and delete over whatever is held, one kind at a time --
-    # except that the three tilemap-word pictures share one clipboard, so a
-    # paste of a :data:`WORD_KINDS` copy takes the kind of wherever it lands.
+    # Copy, cut, paste and delete over whatever is held, one kind at a time.
     # A stamp selection is deliberately outside all four: a sheet byte is used
     # in many places at once, so "cut it" and "paste it there" have no honest
     # meaning -- editing one goes through the properties panel instead.
@@ -3468,40 +3561,20 @@ class OverworldMode(QObject):
     def can_paste(self) -> bool:
         """Whether a paste has something to put, into a part the map carries.
 
-        A copy of a :data:`WORD_KINDS` kind goes wherever words go -- Layer 2
-        or either stamp sheet, whichever picture is up -- so only the part it
-        would land in has to be there. Every other copy belongs to the
-        picture it was taken off: a cell's Map16 tile counts in a grid the
-        sheets do not have, a sprite is not a tile, and a transfer row goes
-        back into the one table it is packed for.
+        A copy belongs to the layer it was taken off: a cell's Map16 tile
+        counts in cells, a Layer 2 word in 8x8 tiles, a sprite is not a tile,
+        and a transfer row goes back into the one table it is packed for.
         """
         if not self.ready or self.clipboard is None:
             return False
-        kind = self._paste_kind(self.clipboard.kind)
-        if (kind is Kind.SHEET) is not self._sheet_up:
-            return False
+        kind = self.clipboard.kind
         if kind is Kind.TILES and not self.document.layer2:
-            return False
-        if kind is Kind.SHEET and not self.document.stamps:
             return False
         if kind is Kind.SPRITES and not self.document.sprites:
             return False
         if kind in TRANSFER_KINDS and not _TABLES[kind].entries(self.document):
             return False
         return True
-
-    def _paste_kind(self, held: Kind) -> Kind:
-        """Which kind a paste of a ``held`` copy lands as.
-
-        Its own, except that a tilemap word goes into whichever word picture
-        is on the canvas -- the whole of what makes Layer 2 and the two stamp
-        sheets one clipboard. Between the sheets there is nothing to decide:
-        both are :attr:`Kind.SHEET`, and the shown sheet's own addressing is
-        what a landing counts in.
-        """
-        if held not in WORD_KINDS:
-            return held
-        return Kind.SHEET if self._sheet_up else Kind.TILES
 
     def copy_selection(self) -> None:
         """Take a copy of everything held: values with relative geometry for
@@ -3525,11 +3598,6 @@ class OverworldMode(QObject):
                         self.document.layer2_entry(index),
                     )
                 )
-        elif kind is Kind.SHEET:
-            spots = [
-                (*sheet_tile(offset), self.document.stamp_word(offset))
-                for offset in keys
-            ]
         else:
             spots = []
             for slot in keys:
@@ -3597,8 +3665,6 @@ class OverworldMode(QObject):
             edited = self.document.placed(dict.fromkeys(keys, 0))
         elif kind is Kind.TILES:
             edited = self.document.layer2_placed(dict.fromkeys(keys, 0))
-        elif kind is Kind.SHEET:
-            edited = self.document.stamp_words_placed(dict.fromkeys(keys, 0))
         else:
             edited = self.document
             for slot in keys:
@@ -3649,11 +3715,7 @@ class OverworldMode(QObject):
         arrived. Parts that would fall off the picture are left out; sprites
         land in empty slots, as many as there are.
 
-        A tilemap word lands as whatever the picture under it holds, so a
-        copy taken off Layer 2 pastes into either stamp sheet and a copy off
-        a sheet pastes into Layer 2 or the other sheet. Falling off the edge
-        is the ordinary case there -- the 6x6 sheet's picture is 48 tiles
-        across and the 2x2 sheet's 32 -- so what was dropped is said.
+        What fell off the picture is said.
 
         A transfer's rows are **appended** to their own table, priced against
         the cartridge's room a row at a time: what stops one is no room, not
@@ -3667,7 +3729,7 @@ class OverworldMode(QObject):
         self.stop_placing()
         held = self.clipboard
         assert held is not None
-        kind = self._paste_kind(held.kind)
+        kind = held.kind
         if kind in TRANSFER_KINDS:
             assert isinstance(held, TransferCopy)
             self._paste_transfers(held, kind)
@@ -3706,11 +3768,6 @@ class OverworldMode(QObject):
             placing = landing(held.entries, anchor, _cell_spot)
             landed.update(placing)
             edited = self.document.placed(placing)
-        elif kind is Kind.SHEET:
-            anchor = self._paste_anchor(held, kind)
-            entries = landing(held.entries, anchor, self._sheet_spot)
-            landed.update(entries)
-            edited = self.document.stamp_words_placed(entries)
         else:
             anchor = self._paste_anchor(held, kind)
             entries = landing(held.entries, anchor, _layer2_spot)
@@ -3728,9 +3785,7 @@ class OverworldMode(QObject):
             # The paste lands on its own layer: what arrived is the selection,
             # and a selection only means anything on the layer being edited. A
             # tab already on that layer is left where it is -- the two stamp
-            # tabs are one layer at two block sizes, and switching between
-            # them mid-paste would re-render the sheet and clear the selection
-            # under a float addressed in the other size.
+            # tabs are one layer at two block sizes.
             tabs = _LAYER_TABS[kind]
             if self._palette.tab not in tabs:
                 self._palette.set_tab(tabs[0])
@@ -3863,8 +3918,6 @@ class OverworldMode(QObject):
         """A kind's grid addressing: what index, if any, it keeps at a spot."""
         if kind is Kind.CELLS:
             return _cell_spot
-        if kind is Kind.SHEET:
-            return self._sheet_spot
         return _layer2_spot
 
     def _bounds_of(self, kind: Kind) -> tuple[int, int]:
@@ -3872,8 +3925,6 @@ class OverworldMode(QObject):
         a pointerless paste centres in."""
         if kind is Kind.CELLS or kind in TRANSFER_KINDS:
             return COLUMNS, ROWS
-        if kind is Kind.SHEET:
-            return sheet_grid(small=self._sheet.small)
         return _LAYER2_SIDE, 2 * _LAYER2_SIDE
 
     @staticmethod
@@ -3902,7 +3953,7 @@ class OverworldMode(QObject):
         tiles -- lifting a settled selection into a float first -- reporting
         whether the drag is now carrying it."""
         kind = self.selection.kind
-        if kind not in (Kind.CELLS, Kind.TILES, Kind.SHEET) or not self.selection:
+        if kind not in (Kind.CELLS, Kind.TILES) or not self.selection:
             return False
         if kind is Kind.TILES and not self.document.layer2:
             return False
@@ -3972,16 +4023,11 @@ class OverworldMode(QObject):
             self._status("The paste is back in hand -- drag it to place it")
 
     def _follow_mark(self, mark: object) -> None:
-        """Put the picture a restored mark was made on back on the canvas,
-        and arm the Editing row that goes with it.
+        """Arm the Editing row a restored mark was made on.
 
-        An undo whose edit is on a picture nobody is looking at has, to the
-        eye, not happened; and a float restored into a picture whose grid its
-        numbers do not count in is worse than invisible -- a Layer 2 paste
-        held over a stamp sheet would drag against map coordinates the sheet
-        never shows. So the walk goes to the mark's own picture *before* the
-        mark is put back, which is also what keeps the armed row honest: a
-        paste lands on its own layer, and an undo of one comes back to it.
+        A paste lands on its own layer, and an undo of one comes back to it:
+        a float restored under a tab whose grid its numbers do not count in
+        would drag against the wrong coordinates.
 
         A step whose mark held nothing names no picture -- an empty selection
         is spelled the same on every one of them -- so the canvas is left
@@ -3992,17 +4038,7 @@ class OverworldMode(QObject):
         selection = mark.selection
         if not selection.keys:
             return
-        if selection.kind is Kind.SHEET:
-            # Which sheet is in the keys: an offset belongs to exactly one,
-            # and a selection is made on one picture, so any key answers.
-            small = min(selection.keys) >= SHEET_6X6_SIZE
-            self.set_sheet_view(True, small=small)
-            tabs = (PaletteTab.STAMPS_2X2 if small else PaletteTab.STAMPS_6X6,)
-        else:
-            self.set_sheet_view(False)
-            tabs = _LAYER_TABS[selection.kind]
-        # After the picture, never before: the tab drives the canvas while a
-        # sheet is up, so a tab set first would swap the sheet under the walk.
+        tabs = _LAYER_TABS[selection.kind]
         if self._palette.tab not in tabs:
             self._palette.set_tab(tabs[0])
 
@@ -4157,6 +4193,12 @@ class OverworldMode(QObject):
                 if held != slot
             )
             self.selection = Selection(Kind.SILENT, kept) if kept else EMPTY_SELECTION
+        # A slot a stamp box caught renumbers with the block the same way.
+        self._silent_hits = frozenset(
+            held - 1 if held > slot else held
+            for held in self._silent_hits
+            if held != slot
+        )
         self._commit(self.document.silent_entry_deleted(slot))
         self._status(
             f"Silent slot {slot} deleted -- {shape.silent - 1} slots"
@@ -4416,6 +4458,64 @@ class OverworldMode(QObject):
         spare = self._spare(region_id)
         return "" if spare is None else f", {_spare_said(spare)}"
 
+    # -- transforms ------------------------------------------------------------
+
+    def flip(self, x: bool = False, y: bool = False, mirror: bool = False) -> None:
+        """H / V: the selected Layer 2 tiles as one picture, the tiles
+        changing places across the axis and each one's bit toggling; with
+        ``mirror`` off, each tile flipped where it stands. A Layer 2 hand is
+        flipped rather than the selection while there is one.
+
+        Layer 2 alone: a Layer 1 cell is a Map16 tile number and a stamp a
+        block's, and neither carries a flip of its own.
+        """
+        if not self.ready:
+            return
+        held = self._placing
+        if held is not None:
+            if isinstance(held, Layer2Word):
+                self._palette.pickup(mirrored(held, x=x, y=y))
+            elif isinstance(held, GridStamp) and isinstance(held.leaf, Layer2Word):
+                flipped = mirrored(held, x=x, y=y)
+                if not mirror:
+                    # In place: the words stay where they are.
+                    flipped = GridStamp(
+                        tuple(
+                            (dx, dy, leaf)
+                            for (dx, dy, _), (_, _, leaf) in zip(
+                                held.entries, flipped.entries, strict=True
+                            )
+                        ),
+                        flipped.width,
+                        flipped.height,
+                    )
+                self._palette.arm(flipped)
+            return
+        if self.selection.kind is not Kind.TILES or not self.document.layer2:
+            return
+        # Each map's tiles mirror within their own box: the main map and
+        # the shared submap area are two pictures, and an index says which.
+        changed: dict[int, int] = {}
+        for area in (False, True):
+            words = {
+                (tx, ty): self.document.layer2_entry(index)
+                for index in self.selection.keys
+                for tx, ty, here in (layer2_at(index),)
+                if here is area
+            }
+            if not words:
+                continue
+            moved = (
+                mirrored_words(words, x=x, y=y)
+                if mirror
+                else flipped_words(words, x=x, y=y)
+            )
+            changed.update(
+                (layer2_index(tx, ty, area), word) for (tx, ty), word in moved.items()
+            )
+        self._commit(self.document.layer2_placed(changed))
+        self._describe_selection()
+
     def _commit(self, document: WorldMap, mark: SelectionMark | None = None) -> None:
         """Make ``document`` the present, as one undo step.
 
@@ -4515,14 +4615,7 @@ class OverworldMode(QObject):
         A part only counts once the document carries it -- a map shown
         without a Layer 2 (a synthetic test snapshot) keeps every gesture on
         cells rather than raising out of an entry read.
-
-        A sheet on the canvas is the one thing that *does* move it, and only
-        because the map is not on the canvas at all: every pixel under the
-        pointer is a sheet entry, so there is nothing else a gesture there
-        could mean.
         """
-        if self._sheet_up:
-            return Kind.SHEET
         if self._palette.tab is PaletteTab.SPRITES:
             return Kind.SPRITES
         if self._palette.tab is PaletteTab.TRANSFERS:
@@ -4559,24 +4652,10 @@ class OverworldMode(QObject):
         over a picture the replay wrote. Only leaving *the stamps* does that
         -- a move between two other layers says nothing about the view, so a
         hand-raised one stays up.
-
-        While a sheet is on the canvas the tab **is** the sheet, so moving
-        between the two stamp tabs swaps which one is drawn, and leaving them
-        puts the map back: the layer being edited has to be one the picture
-        is of.
         """
         on_stamps, was_stamps = self._palette.tab in STAMP_TABS, self._on_stamps
         self._on_stamps = on_stamps
         self.stop_placing()
-        if self._sheet_up:
-            self.set_sheet_view(
-                on_stamps, small=self._palette.tab is PaletteTab.STAMPS_2X2
-            )
-            if not on_stamps:
-                # The map is back on the canvas; the view the stamps raised
-                # goes down with them, as it does off the sheet.
-                self.set_events_view(False)
-            return
         if (
             on_stamps
             and self.ready
@@ -4600,8 +4679,6 @@ class OverworldMode(QObject):
             return self._cell_of(point)
         if kind is Kind.STAMPS:
             return self._stamp_of(point)
-        if kind is Kind.SHEET:
-            return self._sheet_of(point)
         if kind is Kind.SPRITES:
             return self._slot_at(point)
         if kind in TRANSFER_KINDS:
@@ -4638,7 +4715,7 @@ class OverworldMode(QObject):
         *cell* selection draws (:meth:`_connector_marks`) stay the way in
         from anywhere else, one transfer at a time.
         """
-        if self._sheet_up or not self.ready:
+        if not self.ready:
             return []
         if self._palette.tab is not PaletteTab.TRANSFERS:
             return []
@@ -4678,8 +4755,7 @@ class OverworldMode(QObject):
         location that means nothing yet, so it stays with the table dialogs.
         """
         if (
-            self._sheet_up
-            or not self.ready
+            not self.ready
             or not self._picture.showing_events
             or self._palette.tab not in STAMP_TABS
         ):
@@ -4750,9 +4826,8 @@ class OverworldMode(QObject):
         """The slot whose *shown* marker is under ``point``; later slots win
         an overlap, as they draw on top. Only while the sprite layer is the
         one being edited -- on the tile layers a marker is scenery, and the
-        gesture belongs to the tile under it -- and never over a sheet,
-        whose picture carries no markers at all."""
-        if self._sheet_up or self._palette.tab is not PaletteTab.SPRITES:
+        gesture belongs to the tile under it."""
+        if self._palette.tab is not PaletteTab.SPRITES:
             return None
         return slot_at(self._visible_markers(), point)
 
@@ -5026,9 +5101,11 @@ class OverworldMode(QObject):
         if record.kind is Kind.STAMPS:
             event, entry = record.keys
             self._stamp_hits = frozenset({(event, entry)})
+            self._silent_hits = frozenset()
             self.selection = Selection(Kind.STAMPS, self._placement_keys(event, entry))
         else:
             self._stamp_hits = frozenset()
+            self._silent_hits = frozenset()
             self.selection = Selection(record.kind, frozenset(record.keys))
         self._settle_selection()
 
@@ -5120,7 +5197,7 @@ class OverworldMode(QObject):
         it stands on several or on none -- a box may catch more than one, and
         the panel's per-placement rows only mean anything about one."""
         held = self._held_placements()
-        if len(held) != 1:
+        if len(held) != 1 or self._silent_hits:
             return None
         (placement,) = held
         return placement
@@ -5132,14 +5209,21 @@ class OverworldMode(QObject):
         self.selection = Selection(Kind.STAMPS, keys) if keys else EMPTY_SELECTION
 
     def _stamp_fields(self, record: StampEntry) -> list:
-        """A stamp selection's panel rows: the shared word fields, and --
-        when the click named exactly one entry-table row -- that
-        placement's own reveal-order, delete and meter rows."""
-        fields = list(layer2_fields(record))
+        """A stamp selection's panel rows: the one placement's own -- its
+        reveal order, event, block, spot, delete and the table's meter --
+        and nothing when the selection stands on no single row.
+
+        The block's cells are not here. A placement is a row of the entry
+        table, and what the panel edits is the row; the cells' words -- a
+        recolour, a flip -- are the sheet's, edited where the sheet is drawn,
+        in the Tilemap editor. ``record`` is the selection's bytes still, so
+        a commit re-reads them off the row the field moved.
+        """
+        del record
         placement = self._selected_placement()
-        if placement is not None:
-            fields += stamp_row_fields(self.document, *placement, self.stamp_meter())
-        return fields
+        if placement is None:
+            return []
+        return stamp_row_fields(self.document, *placement, self.stamp_meter())
 
     def _duplicating(self, drag: StampDrag) -> StampDrag | None:
         """The grabbed placement turned into a new row's drag, joining its
@@ -5305,6 +5389,12 @@ class OverworldMode(QObject):
         """
         if self._marquee_kind is Kind.STAMPS:
             self._stamp_hits = self._boxed_placements()
+            self._silent_hits = self._boxed_silent()
+            if not self._stamp_hits and self._silent_hits:
+                # Slots alone are the silent kind's own selection, one or
+                # many -- the kind a click on one gives.
+                slots, self._silent_hits = self._silent_hits, frozenset()
+                return Selection(Kind.SILENT, slots)
             return Selection(Kind.STAMPS, self._held_keys())
         if self._marquee_kind in TRANSFER_KINDS:
             return self._boxed_transfers()
@@ -5339,13 +5429,15 @@ class OverworldMode(QObject):
         return Selection(kind, caught[kind])
 
     def _boxed_placements(self) -> frozenset[tuple[int, int]]:
-        """Every placement of the focused event the box touches.
+        """Every placement on the picture the box touches.
 
-        One event's, because that is what makes a box over the stamps mean
-        something: the selection is one entry table's rows, so the panel and
-        the table editor have one row list to act on. The focus is what picks
-        it -- :meth:`_shown_events` is that event alone, so the index the box
-        is read against holds nothing else and the rule needs no second test.
+        Read off the replay's index -- the placement showing at each tile --
+        so what the box catches is what is drawn under it, and a block buried
+        under a later event's is not. The picture is the rule for *whose*
+        placements: every replayed event's with no focus, the focused event's
+        alone with one (:meth:`_shown_events`), which is also what a click
+        there reaches. The rows caught may be several events', and the
+        selection carries them as it carries one event's (:attr:`_stamp_hits`).
         """
         assert self._marquee is not None
         box = box_between(*self._marquee)
@@ -5361,6 +5453,18 @@ class OverworldMode(QObject):
                 found.add((event, entry))
         return frozenset(found)
 
+    def _boxed_silent(self) -> frozenset[int]:
+        """Every silent slot whose mark the box touches. The slots are the
+        events' records beside the placements, and a box over the events'
+        work catches both."""
+        assert self._marquee is not None
+        box = box_between(*self._marquee)
+        return frozenset(
+            marker.slot
+            for marker in self._silent_markers()
+            if box.intersects(marker.rect)
+        )
+
     def _caught(self) -> frozenset[int]:
         """Every spot of the marquee's kind its box intersects.
 
@@ -5368,7 +5472,7 @@ class OverworldMode(QObject):
         spots, and :meth:`_boxed_placements` is that; nor are the transfers,
         which rank two tables and answer with the kind as well as the keys
         (:meth:`_boxed_transfers`). So the grid is the kind's own: 8x8 tiles
-        on Layer 2 and on a sheet, 16x16 cells on Layer 1. The sprite markers
+        on Layer 2, 16x16 cells on Layer 1. The sprite markers
         catch by their own reach instead of by a grid, since a record is
         somewhere rather than being a cell.
         """
@@ -5380,12 +5484,9 @@ class OverworldMode(QObject):
                 for marker in self._visible_markers()
                 if box.intersects(marker.rect)
             )
-        on_sheet = self._marquee_kind is Kind.SHEET
-        on_tiles = self._marquee_kind is Kind.TILES or on_sheet
+        on_tiles = self._marquee_kind is Kind.TILES
         side = TILE if on_tiles else BLOCK
-        if on_sheet:
-            columns, rows = sheet_grid(small=self._sheet.small)
-        elif on_tiles:
+        if on_tiles:
             columns, rows = _LAYER2_SIDE, 2 * _LAYER2_SIDE
         else:
             columns, rows = COLUMNS, ROWS
@@ -5396,9 +5497,6 @@ class OverworldMode(QObject):
             for y in range(max(0, top), min(rows - 1, bottom) + 1)
             for x in range(max(0, left), min(columns - 1, right) + 1)
         ]
-        if on_sheet:
-            found = (self._sheet_spot(x, y) for x, y in spots)
-            return frozenset(offset for offset in found if offset is not None)
         if on_tiles:
             return frozenset(
                 layer2_index(x, y % _LAYER2_SIDE, y >= _LAYER2_SIDE) for x, y in spots
@@ -5427,27 +5525,13 @@ class OverworldMode(QObject):
         ``before`` to ``after`` -- the document, unless a stroke's or a
         float's working copy is ahead of it.
 
-        The one call every edit path makes, so which picture is up is
-        decided in a single place. The map's events twin is left alone while
-        a sheet is: a stamp edit moves it wherever the block is used, and
-        re-replaying per stroke step for a picture nobody is looking at is
-        exactly the work :meth:`set_sheet_view` does once on the way back.
+        The one call every edit path makes. A stamp edit -- made in the
+        Map16 environment through :meth:`commit_stamps` -- has no cell of
+        its own to patch; the events twin follows it through
+        :meth:`_repaint`'s replay, wherever the block is used.
         """
         source = after if after is not None else self.document
-        if self._sheet_up:
-            self._repaint_sheet(self._stamps_between(before, source), of=source)
-            return
         self._repaint(self._cells_between(before, source), of=source)
-
-    def _repaint_sheet(self, offsets: list[int], of: WorldMap | None = None) -> None:
-        """Patch just these entries into the sheet's picture and show it."""
-        if not offsets or self._sheet.image is None:
-            return
-        assert self._snapshot is not None
-        source = of if of is not None else self.document
-        image = self._sheet.patch(source, self._snapshot, offsets, self._painter)
-        if image is not None:
-            self._canvas.set_image(image)
 
     def _repaint(self, cells: list[int], of: WorldMap | None = None) -> None:
         """Patch just these cells into the picture and show it.
@@ -5470,7 +5554,7 @@ class OverworldMode(QObject):
             patched = True
         if self._picture.has_events:
             patched = self._retwin(source) or patched
-        if patched and self._picture.image is not None:
+        if patched and self._picture.image is not None and not self._canvas_lent:
             self._canvas.set_image(self._picture.image)
 
     @staticmethod
@@ -5510,10 +5594,15 @@ class OverworldMode(QObject):
 
     def _settle_selection(self) -> None:
         self._refresh_marks()
-        self._describe_selection()
+        # The properties panel describes what is on the canvas, which while
+        # the canvas is lent is another mode's selection.
+        if not self._canvas_lent:
+            self._describe_selection()
         self._changed()
 
     def _refresh_marks(self) -> None:
+        if self._canvas_lent:
+            return
         self._canvas.set_overlays(self._overlays())
 
     def _selection_rects(self) -> tuple[QRect, ...]:
@@ -5557,19 +5646,17 @@ class OverworldMode(QObject):
             return tuple(
                 self._tile_rect(index) for index in sorted(self.selection.keys)
             )
-        if self.selection.kind is Kind.SHEET:
-            return tuple(
-                QRect(tx * TILE, ty * TILE, TILE, TILE)
-                for tx, ty in (
-                    sheet_tile(offset) for offset in sorted(self.selection.keys)
-                )
-            )
         if self.selection.kind is Kind.STAMPS:
             held = self._held_placements()
             if held:
                 # The gesture named placements: the ants ride their own
-                # footprints, not the block's other uses.
-                return tuple(self._placement_rect(*at) for at in sorted(held))
+                # footprints, not the block's other uses -- and the silent
+                # slots a box caught beside them.
+                return tuple(self._placement_rect(*at) for at in sorted(held)) + tuple(
+                    marker.rect
+                    for marker in self._silent_markers()
+                    if marker.slot in self._silent_hits
+                )
             # A stamp byte is selected everywhere it is used: the ants are
             # honest about what an edit to it will repaint.
             uses = stamp_uses(self._stamps_shot(), self._shown_events())
@@ -5602,8 +5689,6 @@ class OverworldMode(QObject):
         )
 
     def _overlays(self) -> list[Overlay]:
-        if self._sheet_up:
-            return self._sheet_overlays()
         marks: list[Overlay] = []
         # The focus wash first, directly over the picture: everything the
         # focused event does not touch dims, and every mark -- the frame,
@@ -5696,6 +5781,7 @@ class OverworldMode(QObject):
         marks += self._connector_marks()
         marks += self._ant_marks()
         marks += self._marquee_marks()
+        marks += self._grab_marks()
         if self._placing is not None and self._placing_at is not None:
             if isinstance(self._placing, SpritePick):
                 x, y = self._placing_at
@@ -5709,6 +5795,32 @@ class OverworldMode(QObject):
                 tx, ty = self._placing_at
                 side = self._placing.side * TILE
                 box = QRect(tx * TILE, ty * TILE, side, side)
+            elif isinstance(self._placing, SilentPick):
+                if self._placing.stamped:
+                    tx, ty = self._placing_at
+                    side = self._placing.side * TILE
+                    box = QRect(tx * TILE, ty * TILE, side, side)
+                else:
+                    x, y = cell_at(self._placing_at)
+                    box = QRect(x * BLOCK, y * BLOCK, BLOCK, BLOCK)
+            elif isinstance(self._placing, GridStamp):
+                stamp = self._placing
+                if isinstance(stamp.leaf, Layer1Tile):
+                    x, y = cell_at(self._placing_at)
+                    box = QRect(
+                        x * BLOCK,
+                        y * BLOCK,
+                        stamp.width * BLOCK,
+                        stamp.height * BLOCK,
+                    )
+                else:
+                    tx, ty, submap_area = layer2_at(self._placing_at)
+                    box = QRect(
+                        tx * TILE,
+                        (ty + (_LAYER2_SIDE if submap_area else 0)) * TILE,
+                        stamp.width * TILE,
+                        stamp.height * TILE,
+                    )
             else:
                 tx, ty, submap_area = layer2_at(self._placing_at)
                 box = QRect(
@@ -5745,6 +5857,20 @@ class OverworldMode(QObject):
             Overlay(box, MARQUEE_COLOR, dash=DASH_LENGTH),
         ]
 
+    def _grab_marks(self) -> list[Overlay]:
+        """The region a right drag is grabbing, in the placing treatment
+        rather than the marquee's: what it sweeps becomes a tool, not a
+        selection."""
+        kind = self._grab_kind()
+        if self._stamp_grab is None or kind is None:
+            return []
+        # Whole cells of the grid being grabbed, as its selection is drawn.
+        box = snapped_box(*self._stamp_grab, self._side_of(kind))
+        return [
+            Overlay(box, SELECTION_LINE),
+            Overlay(box, PLACING_COLOR, dash=DASH_LENGTH),
+        ]
+
     def _ant_marks(self) -> list[Overlay]:
         """The selection's marching ants: one bounding stroke carrying every
         held spot's own box, in whichever grid the kind counts in."""
@@ -5760,31 +5886,6 @@ class OverworldMode(QObject):
             Overlay(bounding, color, dash=dash, cells=cells)
             for color, dash in ((SELECTION_LINE, 0), (SELECTION_DASH, DASH_LENGTH))
         ]
-
-    def _sheet_overlays(self) -> list[Overlay]:
-        """What rides a sheet's picture: the selection's ants, a marquee in
-        flight, and the ghost of the word in hand.
-
-        Nothing else. The frame, the tile marks, the sprite markers, the
-        connectors and the focus wash are all statements about a map that is
-        not on the canvas -- and the block grid is the canvas's own screen
-        grid, set up with the picture.
-        """
-        marks = self._ant_marks()
-        marks += self._marquee_marks()
-        if self._placing is not None and isinstance(self._placing_at, int):
-            tx, ty = sheet_tile(self._placing_at)
-            box = QRect(tx * TILE, ty * TILE, TILE, TILE)
-            marks.append(
-                Overlay(
-                    box,
-                    SELECTION_LINE,
-                    image=self._placing_image,
-                    opacity=PLACING_OPACITY,
-                )
-            )
-            marks.append(Overlay(box, PLACING_COLOR, dash=DASH_LENGTH))
-        return marks
 
     def _tile_marks(self) -> list[Overlay]:
         """One mark per functional tile: what the walker does with it.
@@ -6161,14 +6262,11 @@ class OverworldMode(QObject):
             tx, ty, submap_area = layer2_at(index)
             spot = hexspot(tx, ty + (_LAYER2_SIDE if submap_area else 0))
             return "  ".join([spot, *self._word_parts(word)])
-        if kind in (Kind.STAMPS, Kind.SHEET):
+        if kind is Kind.STAMPS:
             places = len(
                 stamp_uses(self._stamps_shot(), self._shown_events()).get(index, ())
             )
             named = f"stamp {hexnum(index, 3)}"
-            if kind is Kind.SHEET:
-                tx, ty = sheet_tile(index)
-                named = f"{hexspot(tx, ty)}  {named}"
             return "  ".join(
                 [
                     named,
@@ -6194,15 +6292,10 @@ class OverworldMode(QObject):
         if not self.ready or self._panel_commit:
             return
         if not self.selection:
-            self._properties.show_nothing(
-                NOTHING_SELECTED_SHEET if self._sheet_up else NOTHING_SELECTED
-            )
+            self._properties.show_nothing(NOTHING_SELECTED)
             return
         if self.selection.kind is Kind.TILES:
             self._describe_tiles()
-            return
-        if self.selection.kind is Kind.SHEET:
-            self._describe_sheet()
             return
         if self.selection.kind is Kind.STAMPS:
             self._describe_stamps()
@@ -6266,35 +6359,18 @@ class OverworldMode(QObject):
             heading = f"{len(self.selection.keys)} Layer 2 tiles -- edits apply to all"
         self._properties.show_fields(heading, layer2_fields(entry), entry)
 
-    def _describe_sheet(self) -> None:
-        """One or many sheet entries: the Layer 2 word fields over the sheet.
-
-        The heading counts what an edit will reach -- a sheet entry is drawn
-        at every place its block is stamped, so one byte is never local.
-        """
-        entry = StampEntry(self.document, self.selection.keys)
-        if len(self.selection.keys) == 1:
-            (offset,) = self.selection.keys
-            tx, ty = sheet_tile(offset)
-            places = len(
-                stamp_uses(self._stamps_shot(), self._shown_events()).get(offset, ())
-            )
-            heading = (
-                f"Sheet {hexnum(offset, 3)} {hexspot(tx, ty)} -- "
-                f"used at {places} place{'' if places == 1 else 's'}"
-            )
-        else:
-            heading = f"{len(self.selection.keys)} sheet tiles -- edits apply to all"
-        self._properties.show_fields(heading, layer2_fields(entry), entry)
-
     def _describe_stamps(self) -> None:
-        """The selected event stamp bytes: the Layer 2 word fields, over the
-        sheet rather than the map's own tilemap.
+        """The selected placement: its entry-table row's fields, headed by
+        the row -- and still saying when the block shows elsewhere, since
+        the sheet is shared artwork.
 
-        A placement heads with its entry-table row -- and still says when the
-        block shows elsewhere, since a recolour follows the artwork
-        everywhere. A silent slot's block, which has no row, heads with what
-        its bytes reach instead.
+        Several placements are a readout, as several sprite slots are: the
+        rows are edited one each, and the panel lists what was caught rather
+        than offering a field that would move them all. The block's own
+        cells are never here -- they are edited where the sheet is drawn, in
+        the Tilemap editor -- so a selection standing on bytes and no row (a
+        silent slot's block on a cartridge with no placements) is a readout
+        of what those bytes reach.
         """
         entry = StampEntry(self.document, self.selection.keys)
         shot = self._stamps_shot()
@@ -6313,22 +6389,50 @@ class OverworldMode(QObject):
                 heading += f", used at {places} places"
             self._properties.show_fields(heading, self._stamp_fields(entry), entry)
             return
-        held = self._held_placements()
-        events = {at for at, _row in held}
-        if len(held) > 1 and len(events) == 1:
-            # A box's catch: one event's rows, however many blocks between
-            # them. Counted in placements rather than in bytes, because
-            # placements are what the gesture picked out.
-            (event,) = events
-            self._properties.show_fields(
-                f"Event {hexnum(event)} -- {len(held)} placements, "
-                f"{len(self.selection.keys)} stamp bytes; edits apply to all",
-                self._stamp_fields(entry),
-                entry,
+        held = sorted(self._held_placements())
+        silent = sorted(
+            slot for slot in self._silent_hits if slot < self.document.shape.silent
+        )
+        if len(held) + len(silent) > 1:
+            # A box's catch, listed: which events, which rows and blocks,
+            # which silent slots.
+            events = sorted(
+                {at for at, _row in held}
+                | {self.document.silent_entry(slot)[0] for slot in silent}
             )
+            blocks = sorted({self.document.events[at][row][0] for at, row in held})
+            counted = []
+            if held:
+                counted.append(_counted(len(held), "placement"))
+            if silent:
+                counted.append(_counted(len(silent), "silent slot"))
+            rows = [("Events", ", ".join(hexnum(at) for at in events))]
+            if held:
+                rows.append(
+                    (
+                        "Rows",
+                        ", ".join(
+                            f"event {hexnum(at)} row {row + 1}" for at, row in held
+                        ),
+                    )
+                )
+                rows.append(("Blocks", ", ".join(hexnum(block, 3) for block in blocks)))
+            if silent:
+                rows.append(
+                    (
+                        "Silent slots",
+                        ", ".join(
+                            f"slot {slot} (event "
+                            f"{hexnum(self.document.silent_entry(slot)[0])})"
+                            for slot in silent
+                        ),
+                    )
+                )
+            self._properties.show_properties(", ".join(counted), rows)
             return
-        if len(self.selection.keys) == 1:
-            (offset,) = self.selection.keys
+        keys = sorted(self.selection.keys)
+        if len(keys) == 1:
+            (offset,) = keys
             places = len(uses.get(offset, ()))
             events = {
                 event
@@ -6342,8 +6446,17 @@ class OverworldMode(QObject):
             else:
                 heading = f"Stamp {hexnum(offset, 3)} -- {len(events)} events, {where}"
         else:
-            heading = f"{len(self.selection.keys)} event stamps -- edits apply to all"
-        self._properties.show_fields(heading, self._stamp_fields(entry), entry)
+            heading = f"{len(keys)} event stamp bytes"
+        self._properties.show_properties(
+            heading,
+            [
+                ("Bytes", ", ".join(hexnum(offset, 3) for offset in keys)),
+                (
+                    "Used at",
+                    f"{sum(len(uses.get(offset, ())) for offset in keys)} places",
+                ),
+            ],
+        )
 
     def _describe_transfers(self) -> None:
         """One warp or path-exit entry with its editable trigger, its landing
@@ -6384,7 +6497,19 @@ class OverworldMode(QObject):
     def _describe_silent(self) -> None:
         """The selected silent slot: the same editable columns its table row
         offers -- event, layer, X/Y in the layer's own grain, and the tile
-        or block it places."""
+        or block it places. A box's catch of several is a readout, as the
+        sprites' is: the slots are edited one each."""
+        if len(self.selection.keys) > 1:
+            slots = sorted(self.selection.keys)
+            events = sorted({self.document.silent_entry(slot)[0] for slot in slots})
+            self._properties.show_properties(
+                f"{len(slots)} silent slots",
+                [
+                    ("Slots", ", ".join(str(slot) for slot in slots)),
+                    ("Events", ", ".join(hexnum(event) for event in events)),
+                ],
+            )
+            return
         (slot,) = self.selection.keys
         record = SilentRow(self.document, slot)
         event = self.document.silent_entry(slot)[0]

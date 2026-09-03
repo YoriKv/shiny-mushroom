@@ -9,6 +9,7 @@ namespace overworld
 
 pushpc
 
+if !sa1_hijacks_external == 0
 org $04F590
 	JML lives_exchange_fix
 
@@ -86,6 +87,10 @@ org $0482ED
 mulfix2v2_back:
 
 assert pc() <= $048307
+else
+mulfixv2_back = $0494DC
+mulfix2v2_back = $048307
+endif
 
 pullpc
 

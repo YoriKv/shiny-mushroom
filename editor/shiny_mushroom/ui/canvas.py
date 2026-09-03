@@ -406,6 +406,14 @@ class Canvas(QWidget):
     #: instead of adding to it. What shift *means* is still nothing to do with
     #: the canvas.
     clicked = Signal(QPoint, Qt.KeyboardModifier)
+    #: The second click of a left double click, on image pixel ``(x, y)``.
+    #:
+    #: Emitted **as well as** the pair of ordinary clicks, never instead of
+    #: them: a repeated placement and a repeated selection need the second
+    #: click to stay a click, so a listener that opens something on a double
+    #: click has to be one that means nothing extra for two singles -- see
+    #: :meth:`double_click_at`.
+    double_clicked = Signal(QPoint, Qt.KeyboardModifier)
     #: A press travelled far enough to be a drag. Carries where it **began** -
     #: not where the pointer is now - because that is the point the gesture is
     #: measured from, and by the time the threshold is crossed the press is
@@ -424,16 +432,28 @@ class Canvas(QWidget):
     #: document and this one is about a test run. Keeping them apart is also
     #: what lets everything already listening to `clicked` stay unchanged.
     middle_clicked = Signal(QPoint, Qt.KeyboardModifier)
-    #: The **right** button was pressed: on image pixel ``(x, y)``, or on the
-    #: surround with ``None`` for the pixel. The second point is where it was
-    #: pressed in **widget** coordinates, which is where a menu is anchored.
+    #: The **right** button was pressed and released without travelling: on
+    #: image pixel ``(x, y)``, or on the surround with ``None`` for the pixel.
     #:
-    #: Reported wherever it lands, because part of what it says means the same
-    #: thing everywhere: "put down whatever is in hand" cancels a placement
-    #: from the gray as well as from over the level. With nothing in hand it
-    #: asks for the context menu, and that is why it carries a place -- the
-    #: menu is about what is under the pointer.
-    right_clicked = Signal(object, QPoint)
+    #: Reported wherever it lands, because what it asks for -- pick up the
+    #: thing under the pointer -- needs the surround too: out there is nothing
+    #: to pick, and picking nothing is how a tool in hand is put down. Reported
+    #: at the release rather than the press, like :attr:`clicked`, because a
+    #: right press that travels is a :attr:`right_drag_begun` instead and the
+    #: difference is only visible in hindsight.
+    right_clicked = Signal(object, Qt.KeyboardModifier)
+    #: A right press travelled far enough to be a drag. Carries where it
+    #: began, for the reason :attr:`drag_begun` does. Its own signal rather
+    #: than a button argument on `drag_begun`, because the two gestures share
+    #: nothing: a left drag is a marquee or a stroke over the document, a
+    #: right drag catches a region to stamp with, and a button argument would
+    #: put a branch in every listener that only ever wants one of them.
+    right_drag_begun = Signal(QPoint, Qt.KeyboardModifier)
+    #: The right drag reached image pixel ``(x, y)``, clamped into the picture
+    #: like :attr:`drag_moved`.
+    right_drag_moved = Signal(QPoint)
+    #: The right drag ended there. Always follows a :attr:`right_drag_begun`.
+    right_drag_ended = Signal(QPoint)
     #: A button was pressed **off** the picture - on the gray the image is
     #: surrounded by, or on the sliver of widget a fractional zoom leaves beyond
     #: its last column.
@@ -478,11 +498,13 @@ class Canvas(QWidget):
         self._screens_selectable = False
         self._show_screens = False
         self._overlays: tuple[Overlay, ...] = ()
-        # The gesture in progress: where the left button went down, in widget
-        # coordinates, what was held with it, and whether it has travelled far
-        # enough to be a drag. All of it is cleared on release, so "no press"
-        # is one state rather than several that can disagree.
+        # The gesture in progress: where the button went down, in widget
+        # coordinates, which button it was, what was held with it, and whether
+        # it has travelled far enough to be a drag. All of it is cleared on
+        # release, so "no press" is one state rather than several that can
+        # disagree -- and one gesture at a time, whichever button began it.
         self._press: QPoint | None = None
+        self._button = Qt.MouseButton.LeftButton
         # And where it went down in the *picture*, resolved at the press rather
         # than at the release -- refused off the picture, and clamped into it
         # for the drag that must answer either way. Resolved then because the
@@ -1084,7 +1106,7 @@ class Canvas(QWidget):
         )
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802 - Qt override
-        self.release_at(event.position().toPoint())
+        self.release_at(event.position().toPoint(), event.button())
 
     # The three below are public because the widget is not the whole surface: the
     # canvas is exactly as big as its image, so the gray around a level belongs
@@ -1100,26 +1122,33 @@ class Canvas(QWidget):
     ) -> None:
         """Begin a gesture at widget position ``pos``, wherever it was made.
 
-        Nothing is emitted yet for a left press, because what it *is* is not
-        known until it ends: a press that stays put is a click and one that
-        travels is a drag, and the difference is only visible in hindsight. The
-        other two buttons have no such ambiguity and are reported at once.
+        Nothing is emitted yet for a left or right press, because what either
+        *is* is not known until it ends: a press that stays put is a click and
+        one that travels is a drag, and the difference is only visible in
+        hindsight. The middle button has no such ambiguity and is reported at
+        once.
 
-        A middle click off the picture is dropped rather than reported: it names
-        a place to put something, and there is no place out there. A right press
-        is reported wherever it lands, with no pixel when it has none: putting
-        something down means the same thing everywhere.
+        A middle click off the picture is dropped rather than reported: it
+        names a place to put something, and there is no place out there. A
+        right press is tracked wherever it lands, with no pixel when it has
+        none: picking up nothing is how a tool is put down, and the surround
+        is the reliable place to find nothing.
+
+        While a gesture is in flight, every other button is dropped: a second
+        press must not steal the state out from under a stroke that has not
+        ended yet, and whatever it would have meant is not worth guessing at
+        mid-gesture.
         """
+        if self._press is not None:
+            return
         if button == Qt.MouseButton.MiddleButton:
             image = self.image_pos(pos)
             if image is not None:
                 self.middle_clicked.emit(image, modifiers)
             return
-        if button == Qt.MouseButton.RightButton:
-            self.right_clicked.emit(self.image_pos(pos), pos)
+        if button not in (Qt.MouseButton.LeftButton, Qt.MouseButton.RightButton):
             return
-        if button != Qt.MouseButton.LeftButton:
-            return
+        self._button = button
         self._press = pos
         self._press_at = self.image_pos(pos)
         self._press_within = self.image_pos_within(pos)
@@ -1142,13 +1171,19 @@ class Canvas(QWidget):
 
         Everywhere else the second click is another click, which is what Qt
         makes it by default and what a repeated placement or a repeated
-        selection needs it to stay.
+        selection needs it to stay -- and it is *also* reported as
+        :attr:`double_clicked`, so a listener can open what the clicked thing
+        names without taking the click away from anyone.
         """
         if button == Qt.MouseButton.LeftButton and self._screens_selectable:
             screen = self.screen_at_label(pos)
             if screen is not None:
                 self.screen_activated.emit(screen)
                 return
+        if button == Qt.MouseButton.LeftButton:
+            image = self.image_pos(pos)
+            if image is not None:
+                self.double_clicked.emit(image, modifiers)
         self.press_at(pos, button, modifiers)
 
     def move_to(self, pos: QPoint) -> None:
@@ -1173,21 +1208,42 @@ class Canvas(QWidget):
             if max(abs(travelled.x()), abs(travelled.y())) < DRAG_THRESHOLD:
                 return
             self._dragging = True
-            self.drag_begun.emit(self._press_within, self._modifiers)
-        self.drag_moved.emit(self.image_pos_within(pos))
+            if self._button == Qt.MouseButton.RightButton:
+                self.right_drag_begun.emit(self._press_within, self._modifiers)
+            else:
+                self.drag_begun.emit(self._press_within, self._modifiers)
+        if self._button == Qt.MouseButton.RightButton:
+            self.right_drag_moved.emit(self.image_pos_within(pos))
+        else:
+            self.drag_moved.emit(self.image_pos_within(pos))
 
-    def release_at(self, pos: QPoint) -> None:
-        """End the gesture: a drag if it travelled, and a click if it did not."""
+    def release_at(self, pos: QPoint, button: Qt.MouseButton | None = None) -> None:
+        """End the gesture: a drag if it travelled, and a click if it did not.
+
+        Only the button that began the gesture may end it: the release of a
+        button whose press was dropped mid-gesture is dropped the same way.
+        ``None`` means the caller does not know which button came up and
+        trusts that it is the held one.
+        """
+        if button is not None and self._press is not None and button != self._button:
+            return
         press, dragging, image = self._press, self._dragging, self._press_at
+        button = self._button
         self._press, self._press_at, self._dragging = None, None, False
         if press is None:
             return
         if dragging:
-            self.drag_ended.emit(self.image_pos_within(pos))
+            if button == Qt.MouseButton.RightButton:
+                self.right_drag_ended.emit(self.image_pos_within(pos))
+            else:
+                self.drag_ended.emit(self.image_pos_within(pos))
             return
         # A click is reported from where it was *pressed*, not released: within
         # the threshold the two are the same block anyway, and the press is the
         # position the person aimed at.
+        if button == Qt.MouseButton.RightButton:
+            self.right_clicked.emit(image, self._modifiers)
+            return
         if self._screens_selectable:
             screen = self.screen_at_label(press)
             if screen is not None:

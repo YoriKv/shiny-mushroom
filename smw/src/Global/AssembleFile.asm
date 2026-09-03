@@ -1,4 +1,3 @@
-@asar 1.71
 incsrc "../Global/Global_Definitions.asm"
 incsrc "../Global/Global_Macros.asm"
 

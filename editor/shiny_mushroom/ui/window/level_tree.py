@@ -163,7 +163,7 @@ class LevelTree:
         loading it fresh would -- the number now *means* another file -- so it
         asks :meth:`_may_replace`'s question first and applies nothing when
         the answer is no. The reload previews through the same seam a saved
-        level does: :func:`~shiny_mushroom.cart_patches.project_patches`
+        level does: :func:`~shiny_mushroom.cart_patches.all_patches`
         compares the project's streams -- now the remapped container's --
         against the cartridge's own, so the picture is right before any build.
         """

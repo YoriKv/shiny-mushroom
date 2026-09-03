@@ -45,12 +45,11 @@ the editable asm tables, the graphics runs, and padding. Everything else the
 cartridge is made of is one undifferentiated :data:`OTHER`, because naming a
 hundred routines per bank would bury the few things a reader came for.
 
-On a **patched base** the layout drawn is still the one the patch was applied
-to. The symbol file carries the patch's own labels now -- its pass emits them
-and the build merges them in behind a marker -- and the banks those labels
-fall in are drawn as the patch's, whole (:func:`_pack_banks`). The fragment
-prices stay right either way: the patch edits bytes in place and never moves
-a label.
+On the **sa1 base** the layout drawn is still the game's. The symbol file
+carries the pack's own labels -- the main pass emits them, marked by the
+file that placed them -- and the banks those labels fall in are drawn as
+the pack's, whole (:func:`_pack_banks`). The fragment prices stay right
+either way: nothing of the pack moves a label of the game's.
 """
 
 from __future__ import annotations
@@ -288,6 +287,11 @@ def memory_map(project: Project, symbols: SymbolTable | None = None) -> MemoryMa
             + _tables(project, symbols)
             + _vacated(project, symbols)
         )
+    if symbols is not None:
+        # The sprite bank's two halves, named over its reservation: the
+        # feature's tables at declared addresses, and the run its code packs
+        # into, both read off the build that placed them.
+        over += _sprite_bank(symbols)
     # The packer's run in the level bank lands inside that bank's reservation
     # the way the tables do, and is drawn with or without a build: it is
     # priced by the packer, not read off a symbol file.
@@ -779,14 +783,55 @@ def _vacated(project: Project, symbols: SymbolTable) -> list[Segment]:
     return made
 
 
-def _pack_banks(project: Project, symbols: SymbolTable) -> list[Segment]:
-    """The expansion banks a patch pass's own code landed in, whole.
+def _sprite_bank(symbols: SymbolTable) -> list[Segment]:
+    """The custom sprites' bank, cut into what a reader can act on.
 
-    Read from the build rather than declared beside the base: the patch pass
-    merges its labels into the symbol file behind a marker
-    (:data:`smw_tools.symbols.PACK_MARKER`), so which banks the patch took is
-    the same kind of fact as where a relocated table went -- the build's own
-    record, and a build against a different patch revision follows by itself.
+    Two segments over the bank's reservation, both from the build's own
+    labels: the fixed head -- the rows, properties and Tweaker tables at
+    declared addresses, the stubs, and whatever status and kind tables the
+    project's sprites brought in -- and the run behind it, where the dialect
+    and the sprites' own code pack toward the bank's end. Neither is priced:
+    the head is one size per project by construction, and the code's usage
+    is the assembler's own answer, which the head-to-end labels bound.
+
+    Nothing on a build without the feature: the labels are simply absent,
+    exactly as an unbuilt project draws no tables.
+    """
+    names = symbols.by_name
+    try:
+        head = names["SMW_CustomSprites_InitRows"].addr
+        code = names["SMW_SpriteBank_Code"].addr
+        end = names["SMW_SpriteBankEnd"].addr
+    except KeyError:
+        return []
+    return [
+        Segment(
+            kind=OTHER,
+            name="custom sprite tables",
+            start=head,
+            size=code - head,
+            detail="the rows, properties and Tweaker tables, and the "
+            "dispatch stubs behind them",
+        ),
+        Segment(
+            kind=OTHER,
+            name="custom sprite code",
+            start=code,
+            size=end + 1 - code,
+            detail="the dialect, the shared routines and the sprites' own "
+            "code, packed toward the bank's end",
+        ),
+    ]
+
+
+def _pack_banks(project: Project, symbols: SymbolTable) -> list[Segment]:
+    """The expansion banks a vendored tree's own code landed in, whole.
+
+    Read from the build rather than declared beside the base: the symbol file
+    says which labels a foreign file emitted (:attr:`smw_tools.symbols.Symbol.pack`),
+    so which banks the pack took is the same kind of fact as where a relocated
+    table went -- the build's own record, and a build against a different
+    revision of the tree follows by itself.
 
     Each bank is drawn whole and :data:`OTHER`: the patch's blocks are found
     by asar's freespace search rather than placed, so where they fall within
@@ -795,7 +840,7 @@ def _pack_banks(project: Project, symbols: SymbolTable) -> list[Segment]:
     guessed, like the tables, and the window's no-build line says the picture
     is partial.
     """
-    patch = project.cartridge_base.patch
+    patch = project.cartridge_base.pack
     if patch is None:
         return []
     placed = rom_map.bank_count(project.base, project.target)
@@ -826,8 +871,9 @@ def _expansion(project: Project) -> list[Segment]:
     (``docs/smw/rom-size.md``), so the whole of each is room -- which is the
     point of asking for one. Drawn per bank rather than as one long run,
     because a bank is what a table can be reached in with a data-bank switch
-    and a run spanning several would suggest otherwise. A bank a patch pass
-    took is not room, and :func:`_pack_banks` is what lays it over these.
+    and a run spanning several would suggest otherwise. A bank a vendored
+    pack took is not room, and :func:`_pack_banks` is what lays it over
+    these.
     """
     placed = rom_map.bank_count(project.base, project.target)
     total = _banks(project)

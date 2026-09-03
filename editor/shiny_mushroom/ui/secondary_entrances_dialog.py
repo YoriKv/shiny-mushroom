@@ -65,8 +65,8 @@ REVERT = "secondary-entrances-revert"
 ONLY_USED = "secondary-entrances-only-used"
 
 ONLY_USED_HINT = (
-    "Hide every entrance whose four bytes are all zero. Uncheck to reach a "
-    "blank row and fill one in."
+    "Hide every entrance whose four bytes are all zero -- on when the window "
+    "opens. Uncheck to reach a blank row and fill one in."
 )
 
 #: What the heading says while the filter is on. The count is of the rows the
@@ -150,6 +150,10 @@ class SecondaryEntrancesDialog(TableEditorDialog):
         self._saved_any = any(
             project.asm_region_edited(region_id) for region_id in REGION_IDS
         )
+        # The window opens filtered: the cartridge writes a few dozen of the
+        # 512 rows, and the rest are blank. Switched before the handler is
+        # connected, so the `_show` below is the only pass over the rows.
+        self.set_toggle(ONLY_USED, True)
         self.edited.connect(self._cell_edited)
         self.acted.connect(self._acted)
         self.switched.connect(self._toggled)

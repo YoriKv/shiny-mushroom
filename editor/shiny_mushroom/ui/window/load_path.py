@@ -250,7 +250,7 @@ class LoadPathWindow:
         note = ""
         if not (world_mode and self._world.ready):
             rows = frozen_fields(rows)
-            note = "Read from the map's tables; edit them over the world map (Ctrl+M)."
+            note = "Read from the map's tables; edit them over the world map (Ctrl+2)."
         return Section("world", "Overworld", rows, record, note)
 
     def _world_level_events(self, reading: WorldMap) -> bytes:

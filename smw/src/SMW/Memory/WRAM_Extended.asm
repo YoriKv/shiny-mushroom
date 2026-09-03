@@ -37,7 +37,17 @@
 ; fraction bits for fixed point switch block Z speed With Lunar Magic, these
 ; tables instead get moved over to $7FC500 ($418800 on SA-1).
 !RAM_SMW_Blocks_Layer2TilesLo #= $7EB900
-	!RAM_SMW_Overworld_SwitchBlockXPosHi #= $7EB900
+; Where the switch-block tables sit: over the Layer 2 tile buffer on every
+; shipped cartridge, and where SA-1 Pack's overworld boost keeps them on the
+; SA-1 base -- BW-RAM, at the address Lunar Magic also moves them to. The
+; twelve tables keep their stride and order either way.
+if defined("Define_SMW_SA1")
+!Define_SMW_SwitchBlockTablesLocation #= $418800
+endif
+if defined("Define_SMW_SwitchBlockTablesLocation") == 0
+!Define_SMW_SwitchBlockTablesLocation #= $7EB900
+endif
+	!RAM_SMW_Overworld_SwitchBlockXPosHi #= !Define_SMW_SwitchBlockTablesLocation
 	!RAM_SMW_Overworld_SwitchBlockYPosHi #= !RAM_SMW_Overworld_SwitchBlockXPosHi+((!Define_SMW_MaxSwitchBlockSlot+$01)*$01)
 	!RAM_SMW_Overworld_SwitchBlockZPosHi #= !RAM_SMW_Overworld_SwitchBlockXPosHi+((!Define_SMW_MaxSwitchBlockSlot+$01)*$02)
 	!RAM_SMW_Overworld_SwitchBlockXPosLo #= !RAM_SMW_Overworld_SwitchBlockXPosHi+((!Define_SMW_MaxSwitchBlockSlot+$01)*$03)
@@ -80,7 +90,21 @@
 ; VRAM in 2KB chunks. One chunk is uploaded per frame for four frames during
 ; transitions between the main overworld and submaps. Data is refreshed
 ; after each DMA.
-!RAM_SMW_Blocks_Map16TableLo #= $7EC800
+; Where the Map16 tables live: the low bytes here and the high bytes one
+; bank up, with the overworld's per-tile translevel and direction tables
+; inside the same 64 KB. $7EC800 on every shipped cartridge, and $7EC700 on
+; SMAS+W; a base that keeps them elsewhere sets the define on the command
+; line, and every reader follows because none names the address itself.
+; SA-1 Pack keeps them in BW-RAM at $40C800, which is where the sa1 base
+; puts them.
+if defined("Define_SMW_Map16Location") == 0
+if ver_is_smasw(!Define_Global_ROMToAssemble)
+!Define_SMW_Map16Location #= $7EC700
+else
+!Define_SMW_Map16Location #= $7EC800
+endif
+endif
+!RAM_SMW_Blocks_Map16TableLo #= !Define_SMW_Map16Location
 	!RAM_SMW_Overworld_LevelNumberOfEachTileTBL #= !RAM_SMW_Blocks_Map16TableLo+$0800
 	!RAM_SMW_Overworld_LevelDirectionFlags #= !RAM_SMW_Blocks_Map16TableLo+$1000
 
@@ -129,8 +153,61 @@
 ; Wiggler's position over the last 64 frames. Its segments then pull their
 ; position from various indices within the table (specifically at 00, 1E,
 ; 3E, 5E, and 7E, or half those values when the Wiggler is angry).
-!RAM_SMW_NorSpr086_Wiggler_SegmentPosTable #= $7F9A7B
+; On the SA-1 base the pack's sprite boost keeps the Wiggler's segment table
+; in BW-RAM, in the run the overworld's switch-block tables use -- the two
+; are never live at once.
+if defined("Define_SMW_SA1")
+!Define_SMW_WigglerSegmentTableLocation #= $418800
+endif
+if defined("Define_SMW_WigglerSegmentTableLocation") == 0
+!Define_SMW_WigglerSegmentTableLocation #= $7F9A7B
+endif
+!RAM_SMW_NorSpr086_Wiggler_SegmentPosTable #= !Define_SMW_WigglerSegmentTableLocation
 ;Empty $7F9C7B-$7F9C7FF
+; The custom sprites' per-slot tables (Config/CustomSprites.asm), at the
+; addresses every sprite tool in the wild keeps them, so that a routine
+; reading !extra_bits or !new_sprite_num through the dialect's defines
+; (code/uberasm/defines.asm) reads the same bytes the feature writes. One
+; byte per normal sprite slot each, except the pending pair, which is one
+; spawn's worth of hand-off between the spawn seam and the initialize
+; choke. On the SA-1 base they sit in BW-RAM, in the layout PIXI's own
+; SA-1 support uses: 22-byte strides, with the new-code flag a single
+; byte that tool no longer indexes.
+if defined("Define_SMW_SA1")
+!RAM_SMW_CustomSprites_ExtraBits #= $400040
+!RAM_SMW_CustomSprites_NewCodeFlag #= $400056
+!RAM_SMW_CustomSprites_ExtraProp1 #= $400057
+!RAM_SMW_CustomSprites_ExtraProp2 #= $40006D
+!RAM_SMW_CustomSprites_TrueSpriteID #= $400083
+!RAM_SMW_CustomSprites_ExtraByte1 #= $400099
+!RAM_SMW_CustomSprites_ExtraByte2 #= $4000AF
+!RAM_SMW_CustomSprites_ExtraByte3 #= $4000C5
+!RAM_SMW_CustomSprites_ExtraByte4 #= $4000DB
+!RAM_SMW_CustomSprites_PendingExtraBits #= $4000F1
+!RAM_SMW_CustomSprites_PendingSpriteID #= $4000F2
+!RAM_SMW_CustomSprites_PendingExtraCount #= $4000F3
+!RAM_SMW_CustomSprites_PendingExtra1 #= $4000F4
+!RAM_SMW_CustomSprites_PendingExtra2 #= $4000F5
+!RAM_SMW_CustomSprites_PendingExtra3 #= $4000F6
+!RAM_SMW_CustomSprites_PendingExtra4 #= $4000F7
+else
+!RAM_SMW_CustomSprites_ExtraBits #= $7FAB10
+!RAM_SMW_CustomSprites_NewCodeFlag #= $7FAB1C
+!RAM_SMW_CustomSprites_ExtraProp1 #= $7FAB28
+!RAM_SMW_CustomSprites_ExtraProp2 #= $7FAB34
+!RAM_SMW_CustomSprites_ExtraByte1 #= $7FAB40
+!RAM_SMW_CustomSprites_ExtraByte2 #= $7FAB4C
+!RAM_SMW_CustomSprites_ExtraByte3 #= $7FAB58
+!RAM_SMW_CustomSprites_ExtraByte4 #= $7FAB64
+!RAM_SMW_CustomSprites_TrueSpriteID #= $7FAB9E
+!RAM_SMW_CustomSprites_PendingExtraBits #= $7FABAA
+!RAM_SMW_CustomSprites_PendingSpriteID #= $7FABAB
+!RAM_SMW_CustomSprites_PendingExtraCount #= $7FABAC
+!RAM_SMW_CustomSprites_PendingExtra1 #= $7FABAD
+!RAM_SMW_CustomSprites_PendingExtra2 #= $7FABAE
+!RAM_SMW_CustomSprites_PendingExtra3 #= $7FABAF
+!RAM_SMW_CustomSprites_PendingExtra4 #= $7FABB0
+endif
 ; Map16 high byte table. Same format as $7EC800. $7FFFF8-$7FFFFD are also
 ; used by Lunar Magic's title screen recording ASM.
 !RAM_SMW_Blocks_Map16TableHi #= !RAM_SMW_Blocks_Map16TableLo+$010000
@@ -144,8 +221,8 @@
 !VRAM_SMW_Layer2TilemapVRAMLocation #= (!Define_SMW_Layer2TilemapVRAMLocation*$0400)&$00FFFF
 !VRAM_SMW_Layer3GFXVRAMLocation #= (!Define_SMW_Layer3GFXVRAMLocation*$1000)&$007FFF
 !VRAM_SMW_Layer3TilemapVRAMLocation #= (!Define_SMW_Layer3TilemapVRAMLocation*$0400)&$00FFFF
-!VRAM_SMW_SpriteGFXLocationLo = (!SpriteGFXLocationInVRAMLo_6000*$2000)&$00FFFF
-!VRAM_SMW_SpriteGFXLocationHi = (!VRAM_SMW_SpriteGFXLocationLo+$1000+((!SpriteGFXLocationInVRAMHi_Add1000>>3)*$1000))&$00FFFF
+!VRAM_SMW_SpriteGFXLocationLo = ((!SpriteGFXLocationInVRAMLo_6000*$2000)&$00FFFF)
+!VRAM_SMW_SpriteGFXLocationHi = ((!VRAM_SMW_SpriteGFXLocationLo+$1000+((!SpriteGFXLocationInVRAMHi_Add1000>>3)*$1000))&$00FFFF)
 !VRAM_SMW_Layer1TilemapVRAMLocation_Mode7 #= (!Define_SMW_Layer1TilemapVRAMLocation_Mode7*$0400)&$00FFFF
 !VRAM_SMW_Layer1GFXVRAMLocation_Mode7 #= (!Define_SMW_Layer1GFXVRAMLocation_Mode7*$1000)&$007FFF
 
@@ -166,12 +243,6 @@
 !OAM_SMW_NorSpr0A0_ActivateBowserBattle_CastleRoofDuringEnding #= $64
 
 ;SMAS+W Exclusive RAM/SRAM/VRAM/OAM
-if ver_is_smasw(!Define_Global_ROMToAssemble)
-!RAM_SMW_Blocks_Map16TableLo #= $7EC700
-	!RAM_SMW_Overworld_LevelNumberOfEachTileTBL #= !RAM_SMW_Blocks_Map16TableLo+$0800
-	!RAM_SMW_Overworld_LevelDirectionFlags #= !RAM_SMW_Blocks_Map16TableLo+$1000
-!RAM_SMW_Blocks_Map16TableHi #= !RAM_SMW_Blocks_Map16TableLo+$010000
-endif
 
 ;Lunar Magic RAM										; Todo: Some of these might need more verification
 !RAM_SMW_LM_Blocks_CurrentlyProcessedMap16TileLo #= !RAM_SMW_Misc_ScratchRAM03
@@ -676,6 +747,10 @@ endstruct align $07
 !RAM_SMW_NorSpr035_Yoshi_CurrentState #= !RAM_SMW_NorSpr_Table7E00C2
 !RAM_SMW_NorSpr035_Yoshi_EndingYPosLo #= !RAM_SMW_NorSpr_YPosLo
 !RAM_SMW_NorSpr035_Yoshi_EndingXPosLo #= !RAM_SMW_NorSpr_XPosLo
+; Slot 0 by the spelling that also assembles on the SA-1 base; see the
+; tables' own `_Slot0` defines.
+!RAM_SMW_NorSpr035_Yoshi_EndingYPosLo_Slot0 = "!RAM_SMW_NorSpr_YPosLo_Slot0"
+!RAM_SMW_NorSpr035_Yoshi_EndingXPosLo_Slot0 = "!RAM_SMW_NorSpr_XPosLo_Slot0"
 !RAM_SMW_NorSpr035_Yoshi_EndingYPosHi #= !RAM_SMW_NorSpr_YPosHi
 !RAM_SMW_NorSpr035_Yoshi_EndingXPosHi #= !RAM_SMW_NorSpr_XPosHi
 !RAM_SMW_NorSpr035_Yoshi_CurrentTongueLength #= !RAM_SMW_NorSpr_Table7E151C

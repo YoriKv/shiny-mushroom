@@ -15,8 +15,11 @@ testable without a display.
 
 from __future__ import annotations
 
-from PySide6.QtGui import QImage
+from collections.abc import Sequence
 
+from PySide6.QtGui import QImage, qRgb
+
+from shiny_mushroom.graphics import Colour
 from shiny_mushroom.level import Raster
 
 # Wide enough that tile-shaped data lines up at 8, 16 and 32 pixels per row, and
@@ -72,3 +75,23 @@ def pixels_to_image(pixels, width: int, height: int) -> QImage:  # noqa: ANN001
         width * 3,
         QImage.Format.Format_RGB888,
     ).copy()
+
+
+def paletted_to_image(
+    pixels: bytes, width: int, height: int, colours: Sequence[Colour]
+) -> QImage:
+    """One byte a pixel over a colour table: the pixel editor's picture,
+    where a pixel is ``row * 16 + index`` and the table is every row's
+    sixteen (:meth:`shiny_mushroom.pixel_edit.Surface.paletted`). The
+    colours ride on the image, so the pixels are composed once and never
+    per colour.
+
+    The stride is explicit for the reason :func:`pixels_to_image` gives, and
+    the table goes on the copy: it is a property of the image that owns its
+    storage, not of the wrapper over a buffer about to be freed.
+    """
+    if not pixels:
+        return QImage()
+    image = QImage(pixels, width, height, width, QImage.Format.Format_Indexed8).copy()
+    image.setColorTable([qRgb(r, g, b) for r, g, b in colours])
+    return image

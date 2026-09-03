@@ -49,7 +49,7 @@ CODE_36F617:
 	BEQ.b CODE_36F63F
 	LDY.b #!CGRAM_SMW_DynamicPlayerPalette
 	STY.w !REGISTER_CGRAMAddress
-	LDA.w #(!REGISTER_WriteToCGRAMPort&$0000FF<<8)+$00
+	LDA.w #((!REGISTER_WriteToCGRAMPort&$0000FF)<<8)+$00
 	STA.w DMA[$02].Parameters
 	LDA.w !RAM_SMW_Pointer_PlayerPaletteLo
 	STA.w DMA[$02].SourceLo
@@ -62,7 +62,7 @@ CODE_36F617:
 CODE_36F63F:
 	LDY.b #$80
 	STY.w !REGISTER_VRAMAddressIncrementValue
-	LDA.w #(!REGISTER_WriteToVRAMPortLo&$0000FF<<8)+$01
+	LDA.w #((!REGISTER_WriteToVRAMPortLo&$0000FF)<<8)+$01
 	STA.w DMA[$02].Parameters
 	LDA.w #!VRAM_SMW_SpriteGFXLocationLo+$07F0
 	STA.w !REGISTER_VRAMAddressLo
@@ -141,7 +141,7 @@ endmacro
 
 macro DATATABLE_RT00_SMW_LevelData(Address)
 namespace SMW
-%SMW_ManagedLevelRunStart(<Address>)
+%SMW_ManagedLevelSlot(<Address>)
 
 ; LM: These MWLs are a bit different from what you'd normally extract from a clean SMW ROM. This is because Lunar Magic will actually modify the original level data during the extraction process to comply with certain ASM hacks it makes:
 ; - Extended Object 00 (Screen Exit) - Changes one of the bytes to store the exit properties.
@@ -220,13 +220,12 @@ namespace SMW
 	%SMW_InsertLevelData(LEVEL_L1_0E4, 0E4, SMW_U, LAYER_1)
 	%SMW_InsertLevelData(LEVEL_L1_10B, 10B, SMW_U, LAYER_1)
 	%SMW_InsertLevelData(LEVEL_L1_1C6, 1C6, SMW_U, LAYER_1)
-%SMW_ManagedLevelRunEnd()
 namespace off
 endmacro
 
 macro DATATABLE_RT01_SMW_LevelData(Address)
 namespace SMW
-%SMW_ManagedLevelRunStart(<Address>)
+%SMW_ManagedLevelSlot(<Address>)
 
 	%SMW_InsertLevelData(LEVEL_L1_11A, Level11A_VanillaDome1_Main, SMW_J, LAYER_1)
 	%SMW_InsertLevelData(LEVEL_L1_1EF, 1EF, SMW_U, LAYER_1)
@@ -266,13 +265,12 @@ namespace SMW
 	%SMW_InsertLevelData(LEVEL_L1_0DA, 0DA, SMW_U, LAYER_1)
 	%SMW_InsertLevelData(LEVEL_L1_011, 011, SMW_U, LAYER_1)
 	%SMW_InsertLevelData(LEVEL_L1_0C6, 0C6, SMW_U, LAYER_1)
-%SMW_ManagedLevelRunEnd()
 namespace off
 endmacro
 
 macro DATATABLE_RT02_SMW_LevelData(Address)
 namespace SMW
-%SMW_ManagedLevelRunStart(<Address>)
+%SMW_ManagedLevelSlot(<Address>)
 
 	%SMW_InsertLevelData(LEVEL_L1_00C, 00C, SMW_U, LAYER_1)
 	%SMW_InsertLevelData(LEVEL_L1_0F3, 0F3, SMW_U, LAYER_1)
@@ -318,7 +316,6 @@ namespace SMW
 	%SMW_InsertLevelData(LEVEL_L2_1EC, 1EC, SMW_U, LAYER_2)
 	%SMW_InsertLevelData(LEVEL_L1_1EE, 1EE, SMW_U, LAYER_1)
 	%SMW_InsertLevelData(LEVEL_L1_1C0, 1C0, SMW_U, LAYER_1)
-%SMW_ManagedLevelRunEnd()
 namespace off
 endmacro
 

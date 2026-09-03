@@ -1,5 +1,5 @@
 cleartable
-table "../tables/fonts/standard.txt"
+incsrc "../tables/fonts/standard.asm"
 
 ; Level names. It's almost raw tilemaps ready to be uploaded to VRAM (no
 ; YXPCCCTT), but if the highest bit is set, it gets cleared and it's the end

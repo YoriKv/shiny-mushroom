@@ -33,15 +33,16 @@ A tile editor's ``.pal`` beside a raw graphics file is not a row and not a
 stray: :attr:`~shiny_mushroom.project.Project.changed`, the walk these rows
 are read off, leaves it out (:func:`~shiny_mushroom.project_graphics.is_sidecar`).
 
-**Two folders hold asm a project writes rather than edits**, and neither
-shadows anything the disassembly ships: ``code/levels/`` for a level's own
-routines and ``code/uberasm/lib/`` for the library they may call. Everywhere
-else in the overlay a file that shadows nothing is a stray the build
-ignores; here the build reads it, through a fragment the editor regenerates
-from whatever is in the folder. So a file appearing there *is* a file
-assembled, which is what makes the dialog's scan on being given the focus
-back worth running: a routine written in somebody's own editor arrives as a
-row that says the build will take it.
+**The ``code/`` folders hold asm a project writes rather than edits**, and
+none of it shadows anything the disassembly ships: a level's, a game
+mode's and the global routines, the custom sprites by kind with their
+properties siblings, and the libraries and shared routines any of them may
+call. Everywhere else in the overlay a file that shadows nothing is a
+stray the build ignores; here the build reads it, through a fragment the
+editor regenerates from whatever is in the folder. So a file appearing
+there *is* a file assembled, which is what makes the dialog's scan on
+being given the focus back worth running: a routine written in somebody's
+own editor arrives as a row that says the build will take it.
 
 Qt-free, like everything outside :mod:`shiny_mushroom.ui`: the dialog draws
 these rows and decides nothing.
@@ -54,7 +55,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from shiny_mushroom import palettes
-from shiny_mushroom.build import BuildError, asm_room, built_symbols
+from shiny_mushroom.build import BuildError, asm_room, built_symbols, features_wanted
 from shiny_mushroom.project import RAW_NAME, Project, ProjectError, scanning_once
 from shiny_mushroom.project_overworld import (
     OVERWORLD_DEFINITIONS,
@@ -63,10 +64,10 @@ from shiny_mushroom.project_overworld import (
     OVERWORLD_LAYER1,
     OVERWORLD_SPRITES,
 )
-from smw_tools import asm_codec, asm_regions, graphics, level_code, packed
+from smw_tools import asm_codec, asm_regions, graphics, level_code, packed, sprite_code
 from smw_tools.bases import RomBase
 from smw_tools.bases import base as rom_base
-from smw_tools.features import FeatureError
+from smw_tools.features import CUSTOM_SPRITES, FEATURES, UBERASM_SUPPORT, FeatureError
 from smw_tools.levels import LEVELS_DIR
 
 #: What owns a row, which is the whole of what a viewer has to decide about it:
@@ -90,6 +91,13 @@ GAMEMODE_CODE = "gamemode code"
 GLOBAL_CODE = "global code"
 LIBRARY = "library"
 MACRO_LIBRARY = "macro library"
+#: The custom sprites' own four: a sprite's code, the properties sibling
+#: beside it (PIXI's own JSON schema), the library sprites may call, and
+#: the shared-routine macros the dialect gives them.
+SPRITE = "custom sprite"
+SPRITE_META = "sprite properties"
+SPRITE_LIBRARY = "sprite library"
+PIXI_ROUTINE = "shared routine"
 
 #: How each kind is worth naming to somebody looking at the list.
 KIND_NAMES = {
@@ -105,37 +113,96 @@ KIND_NAMES = {
     GLOBAL_CODE: "global code",
     LIBRARY: "library",
     MACRO_LIBRARY: "macro library",
+    SPRITE: "custom sprite",
+    SPRITE_META: "sprite properties",
+    SPRITE_LIBRARY: "sprite library",
+    PIXI_ROUTINE: "shared routine",
 }
 
 #: The project's own asm folders, the kind a file in each is, the fragment
-#: the build reads it through, and the entry points a file there may
-#: declare -- none for the two kinds whose labels are the caller's business.
+#: the build reads it through, the entry points a file there may declare --
+#: none for the kinds whose labels are the caller's business -- and the
+#: reader that finds them. Two grammars read entry points: the level code's
+#: (labels only) and the custom sprites' (PIXI's ``print`` spelling too).
 _CODE_FOLDERS = (
-    (Path(level_code.LIB_DIR), LIBRARY, Path(level_code.LIB_FRAGMENT), ()),
-    (Path(level_code.MACROS_DIR), MACRO_LIBRARY, Path(level_code.MACROS_FRAGMENT), ()),
+    (Path(level_code.LIB_DIR), LIBRARY, Path(level_code.LIB_FRAGMENT), (), None),
+    (
+        Path(level_code.MACROS_DIR),
+        MACRO_LIBRARY,
+        Path(level_code.MACROS_FRAGMENT),
+        (),
+        None,
+    ),
     (
         Path(level_code.CODE_DIR),
         CODE,
         Path(level_code.DATA_FRAGMENT),
         level_code.ENTRIES,
+        level_code.declared,
     ),
     (
         Path(level_code.GAMEMODE_DIR),
         GAMEMODE_CODE,
         Path(level_code.GAMEMODE_DIR) / "gamemode-code-data.asm",
         level_code.GAMEMODE_ENTRIES,
+        level_code.declared,
     ),
     (
         Path(level_code.GLOBAL_DIR),
         GLOBAL_CODE,
         Path(level_code.GLOBAL_DIR) / "global-code-data.asm",
         ("init", "main"),
+        level_code.declared,
+    ),
+    *(
+        (
+            Path(sprite_code.SPRITES_DIR) / kind,
+            SPRITE,
+            Path(sprite_code.DATA_FRAGMENT),
+            sprite_code.NORMAL_ENTRIES
+            if kind == "normal"
+            else sprite_code.KIND_ENTRIES,
+            sprite_code.declared,
+        )
+        for kind in sprite_code.KINDS
+    ),
+    (
+        Path(sprite_code.LIB_DIR),
+        SPRITE_LIBRARY,
+        Path(sprite_code.LIB_FRAGMENT),
+        (),
+        None,
+    ),
+    (
+        Path(sprite_code.ROUTINES_DIR),
+        PIXI_ROUTINE,
+        Path(sprite_code.ROUTINES_FRAGMENT),
+        (),
+        None,
     ),
 )
 
-#: The kinds :data:`_CODE_FOLDERS` names, which is what a row of one of
-#: them is tested for.
-_CODE_KINDS = tuple(kind for _folder, kind, _fragment, _entries in _CODE_FOLDERS)
+#: The kinds :data:`_CODE_FOLDERS` names -- plus the sprite metadata
+#: sibling, which no folder entry carries because it is not asm -- which is
+#: what a row of one of them is tested for.
+_CODE_KINDS = tuple({kind: None for _f, kind, _r, _e, _d in _CODE_FOLDERS}) + (
+    SPRITE_META,
+)
+
+#: The two features' own kinds, which is what each tab of the dialog lists,
+#: and the feature each kind's files are assembled by -- the one whose
+#: switch being off makes every file of the kind a file no build reads.
+UBERASM_KINDS = (CODE, GAMEMODE_CODE, GLOBAL_CODE, LIBRARY, MACRO_LIBRARY)
+PIXI_KINDS = (SPRITE, SPRITE_META, SPRITE_LIBRARY, PIXI_ROUTINE)
+FEATURE_OF = {
+    **{kind: UBERASM_SUPPORT.id for kind in UBERASM_KINDS},
+    **{kind: CUSTOM_SPRITES.id for kind in PIXI_KINDS},
+}
+
+#: Where a sprite's properties sibling lives and the fragment it is read
+#: through: only a normal sprite has one, because only the normal tables
+#: carry properties.
+_SPRITE_META_FOLDER = Path(sprite_code.SPRITES_DIR) / "normal"
 
 #: The world-map binaries the editor writes through
 #: :meth:`~shiny_mushroom.project.Project.save_world_map`.
@@ -231,13 +298,34 @@ def rows(project: Project) -> list[SourceFileRow]:
     with scanning_once():
         owners = _owners(project)
         priced = _rooms(project)
+        wanted = features_wanted(project)
         usage: dict[str, tuple[int, int] | None] = {}
         return [
             _raw_row(project, relative, usage)
             if relative.parts[0] == RAW_NAME
-            else _row(project, relative, owners, priced)
+            else _row(project, relative, owners, priced, wanted)
             for relative in project.changed
         ]
+
+
+def feature_off(project: Project, feature_id: str) -> str:
+    """What to say when ``feature_id``'s files are in the project and the
+    next build would not have the feature -- ``""`` when it would.
+
+    The next build's reading (:func:`~shiny_mushroom.build.features_wanted`)
+    rather than the cartridge's: a switch thrown since the last build is
+    already the answer to whether the files are worth writing.
+    """
+    if feature_id in features_wanted(project):
+        return ""
+    return _feature_off_note(feature_id)
+
+
+def _feature_off_note(feature_id: str) -> str:
+    return (
+        f"only a build with {FEATURES[feature_id].name} assembles it -- "
+        f"turn the feature on under Project > Features"
+    )
 
 
 def stamps(project: Project) -> dict[Path, tuple[int, int]]:
@@ -291,6 +379,20 @@ def overlay_stamps(project: Project) -> dict[Path, tuple[int, int]]:
             continue
         found[relative] = (stat.st_size, stat.st_mtime_ns)
     return found
+
+
+def carried_by_a_run(relative: Path) -> bool:
+    """Whether a hand edit to this overlay file reaches a test run with no
+    build in between.
+
+    The raw area is the one part of the overlay a run *patches* rather than
+    waits on: every load re-encodes the project's raw files into the image the
+    emulator boots, in place or relocated
+    (:func:`~shiny_mushroom.cart_patches.saved_graphics_patch`), so a repainted
+    graphics file is on the canvas and in the run alike, whoever wrote it. Every
+    other hand-editable file is assembler text, and only a build carries that.
+    """
+    return relative.parts[0] == RAW_NAME
 
 
 def _editable(shadows: Path | None, kind: str) -> bool:
@@ -435,9 +537,14 @@ def _project_asm(project: Project, relative: Path) -> tuple[Path | None, str]:
     if relative.parts[:1] != (project.base.name,):
         return None, SOURCE
     inner = Path(*relative.parts[1:])
-    for folder, kind, fragment, _entries in _CODE_FOLDERS:
+    for folder, kind, fragment, _entries, _reader in _CODE_FOLDERS:
         if inner.parent == folder and inner.suffix == ".asm":
             return Path(project.base.name) / fragment, kind
+    if inner.parent == _SPRITE_META_FOLDER and inner.suffix == ".json":
+        return (
+            Path(project.base.name) / sprite_code.PROPERTIES_FRAGMENT,
+            SPRITE_META,
+        )
     return None, SOURCE
 
 
@@ -446,10 +553,11 @@ def _row(
     relative: Path,
     owners: dict[Path, tuple[str, str | None]],
     priced: dict[str, int] | None,
+    wanted: tuple[str, ...],
 ) -> SourceFileRow:
     shadows, kind, region_id = _source_file(project, relative, owners)
     if kind in _CODE_KINDS:
-        return _code_row(project, relative, shadows, kind)
+        return _code_row(project, relative, shadows, kind, wanted)
     if shadows is None:
         return SourceFileRow(
             relative=relative,
@@ -478,7 +586,11 @@ def _row(
 
 
 def _code_row(
-    project: Project, relative: Path, fragment: Path | None, kind: str
+    project: Project,
+    relative: Path,
+    fragment: Path | None,
+    kind: str,
+    wanted: tuple[str, ...],
 ) -> SourceFileRow:
     """One file of the project's own asm.
 
@@ -486,21 +598,47 @@ def _code_row(
     removing it deletes it outright, exactly as an added graphics file is
     removed. What is worth saying about one is whether the build will run
     any of it -- a level's code file that declares no entry point is
-    assembled and never called, which is silent otherwise.
+    assembled and never called, which is silent otherwise, and a file of a
+    feature the next build does not have is assembled into nothing at all,
+    which is said first because it makes every other note moot.
     """
+    if FEATURE_OF[kind] not in wanted:
+        return SourceFileRow(
+            relative=relative,
+            shadows=fragment,
+            kind=kind,
+            note=_feature_off_note(FEATURE_OF[kind]),
+            problem=True,
+            added=True,
+        )
     note = ""
-    entries = next(
-        held for _f, held_kind, _r, held in _CODE_FOLDERS if held_kind == kind
-    )
-    if entries:
-        try:
-            text = (project.overlay / relative).read_text(
-                encoding="utf-8", errors="replace"
-            )
-        except OSError:
-            text = ""
-        if not any(entry in entries for entry in level_code.declared(text)):
-            note = f"declares no {', '.join(entries)} label, so nothing calls it"
+    try:
+        text = (project.overlay / relative).read_text(
+            encoding="utf-8", errors="replace"
+        )
+    except OSError:
+        text = ""
+    if kind == SPRITE_META:
+        note = _meta_note(text)
+    else:
+        inner = Path(*relative.parts[1:])
+        entries, reader = next(
+            (held, held_reader)
+            for folder, held_kind, _r, held, held_reader in _CODE_FOLDERS
+            if held_kind == kind and folder == inner.parent
+        )
+        if entries and reader is not None:
+            declared = reader(text)
+            if not any(entry in entries for entry in declared):
+                note = f"declares no {', '.join(entries)} label, so nothing calls it"
+            elif kind == SPRITE and not any(
+                entry in entries for entry in sprite_code.labelled(text)
+            ):
+                note = (
+                    "declares its entry points with print directives, which "
+                    "only PIXI's own patcher reads -- make each a label at "
+                    "the same position"
+                )
     return SourceFileRow(
         relative=relative,
         shadows=fragment,
@@ -509,6 +647,25 @@ def _code_row(
         problem=bool(note),
         added=True,
     )
+
+
+def _meta_note(text: str) -> str:
+    """What to say about a sprite's properties sibling: whether it still
+    parses as one. The vocabulary is PIXI's own JSON schema, and a key the
+    mapping does not carry simply defaults -- so the only thing that can be
+    wrong with one is not being a JSON object at all."""
+    import json
+
+    try:
+        meta = json.loads(text)
+    except json.JSONDecodeError as error:
+        return f"does not parse as a sprite's properties: {error}"
+    if not isinstance(meta, dict):
+        return (
+            f"does not hold a sprite's properties: the file is a JSON "
+            f"{type(meta).__name__}, not an object"
+        )
+    return ""
 
 
 def _region_note(

@@ -24,7 +24,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
-from shiny_mushroom.fields import Choice, Choices, Field, Flags, Number
+from shiny_mushroom.fields import Choice, Choices, Field, Flags, Number, Switch
 
 #: The four bytes, in table order.
 SIZE = 4
@@ -115,10 +115,6 @@ def _bit_field(
     )
 
 
-#: The two answers of a yes/no picker, in the order the screen-exit flag
-#: offers them.
-_NO_YES = Choices((Choice(0, "No"), Choice(1, "Yes")))
-
 #: The eight entrance actions, as ``SMW_InitializeLevelRAM`` dispatches the
 #: three bits: 1 and 2 are the horizontal pipe exits with the facing the
 #: game's table gives them, 3 and 4 the vertical ones with the pipe speeds
@@ -200,7 +196,7 @@ def fields() -> tuple[Field, ...]:
         Field(
             key="no-entrance-room",
             label="Skip intro room",
-            kind=_NO_YES,
+            kind=Switch(),
             read=lambda record: 1 if record.data[3] & NO_ENTRANCE_ROOM else 0,
             write=lambda record, value: record.with_byte(
                 3,

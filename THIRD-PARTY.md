@@ -78,6 +78,61 @@ builds and no macOS one, so `asar-macos` was built by the maintainers from the
 1.91 source rather than downloaded. It is the same version as the other two and
 carries no changes.
 
+## Material Symbols
+
+The icon set the interface is drawn with. Bundled as one font file inside the
+package, `shiny_mushroom/resources/fonts/material-symbols-subset.ttf`.
+
+| | |
+|---|---|
+| Upstream | [google/material-design-icons](https://github.com/google/material-design-icons) — the `variablefont/` outlined face |
+| Licence | Apache-2.0, in `shiny_mushroom/resources/fonts/material-symbols-license.txt` |
+| Version | the face published at that path; the subset carries the upstream tables unchanged |
+| Modified | subset only — the glyph set is cut down, no outline is touched |
+
+**Subset, not redrawn.** `packaging/subset_icon_font.py` cuts the upstream
+variable font down to the codepoints in `shiny_mushroom.ui.icons.Icon` and
+strips the layout features an icon drawn one codepoint at a time never uses.
+The outlines, the variable axes and the font's own metadata come through
+unchanged, so a glyph in the bundled file rasterizes byte-identically to the
+same glyph upstream. To regenerate it, download the upstream face and run:
+
+```bash
+uv run --with fonttools packaging/subset_icon_font.py <the upstream .ttf>
+```
+
+Apache 2.0 asks its notice to travel with the work: the licence file ships
+beside the font, and Help > About names the set.
+
+## PromptFont
+
+The controller marks the Test Controls dialog draws its twelve SNES buttons
+with. Bundled as one font file inside the package,
+`shiny_mushroom/resources/fonts/promptfont-subset.otf`.
+
+| | |
+|---|---|
+| Upstream | [PromptFont](https://github.com/Shinmera/promptfont) by Yukari Hafner |
+| Licence | SIL OFL 1.1, in `shiny_mushroom/resources/fonts/promptfont-license.txt` |
+| Version | 1.0 |
+| Modified | subset only — twelve glyphs, no outline is touched |
+
+**Compiled from upstream's own source, not cut from a built face.** PromptFont
+ships as a FontForge `.sfd` and is built with FontForge and SBCL.
+`packaging/subset_prompt_font.py` reads that `.sfd` directly and emits the
+twelve glyphs the editor draws as a CFF font — which is the format upstream
+releases anyway, and every one of those glyphs is a plain cubic outline with no
+references, so the outlines come through unchanged. To regenerate it against a
+checkout of the upstream repository:
+
+```bash
+uv run --with fonttools packaging/subset_prompt_font.py <path>/promptfont.sfd
+```
+
+The OFL asks that the font not be sold on its own and that a derivative not use
+the reserved name. The subset ships as part of the editor under the family name
+`PromptFont Subset`, with the licence beside it, and Help > About names the set.
+
 ## Qt, via PySide6
 
 The GUI toolkit. Bundled by PyInstaller as part of the application.

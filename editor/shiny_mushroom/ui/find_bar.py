@@ -21,11 +21,12 @@ from __future__ import annotations
 
 from PySide6.QtCore import QRegularExpression, Qt, Signal
 from PySide6.QtGui import QRegularExpressionValidator
-from PySide6.QtWidgets import QComboBox, QLabel, QLineEdit, QToolBar, QWidget
+from PySide6.QtWidgets import QComboBox, QLabel, QLineEdit, QWidget
 
 from shiny_mushroom.hexnum import hexnum
 from shiny_mushroom.index import LevelIndex, Occurrence, SearchKind
-from shiny_mushroom.ui.toolbars import add_action
+from shiny_mushroom.ui.icons import Icon
+from shiny_mushroom.ui.toolbars import IconBar
 
 #: What may be typed in the id box: two hex digits, with the ``$`` the rest of
 #: the app writes them with allowed and ignored. A validator rather than a
@@ -57,7 +58,7 @@ def parse_id(text: str) -> int | None:
         return None
 
 
-class FindBar(QToolBar):
+class FindBar(IconBar):
     """Steps through every place an id occurs. Owns no level and no cartridge."""
 
     #: Go and look at this occurrence. Whoever is listening decides what that
@@ -105,8 +106,10 @@ class FindBar(QToolBar):
         self.addWidget(QLabel(" id "))
         self.addWidget(self._id)
         self.addWidget(self._name)
-        self._previous = add_action(self, "&Previous", self.find_previous)
-        self._next = add_action(self, "&Next", self.find_next)
+        self._previous = self.add_icon_action(
+            Icon.PREVIOUS, "&Previous", self.find_previous
+        )
+        self._next = self.add_icon_action(Icon.NEXT, "&Next", self.find_next)
 
         self._readout = QLabel()
         self.addWidget(self._readout)

@@ -95,6 +95,15 @@ class RamMap:
     #: twelve would leave ten slots live to draw over the one it is capturing.
     sprite_slots: int = 12
 
+    #: Map entries that name a *role* rather than a byte -- the stack's bounds
+    #: are the standing case. Their vanilla offsets fall inside a range this
+    #: base relocates as data, but the role does not follow the move (SA-1
+    #: Pack re-points SP instead), so the byte-relocation questions --
+    #: :meth:`place`, and the "the patch moves it" notes built on it -- have
+    #: no claim on these names: the source's own value is the measured truth,
+    #: SP being loaded from it at boot.
+    role_names: frozenset[str] = frozenset()
+
     def place(self, offset: int) -> RamLocation:
         """Where the byte at vanilla work-RAM ``offset`` actually is."""
         raise NotImplementedError
@@ -323,6 +332,7 @@ _SA1_SPRITE_TABLES: dict[int, int] = {
     0x014EC: 0x74C8,
     0x014F8: 0x74DE,  # X position, fraction
     0x01504: 0x74F4,
+    0x01510: 0x750A,  # placed by the source one slot-width after $1504; the pack agrees
     0x0151C: 0x3284,
     0x01528: 0x329A,
     0x01534: 0x32B0,  # powerup blink-fall flag
@@ -361,16 +371,13 @@ _SA1_SPRITE_TABLES: dict[int, int] = {
     0x01FE2: 0x7FD6,
 }
 
-#: The one table upstream says was relocated and nothing here has watched move.
-#: **Refused rather than mapped**, on the same grounds the whole set was before
-#: any of it was measured: the general rules would answer for it with a
-#: neighbouring table's address, silently. No instruction in the game names it
-#: -- the init routine deliberately skips it and the code graph shows no reader
-#: -- so no driven probe can pair it. The machinery stays because a future base
-#: will need it before its own measurements exist.
-_SA1_SPRITE_UNCONFIRMED: tuple[int, ...] = (
-    0x01510,
-)
+#: Tables a base relocates that nothing has watched move: **refused rather
+#: than mapped**, on the grounds the whole set above was before any of it was
+#: measured -- the general rules would answer for one with a neighbouring
+#: table's address, silently. Empty now that the source places every table
+#: and ``test_ram_map.py`` holds the measurements against it; the machinery
+#: stays for a base whose measurements do not exist yet.
+_SA1_SPRITE_UNCONFIRMED: tuple[int, ...] = ()
 
 
 #: Every offset at which the SA-1 map's answer changes rule, sorted: both ends
@@ -382,11 +389,7 @@ _SA1_BOUNDARIES: tuple[int, ...] = tuple(
             for table in (*_SA1_SPRITE_TABLES, *_SA1_SPRITE_UNCONFIRMED)
             for edge in (table, table + _SLOT_TABLE_SIZE)
         }
-        | {
-            edge
-            for first, last, _, _ in _SA1_RANGES
-            for edge in (first, last + 1)
-        }
+        | {edge for first, last, _, _ in _SA1_RANGES for edge in (first, last + 1)}
     )
 )
 
@@ -472,6 +475,14 @@ class Sa1Ram(RamMap):
 
     #: More Sprites, which is what the relocations below are in aid of.
     sprite_slots: int = 22
+
+    #: The stack's bounds stay in work RAM while the page they sat in moves:
+    #: the pack points SP at `$1FFF` and keeps `$7E:1F00-$7E:1FFF` as the
+    #: S-CPU's stack (docs/smw/sa1/memory-map.md), so the map's arithmetic
+    #: lands both names there and no byte-relocation answer applies to them.
+    role_names: frozenset[str] = frozenset(
+        {"!RAM_SMW_Misc_StartOfStack", "!RAM_SMW_Misc_EndOfStack"}
+    )
 
     def place(self, offset: int) -> RamLocation:
         if not 0 <= offset < WORK_RAM_SIZE:
@@ -561,3 +572,130 @@ class Sa1Ram(RamMap):
         # interrupt handlers, the code it runs from work RAM -- and corresponds
         # to no vanilla byte.
         return None
+
+
+# -- the custom sprites' RAM, which is the feature's and not the base's -------
+
+#: The custom sprites' per-slot tables, ``vanilla work-RAM offset -> BW-RAM
+#: offset``. The feature places its slot state twice -- PIXI's own homes on a
+#: console cartridge, that tool's SA-1 homes on the ``sa1`` base -- under the
+#: same ``Define_SMW_SA1`` switch the pack's remap uses, so the base's map is
+#: exactly the fact that decides which arm applies. The numbers are
+#: ``Memory/WRAM_Extended.asm``'s two arms, and ``smw/tests/test_ram_map.py``
+#: holds them equal to it. The vanilla tables stride 12; the BW-RAM tables
+#: stride the base's 22 slots, which is why the vanilla windows below are
+#: :data:`_SLOT_TABLE_SIZE` wide while :meth:`CustomSpritesSa1Ram._slot`
+#: reaches every slot the base has.
+CUSTOM_SPRITE_TABLES: dict[int, int] = {
+    0x1AB10: 0x0040,  # the record's extra bits
+    0x1AB28: 0x0057,  # extra property byte 1
+    0x1AB34: 0x006D,  # extra property byte 2
+    0x1AB40: 0x0099,  # extra byte 1
+    0x1AB4C: 0x00AF,  # extra byte 2
+    0x1AB58: 0x00C5,  # extra byte 3
+    0x1AB64: 0x00DB,  # extra byte 4
+    0x1AB9E: 0x0083,  # the true sprite number
+}
+
+#: PIXI's new-code flag: a per-slot table on a console cartridge, one byte on
+#: the SA-1 layout -- that tool no longer indexes it there, and the feature
+#: keeps each arm's shape. Slot 0 is the only slot with two homes.
+_CUSTOM_NEW_CODE_TABLE, _CUSTOM_NEW_CODE_BWRAM = 0x1AB1C, 0x0056
+
+#: The spawn seam's pending hand-off: seven single bytes, contiguous on both
+#: arms, behind the slot tables.
+_CUSTOM_SINGLES_AT, _CUSTOM_SINGLES_BWRAM, _CUSTOM_SINGLES = 0x1ABAA, 0x00F1, 7
+
+#: The whole vanilla span the feature's RAM occupies, first and one past
+#: last. Inside it, a byte no entry above names -- PIXI's layout skips room
+#: this cartridge does not carry -- exists on neither arm.
+_CUSTOM_SPAN = (0x1AB10, _CUSTOM_SINGLES_AT + _CUSTOM_SINGLES)
+
+#: Every offset at which the custom-sprites overlay changes rule, for
+#: :meth:`RamMap.region`'s interior check: both ends of the span, of each
+#: table's vanilla window, and of the new-code flag's.
+_CUSTOM_BOUNDARIES: tuple[int, ...] = tuple(
+    sorted(
+        {
+            edge
+            for table in (*CUSTOM_SPRITE_TABLES, _CUSTOM_NEW_CODE_TABLE)
+            for edge in (table, table + _SLOT_TABLE_SIZE)
+        }
+        | set(_CUSTOM_SPAN)
+    )
+)
+
+
+@dataclass(frozen=True)
+class CustomSpritesSa1Ram(Sa1Ram):
+    """:class:`Sa1Ram` with the custom sprites' RAM laid over it.
+
+    The pack's remap rules never moved these bytes -- the feature placed them
+    twice, and on this base the vanilla span holds nothing at all, so the
+    plain map's work-RAM passthrough would read stale bytes of the right
+    number out of a memory the build never writes. Only the ``sa1`` arm needs
+    a map of its own: on a console cartridge the feature's RAM *is* work RAM
+    at its vanilla offsets, and :func:`custom_sprites_ram` hands the plain
+    map back unchanged.
+    """
+
+    id: str = "SA-1 with custom sprites"
+
+    def place(self, offset: int) -> RamLocation:
+        first, end = _CUSTOM_SPAN
+        if not first <= offset < end:
+            return super().place(offset)
+        for table, home in CUSTOM_SPRITE_TABLES.items():
+            if table <= offset < table + _SLOT_TABLE_SIZE:
+                return RamLocation(
+                    MemorySpace.SA1_BWRAM, home + (offset - table)
+                )
+        if _CUSTOM_NEW_CODE_TABLE <= offset < (
+            _CUSTOM_NEW_CODE_TABLE + _SLOT_TABLE_SIZE
+        ):
+            if offset != _CUSTOM_NEW_CODE_TABLE:
+                raise RamMapError(
+                    f"{self.id} keeps the new-code flag as one byte, not a "
+                    f"table -- ${offset:05X} names a slot it does not have"
+                )
+            return RamLocation(MemorySpace.SA1_BWRAM, _CUSTOM_NEW_CODE_BWRAM)
+        if _CUSTOM_SINGLES_AT <= offset < _CUSTOM_SINGLES_AT + _CUSTOM_SINGLES:
+            return RamLocation(
+                MemorySpace.SA1_BWRAM,
+                _CUSTOM_SINGLES_BWRAM + (offset - _CUSTOM_SINGLES_AT),
+            )
+        raise RamMapError(
+            f"${offset:05X} is inside the custom sprites' span but names no "
+            f"byte the feature keeps -- PIXI's layout skips room this "
+            f"cartridge does not carry"
+        )
+
+    def _slot(self, table: int, slot: int) -> RamLocation:
+        home = CUSTOM_SPRITE_TABLES.get(table)
+        if home is not None:
+            return RamLocation(MemorySpace.SA1_BWRAM, home + slot)
+        if table == _CUSTOM_NEW_CODE_TABLE:
+            if slot:
+                raise RamMapError(
+                    f"{self.id} keeps the new-code flag as one byte, not a "
+                    f"table -- there is no slot {slot}"
+                )
+            return RamLocation(MemorySpace.SA1_BWRAM, _CUSTOM_NEW_CODE_BWRAM)
+        return super()._slot(table, slot)
+
+    def _boundaries(self) -> tuple[int, ...]:
+        return tuple(sorted({*super()._boundaries(), *_CUSTOM_BOUNDARIES}))
+
+
+def custom_sprites_ram(base_map: RamMap) -> RamMap:
+    """``base_map`` with the custom-sprites feature's RAM laid over it.
+
+    What a reader of a cartridge built with the feature on wants in place of
+    the base's own map. Identity on a base that keeps work RAM -- the
+    feature's vanilla homes are plain work-RAM offsets and the plain map
+    already answers -- and the overlay above on the base whose
+    ``Define_SMW_SA1`` switch moved them.
+    """
+    if isinstance(base_map, Sa1Ram):
+        return CustomSpritesSa1Ram()
+    return base_map

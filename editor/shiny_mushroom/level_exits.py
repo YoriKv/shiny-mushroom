@@ -37,7 +37,7 @@ from shiny_mushroom.fields import (
     Choices,
     Field,
     Number,
-    choices,
+    Switch,
     readout,
 )
 from shiny_mushroom.hexnum import hexbytes, hexnum
@@ -426,7 +426,7 @@ def _secondary_field() -> Field:
     return Field(
         key=EXIT_SECONDARY,
         label="Secondary entrance",
-        kind=choices(((0, "No"), (1, "Yes"))),
+        kind=Switch(),
         read=lambda record: record.secondary,
         write=_write_secondary,
         hint="Arrive through the destination's secondary entrance instead of "

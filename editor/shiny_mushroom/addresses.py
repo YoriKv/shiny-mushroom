@@ -29,8 +29,13 @@ from shiny_mushroom.memtype import SPACES, MemoryType
 from smw_tools import asm_regions
 from smw_tools.bases import AddressMap, DrivenPaths, RomBase, TracedCode
 from smw_tools.bases import base as rom_base
-from smw_tools.features import applied
-from smw_tools.ram_map import RamMap, cpu_address, window_address
+from smw_tools.features import CUSTOM_SPRITES, applied
+from smw_tools.ram_map import (
+    RamMap,
+    cpu_address,
+    custom_sprites_ram,
+    window_address,
+)
 from smw_tools.rom_sizes import size_for
 
 if TYPE_CHECKING:
@@ -322,7 +327,13 @@ class Addresses:
         return cls(
             base=base,
             map=base.address_map,
-            ram=base.ram_map,
+            # The base's own map, with the custom sprites' RAM laid over it
+            # where that feature is on: the feature places its slot state
+            # per base, and the base's map alone would pass the vanilla
+            # offsets through to a memory the sa1 build never writes.
+            ram=custom_sprites_ram(base.ram_map)
+            if CUSTOM_SPRITES.id in base.features
+            else base.ram_map,
             sprite_header_build_owned=base.sprite_header_build_owned,
             driven=base.driven,
             traced=base.traced,
@@ -797,8 +808,26 @@ FRAME_COUNTER_POSE = 0x00
 
 #: ``$7E001A``, 16-bit, with the Y twin immediately after it -- so four
 #: consecutive bytes set both.
+#:
+#: ``!RAM_SMW_Mirror_CurrentLayer1XPosLo`` and its Y: where the game will put
+#: ``$210D``/``$210E`` this frame, which is the camera and is also Layer 1's
+#: position. Named twice for that reason -- :data:`LAYER1_X` is the same two
+#: bytes read as what a crash report calls them.
 CAMERA_X = 0x00001A
 CAMERA_Y = 0x00001C
+LAYER1_X = CAMERA_X
+LAYER1_Y = CAMERA_Y
+
+#: ``$7E001E`` / ``$7E0020``, ``!RAM_SMW_Mirror_CurrentLayer2XPosLo`` and its Y:
+#: the mirrors of ``$210F``/``$2110``, where Layer 2 will be put this frame.
+LAYER2_X = 0x00001E
+LAYER2_Y = 0x000020
+
+#: ``$7E0019``, ``!RAM_SMW_Player_CurrentPowerUp``: 0 small, 1 big, 2 cape,
+#: 3 fire. The one byte of the player's own state a crash report carries, on
+#: the reasoning that what he was holding is often why the code being run was
+#: reached at all.
+POWERUP = 0x000019
 
 
 # -- rebuilding a level without running the game mode ------------------------

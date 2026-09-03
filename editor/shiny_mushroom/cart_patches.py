@@ -25,6 +25,7 @@ from shiny_mushroom.addresses import LAYER2_IS_BACKGROUND
 from shiny_mushroom.header import HEADER_SIZE
 from shiny_mushroom.hexnum import hexnum
 from shiny_mushroom.layer2_table import Layer2Entry, Layer2TableError
+from shiny_mushroom.map16 import Map16Tables
 from shiny_mushroom.overworld import (
     destroy_sections,
     exit_sections,
@@ -36,6 +37,7 @@ from shiny_mushroom.overworld import (
 from shiny_mushroom.project import ProjectError, forget_readings, scanning_once
 from shiny_mushroom.project_overworld import OVERWORLD_PARTS
 from shiny_mushroom.rom_patches import (
+    extra_byte_counts,
     graphics_patch,
     header_patch,
     layer1_base,
@@ -175,11 +177,62 @@ _ROLE_WIDTHS = {
 }
 
 
+#: A caller's held level document, as the patch it makes over ``rom``. Takes
+#: what the assets already claimed of the free space, so a grown stream is
+#: placed clear of them -- `MainWindow._level_document_patch` is the one
+#: implementation.
+Document = Callable[[Sequence[range]], Mapping[int, bytes]]
+
+
 def claimed(patches: Mapping[int, bytes]) -> list[range]:
     """The runs of the image ``patches`` write, as what :func:`free_space`
     takes for ``taken`` -- so a relocation made later in the same gather is
     not handed bytes an earlier one already has."""
     return [range(at, at + len(run)) for at, run in patches.items()]
+
+
+def layer(patches: Mapping[int, bytes], over: Mapping[int, bytes]) -> dict[int, bytes]:
+    """``patches`` with every run of ``over`` written **over** it -- spliced
+    where the two overlap, rather than replacing the key.
+
+    A plain ``|`` is wrong for this gather and was silently wrong at level
+    ``$000``: a whole secondary-header table is keyed at the table's own
+    offset and level ``$000``'s single byte is keyed there too, so the union
+    replaced 512 bytes of saved rows with one byte and dropped every other
+    level's. The same collision waits for secondary entrance ``$00`` and for
+    any future run that lands inside another, so the splice is the rule here
+    rather than a special case for the two that are known.
+
+    A run that lands wholly inside an earlier one keeps that run's key and
+    length, which is what leaves a patched table readable as a table. Anything
+    else -- a straddle, an overlap either way -- trims the earlier run back to
+    the bytes the later one does not claim and adds the later one beside it.
+    The result never invents a byte neither side had, and the later run always
+    wins where they disagree.
+    """
+    out = dict(patches)
+    for at, run in over.items():
+        run = bytes(run)
+        end = at + len(run)
+        held = [
+            (base, data)
+            for base, data in out.items()
+            if base < end and at < base + len(data)
+        ]
+        if len(held) == 1 and held[0][0] <= at and held[0][0] + len(held[0][1]) >= end:
+            base, data = held[0]
+            spliced = bytearray(data)
+            spliced[at - base : end - base] = run
+            out[base] = bytes(spliced)
+            continue
+        for base, data in held:
+            del out[base]
+            if base < at:
+                out[base] = data[: at - base]
+            if base + len(data) > end:
+                out[end] = data[end - base :]
+        out[at] = run
+    return out
 
 
 def _graphics_number(key: Path, folder: Path) -> int | None:
@@ -196,11 +249,13 @@ _GRAPHICS_KEY = re.compile(r"GFX([0-9A-F]{2})\.bin")
 
 
 def _unreported(parts: list[str]) -> None:
-    """A :data:`Skipped` that says nothing, for a gather whose findings
-    another gather makes again.
+    """A :data:`Skipped` that says nothing, for a caller with nowhere to put
+    the reading.
 
-    The level-load path reads the same project facts the test-run path does,
-    and a name reported from both would be shown twice.
+    A probe, a catalogue pass and a test's stand-in all gather patches without
+    a window behind them to hold a standing note. Every caller that *has* one
+    passes it: a reading no gather ever makes is a reading nothing ever clears,
+    which leaves a fixed repoint reported as still needing a build.
     """
 
 
@@ -211,8 +266,9 @@ def as_built(sprites: bytes, cart: bytes, where: Addresses) -> bytes:
     difference as an edit a build has not yet re-placed. That is exact only
     while the build carries level data through untouched, and on a base whose
     build **rewrites** it the two disagree the moment they are both correct: on
-    ``sa1``, SA-1 Pack's pass writes sprite-memory index ``$08`` into 484 of the
-    512 levels on the image's way out, and the level files it built from still
+    ``sa1``, the finalize pass writes sprite-memory index ``$08`` into 484 of
+    the 512 levels on the image's way out (``Config/SpriteMemoryIndex.asm``,
+    the walk SA-1 Pack's own patch makes), and the level files it built from still
     say what the console's game said. Compared byte for byte, every one of those
     levels reads as edited, and patching the "edit" back in undoes the pack --
     a level tested that way runs at the stock sprite allocation and drops
@@ -361,8 +417,8 @@ def saved_background_patch(
     status: Status,
 ) -> dict[int, bytes]:
     """The project's saved Layer 2 background for this level, over the image's
-    own stream -- the raw overlay's half of what :func:`project_patches` does
-    for the streams. Empty when the level's background is not one the project
+    own stream -- the raw overlay's half of what :func:`all_patches` does for
+    the streams. Empty when the level's background is not one the project
     has edited, and when the saved pattern's re-encoding no longer fits the
     shipped stream's slot -- the cartridge shows its own until a build re-places
     them.
@@ -459,7 +515,7 @@ def saved_graphics_patch(
         if found.reason is not None:
             refused.append(f"{name} {found.reason}")
             continue
-        patches |= found.patches
+        patches = layer(patches, found.patches)
         held.extend(claimed(found.patches))
     if refused:
         status(
@@ -521,6 +577,7 @@ def _saved_table_patch(
     what: str,
     where: Addresses,
     status: Status,
+    held_row: int | None = None,
 ) -> dict[int, bytes]:
     """The rows a project has saved for a group of fixed tables, over the
     image's own -- one asm region per table, patched whole.
@@ -528,6 +585,13 @@ def _saved_table_patch(
     ``what`` names the group in the status message a reading failure earns;
     a failure abandons the whole group rather than patching part of it, an
     image carrying half a table being worse than one carrying none.
+
+    ``held_row`` is the one row of every table in the group that a caller's
+    **held document** speaks for, and it is left as the image has it -- so the
+    document's own byte, measured against that image, is the byte the run
+    boots. Without this the saved row would already be in place and a document
+    that agrees with the *cartridge* would have nothing to patch, which is the
+    one case where a held edit loses to a saved one.
     """
     if project is None or rom is None:
         return {}
@@ -543,6 +607,9 @@ def _saved_table_patch(
             status(f"The project's saved {what} could not be read: {error}", NOTE_MS)
             return {}
         offset = where.offset(table)
+        if held_row is not None and held_row < len(image):
+            at = offset + held_row
+            image = image[:held_row] + rom[at : at + 1] + image[held_row + 1 :]
         if rom[offset : offset + len(image)] != image:
             patches[offset] = image
     return patches
@@ -553,6 +620,7 @@ def saved_secondary_patch(
     rom: bytes | None,
     where: Addresses,
     status: Status,
+    held_level: int | None = None,
 ) -> dict[int, bytes]:
     """The project's saved secondary-header tables, over the image's own.
 
@@ -560,6 +628,11 @@ def saved_secondary_patch(
     the overlay carries every level's row, and a level entered through a
     screen exit reads its own entry off the same tables. Empty when nothing
     is saved or the image already holds the saved rows.
+
+    ``held_level`` is the canvas level, where a held document speaks for it:
+    its own byte of each table is left as the image has it and the document
+    patches over that -- see :func:`_saved_table_patch`. Every *other* level's
+    saved row still rides along, which is what a screen exit into one needs.
     """
     return _saved_table_patch(
         project,
@@ -569,6 +642,7 @@ def saved_secondary_patch(
         "secondary header",
         where,
         status,
+        held_row=held_level,
     )
 
 
@@ -655,33 +729,43 @@ def saved_level_graphics_patch(
     )
 
 
-def saved_map16_patch(
+def map16_patch(
+    held: Map16Tables | None,
     project: Project | None,
     rom: bytes | None,
     where: Addresses,
     symbols: SymbolTable | None,
     status: Status,
 ) -> dict[int, bytes]:
-    """The project's saved Map16 tables over the image's own.
+    """The Map16 tables the editor is working with, over the image's own.
+
+    **The held tables win where there are any** -- saved or not, they are
+    what the sheet shows, so they are what a picture and a test run have to
+    agree with. The project's saved overlay answers when the Map16
+    environment was never opened this session, and nothing answers when it
+    was not and the project has no files of its own -- the ordinary case,
+    which costs a directory look rather than fifteen file reads.
+    :func:`world_map_patch`'s rule, and `MainWindow._world_parts`'s.
 
     In place and same-size, so nothing is claimed of the free space, and
     measured against the image rather than against stock, so a table put back
     to stock after a build that carried an edit is put back on the image too
-    (:meth:`~shiny_mushroom.map16.Map16Tables.patches`). Empty for a project
-    with no Map16 files of its own, which is the ordinary case and costs a
-    directory look rather than fifteen file reads.
+    (:meth:`~shiny_mushroom.map16.Map16Tables.patches`).
     """
-    if project is None or rom is None or not project.map16_edited:
-        return {}
-    if not addressable(rom, where):
+    if rom is None or not addressable(rom, where):
         return {}
     try:
-        return project.map16_tables().patches(rom, where, symbols)
+        tables = held
+        if tables is None:
+            if project is None or not project.map16_edited:
+                return {}
+            tables = project.map16_tables()
+        return tables.patches(rom, where, symbols)
     except (ProjectError, OSError, ValueError) as error:
-        status(
-            f"The project's saved Map16 tables could not be loaded: {error}",
-            NOTE_MS,
-        )
+        # Either source can be the one that would not load -- the held tables
+        # are what answers when the environment has been opened -- so the
+        # message names the tables rather than guessing where they came from.
+        status(f"The Map16 tables could not be loaded: {error}", NOTE_MS)
         return {}
 
 
@@ -692,56 +776,117 @@ def saved_assets_patch(
     symbols: SymbolTable | None,
     status: Status,
     taken: Sequence[range] = (),
+    map16: Map16Tables | None = None,
 ) -> dict[int, bytes]:
-    """The project's saved parts that belong to no document -- the Map16
-    tables, the levels' graphics rows and the graphics files -- over the
-    image's own.
+    """The parts that belong to no *level* document -- the Map16 tables, the
+    levels' graphics rows and the graphics files -- over the image's own.
 
-    Both doors into the emulator gather this: a level load with no patches of
-    its own (:func:`project_patches`) and a picture refreshed for an edit or a
-    test run (``MainWindow.test_patches``). A refresh that carried only the
-    document would show the edit over the cartridge's *stock* graphics, and
-    the tiles somebody repainted would come and go with every object moved.
+    ``map16`` is the Map16 environment's held tables where it has any; the
+    project's saved files answer otherwise (:func:`map16_patch`). The other
+    two are saved-only because nothing holds them: the graphics dialog
+    writes through to the overlay as it edits.
+
+    Both doors into the emulator gather this: a level load with no held
+    document (:func:`all_patches` without ``document``) and a picture refreshed
+    for an edit or a test run (``MainWindow.test_patches``). A refresh that
+    carried only the document would show the edit over the cartridge's *stock*
+    graphics, and the tiles somebody repainted would come and go with every
+    object moved.
 
     The Map16 patch is in place and claims nothing; the graphics may
     relocate, so they go last here and what they claim is what a caller has
     to keep its own relocations off (:func:`claimed`).
     """
-    patches = saved_map16_patch(project, rom, where, symbols, status)
-    patches |= saved_level_graphics_patch(project, rom, where, status)
-    return patches | saved_graphics_patch(
-        project, rom, where, status, taken=[*taken, *claimed(patches)]
+    patches = map16_patch(map16, project, rom, where, symbols, status)
+    patches = layer(patches, saved_level_graphics_patch(project, rom, where, status))
+    return layer(
+        patches,
+        saved_graphics_patch(
+            project, rom, where, status, taken=[*taken, *claimed(patches)]
+        ),
     )
 
 
-def project_patches(
+def all_patches(
     project: Project | None,
     rom: bytes | None,
     level: int | None,
     where: Addresses,
     symbols: SymbolTable | None,
     status: Status,
+    *,
+    document: Document | None = None,
+    map16: Map16Tables | None = None,
+    held: Sequence[Mapping[int, bytes]] = (),
+    note: Skipped = _unreported,
 ) -> dict[int, bytes]:
-    """What the open project has already saved for the level being loaded.
+    """**Everything the editor knows, over the image, in one order.**
 
-    A project is a lens over the disassembly, so a level it has saved has to
-    come back through the emulator as *that* level rather than as the
-    cartridge's. The saved streams reach the loader the same way an unsaved edit
-    does -- written over the core's copy of the image -- because there is only
-    one way for a level to reach the picture and this is it.
+    Every door into the emulator comes through here -- a level load, a
+    refresh after an edit, Test Level, Test World Map -- because they are all
+    the same question: what does this cartridge have to hold for what the
+    editor is showing to be true? They were six hand-spelled unions before,
+    and they had drifted: a test run booted without any other level's saved
+    secondary header, entrance or Layer 2, and a world-map run booted on
+    stock Map16 tables.
 
-    Which of the level's halves moved decides how, exactly as it does for the
-    held document -- see :func:`level_document_patch`. A save that changed only
-    the header is five bytes at a known offset and needs none of the relocation
-    machinery, and it still has to be made: the cartridge's own header would
-    otherwise be what the editor read back and saved again.
+    Two things genuinely differ between the doors, and they are the two
+    parameters. ``document`` is the **canvas level's held document** where the
+    caller has one -- given, it wins over the project's saved streams for that
+    level, which is the whole rule this seam exists for; omitted, the saved
+    streams answer, which is what a load of some *other* level wants. ``held``
+    carries the patches the window builds out of its own documents -- the world
+    map, the colours, a test run's entrance override -- appended last because
+    each is over a table nothing above touches.
+
+    **The held document wins by not being argued with**, rather than by being
+    laid over an answer already given. Every arm of
+    :func:`level_document_patch` measures against the cartridge and says
+    nothing where the document and the image agree, so a saved Layer 2,
+    background or secondary byte laid down *first* would still be booted by a
+    document that had been edited back to what the cartridge says. So the
+    canvas level's saved arms are withheld while a document speaks for them:
+    its two Layer 2 arms entirely, and its own byte of each whole
+    secondary-header table (:func:`saved_secondary_patch`). Every *other*
+    level's saved rows ride along untouched, which is what a screen exit into
+    one needs. The alternative -- measuring the document against the image *as
+    patched so far* -- would mean handing this seam a rewritten image, and the
+    document is a callback the window owns.
+
+    **The order is the claim discipline.** The assets can relocate and so can
+    a grown stream, so the files go down first and what they take of the free
+    space is handed on, rather than the level being placed over it. Each step
+    is spliced rather than unioned (:func:`layer`), so a later one-byte run
+    inside an earlier whole table does not take the table's key with it.
+
+    ``note`` is told what the run will not be able to show -- today the Layer 2
+    repoint no symbol file and no donor can resolve. Every door passes it: a
+    reading no gather makes is a reading nothing clears.
     """
-    if project is None or rom is None or level is None:
+    if rom is None:
         return {}
-    if not addressable(rom, where):
-        return {}
-    with scanning_once():
-        return _project_patches(project, rom, level, where, symbols, status)
+    if project is not None and level is not None and addressable(rom, where):
+        with scanning_once():
+            return _merged_patches(
+                _project_patches(
+                    project, rom, level, where, symbols, status, map16, document, note
+                ),
+                held,
+            )
+    # Nothing to gather -- no project, or an image these addresses mean
+    # nothing in -- but what the editor *holds* is still true of it: a
+    # cartridge opened on its own is edited the same way, and only the saved
+    # side has nowhere to read from.
+    patches = dict(document(())) if document is not None else {}
+    return _merged_patches(patches, held)
+
+
+def _merged_patches(
+    patches: dict[int, bytes], held: Sequence[Mapping[int, bytes]]
+) -> dict[int, bytes]:
+    for one in held:
+        patches = layer(patches, one)
+    return patches
 
 
 def _project_patches(
@@ -751,28 +896,60 @@ def _project_patches(
     where: Addresses,
     symbols: SymbolTable | None,
     status: Status,
+    map16: Map16Tables | None = None,
+    document: Document | None = None,
+    note: Skipped = _unreported,
 ) -> dict[int, bytes]:
-    """:func:`project_patches`' body, inside its one reading of the overlay."""
+    """:func:`all_patches`' body, inside its one reading of the overlay."""
     # The pointer first: where the level's Layer 2 *points* decides what the
     # background patch beside it would even be about.
-    patches = layer2_pointer_patch(
-        project, rom, level, where, symbols, _unreported
-    ) | saved_background_patch(project, rom, level, where, status)
-    patches |= saved_layer2_patch(project, rom, level, where, status)
-    patches |= saved_secondary_patch(project, rom, where, status)
-    patches |= saved_secondary_entrances_patch(project, rom, where, status)
+    patches = layer2_pointer_patch(project, rom, level, where, symbols, note)
+    if document is None:
+        # This level's saved Layer 2, for a door holding no document of it.
+        # With a document, both arms are the document's to answer -- and it
+        # can only answer against an image the saved ones have not already
+        # written (see `all_patches`).
+        patches = layer(
+            patches, saved_background_patch(project, rom, level, where, status)
+        )
+        patches = layer(patches, saved_layer2_patch(project, rom, level, where, status))
+    patches = layer(
+        patches,
+        saved_secondary_patch(
+            project,
+            rom,
+            where,
+            status,
+            # The canvas level's own byte of each table, likewise.
+            held_level=None if document is None else level,
+        ),
+    )
+    patches = layer(
+        patches, saved_secondary_entrances_patch(project, rom, where, status)
+    )
     # The assets before the streams: both can relocate, and what the files
     # claim of the free space is handed on so the level is not placed over it.
-    patches |= saved_assets_patch(
-        project, rom, where, symbols, status, taken=claimed(patches)
+    patches = layer(
+        patches,
+        saved_assets_patch(
+            project, rom, where, symbols, status, taken=claimed(patches), map16=map16
+        ),
     )
+    if document is not None:
+        # The held document is this level as the editor has it, saved or not,
+        # so the project's saved streams for it are beside the point.
+        return layer(patches, document(claimed(patches)))
     streams = project.level_streams(level)
     if streams is None:
         return patches
     layer1, sprites = streams
     try:
         base = layer1_base(rom, level, where=where)
-        held = sprite_stream(rom, sprite_base(rom, level, where=where))
+        held = sprite_stream(
+            rom,
+            sprite_base(rom, level, where=where),
+            extra_byte_counts(rom, where=where),
+        )
         # What the build set for itself is the cartridge's answer, not this
         # file's -- otherwise every level the build rewrote reads as edited.
         sprites = as_built(sprites, held, where)
@@ -782,18 +959,24 @@ def _project_patches(
         ):
             if layer1[:HEADER_SIZE] == rom[base : base + HEADER_SIZE]:
                 return patches
-            return patches | header_patch(rom, level, layer1[:HEADER_SIZE], where=where)
-        return patches | level_patch(
-            rom,
-            level,
-            layer1[:HEADER_SIZE],
-            layer1[HEADER_SIZE:],
-            sprites,
-            # The Layer 2 stream is already in `patches`, and its own claim on
-            # free space with it -- so `level_patch` is not asked to place it
-            # a second time, only to keep off what is placed already.
-            taken=claimed(patches),
-            where=where,
+            return layer(
+                patches, header_patch(rom, level, layer1[:HEADER_SIZE], where=where)
+            )
+        return layer(
+            patches,
+            level_patch(
+                rom,
+                level,
+                layer1[:HEADER_SIZE],
+                layer1[HEADER_SIZE:],
+                sprites,
+                # The Layer 2 stream is already in `patches`, and its own claim
+                # on free space with it -- so `level_patch` is not asked to
+                # place it a second time, only to keep off what is placed
+                # already.
+                taken=claimed(patches),
+                where=where,
+            ),
         )
     except ValueError as error:
         # A cartridge whose tables this cannot follow, or one with nowhere to
@@ -865,24 +1048,31 @@ def level_document_patch(
     try:
         held = (
             object_stream(rom, base + HEADER_SIZE),
-            sprite_stream(rom, sprite_base(rom, level, where=where)),
+            sprite_stream(
+                rom,
+                sprite_base(rom, level, where=where),
+                extra_byte_counts(rom, where=where),
+            ),
         )
     except ValueError:
         held = None if history is None else history.base.streams()
     if held is not None:
         streams = (streams[0], as_built(streams[1], held[1], where))
     if streams != held:
-        patches |= level_patch(
-            rom, level, doc.header, *streams, taken=taken, where=where
+        patches = layer(
+            patches,
+            level_patch(rom, level, doc.header, *streams, taken=taken, where=where),
         )
     elif doc.header != rom[base : base + HEADER_SIZE]:
-        patches |= header_patch(rom, level, doc.header, where=where)
+        patches = layer(patches, header_patch(rom, level, doc.header, where=where))
     # The document's secondary-header bytes, where it carries them: four
     # one-byte entries in the bank $05 tables, always patchable in place.
     # Measured against the image exactly as the header is, so a document
     # matching what the project already patched in adds nothing.
     if doc.secondary:
-        patches |= secondary_header_patch(rom, level, doc.secondary, where=where)
+        patches = layer(
+            patches, secondary_header_patch(rom, level, doc.secondary, where=where)
+        )
     # The background's own arm of the same seam; the comparison against the
     # cartridge is layer2_background_patch's own, which answers `{}` when the
     # image already decodes to the document's pattern. In place only: the
@@ -899,7 +1089,9 @@ def level_document_patch(
     # way, by writing them into the capture's VRAM
     # (`MainWindow._regraphicsed`), which needs nothing of the cartridge.
     if level_graphics_rows(rom, where=where) is not None:
-        patches |= level_graphics_patch(rom, level, doc.graphics, where=where)
+        patches = layer(
+            patches, level_graphics_patch(rom, level, doc.graphics, where=where)
+        )
     elif not level_graphics.is_inherit(doc.graphics):
         skipped.append(LEVEL_GRAPHICS)
         status(
@@ -914,13 +1106,16 @@ def level_document_patch(
     # picture this level's rather than eight levels' at once.
     if doc.layer2_records:
         try:
-            patches |= layer2_level_patch(
-                rom,
-                level,
-                doc.layer2_header,
-                doc.layer2_stream(),
-                taken=claimed(patches),
-                where=where,
+            patches = layer(
+                patches,
+                layer2_level_patch(
+                    rom,
+                    level,
+                    doc.layer2_header,
+                    doc.layer2_stream(),
+                    taken=claimed(patches),
+                    where=where,
+                ),
             )
         except ValueError as error:
             skipped.append(LAYER2_OBJECTS)
@@ -935,7 +1130,7 @@ def level_document_patch(
                 NOTE_MS,
             )
         else:
-            patches |= found
+            patches = layer(patches, found)
     note(skipped)
     return patches
 

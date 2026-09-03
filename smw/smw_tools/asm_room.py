@@ -7,9 +7,10 @@ follows. What bounds them is the first thing that cannot move -- the next
 placement the ROM map made, which is an ``org`` -- or, where nothing follows,
 the end of the bank. :func:`room` measures that run off the symbol file of the
 build being edited, and a model is priced against the whole of it rather than
-against the gap to the next label. Every placement is guarded by ``warnpc``, so
-a fragment that outgrows its run is an assembler error either way; the point of
-pricing first is to refuse with the region named instead.
+against the gap to the next label. Every placement is guarded by an
+``assert pc() <=``, so a fragment that outgrows its run is an assembler error
+either way; the point of pricing first is to refuse with the region named
+instead.
 
 **A label moves when the rows before it do, and that is the mechanism working.**
 Nothing pads, so the tables after a grown one shift by exactly what it grew, and

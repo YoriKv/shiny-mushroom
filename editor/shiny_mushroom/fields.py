@@ -49,6 +49,12 @@ if TYPE_CHECKING:
 #: both places.
 SEPARATOR = ", "
 
+#: What a value reads as when it is not one value: a multi-record selection
+#: whose records disagree about a bit. The same dash a :class:`Flags` row with
+#: nothing set shows, and for the same reason -- a row that said nothing at all
+#: would read as a missing one.
+UNDECIDED = "-"
+
 #: The group a column and a row share. Both streams place a record the same way
 #: and so name the row the same way, for the reason :func:`record_rows` is here
 #: rather than written twice: one thing said in two modules drifts.
@@ -126,6 +132,36 @@ class Choices:
 
 
 @dataclass(frozen=True)
+class Switch:
+    """A yes or a no, ticked rather than picked from a list of two.
+
+    A dropdown over one bit is a menu whose entries are the answer and its
+    opposite: a click to open it, both entries to read, and a second click to
+    say what a tick says by being there or not. So a field that is a yes or a
+    no says so, and the panel draws a box.
+
+    A :class:`Choices` of two is still right for a pair that is *not* one --
+    "Layer 1" and "Layer 2" are two answers, not an answer and its absence.
+
+    **Anything but 0 or 1 is neither**, which is what a multi-record selection
+    whose records disagree reads as: :data:`UNDECIDED`, shown as a part-filled
+    box. It is a state a selection arrives in and never one a click puts the
+    box back into -- ticking it says the same answer for every record.
+    """
+
+    #: What the two answers are called where the value is read as text rather
+    #: than ticked -- a readout, a status line, a multi-record summary.
+    off: str = "No"
+    on: str = "Yes"
+
+    def text_for(self, value: int) -> str:
+        """The value as the row reads. :data:`UNDECIDED` for neither."""
+        if value not in (0, 1):
+            return UNDECIDED
+        return self.on if value else self.off
+
+
+@dataclass(frozen=True)
 class Flags:
     """Named bits of one value, each offered as its own switch.
 
@@ -153,7 +189,10 @@ class Flags:
     def text_for(self, value: int) -> str:
         """The set bits' names, as the row reads. A dash for none, because an
         empty row reads as a missing one."""
-        return SEPARATOR.join(name for mask, name in self.bits if value & mask) or "-"
+        return (
+            SEPARATOR.join(name for mask, name in self.bits if value & mask)
+            or UNDECIDED
+        )
 
 
 @dataclass(frozen=True)
@@ -184,7 +223,7 @@ class Action:
 
 #: What a field holds. The union is the seam a new widget arrives through: a
 #: flag, a bit field, a level picker.
-Kind = Number | Choices | Flags | Readout | Action
+Kind = Number | Choices | Switch | Flags | Readout | Action
 
 
 @dataclass(frozen=True)
@@ -257,6 +296,8 @@ class Field:
         value = self.value(record)
         if isinstance(self.kind, Choices):
             return self.kind.label_for(value) or hexnum(value)
+        if isinstance(self.kind, Switch):
+            return self.kind.text_for(value)
         if isinstance(self.kind, Flags):
             return self.kind.text_for(value)
         if isinstance(self.kind, Number) and self.kind.hexadecimal:

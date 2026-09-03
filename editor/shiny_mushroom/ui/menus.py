@@ -78,11 +78,17 @@ class Actions:
     export: QAction
     export_headered: QAction
 
-    #: Open that same build in the external emulator, at its title screen.
-    #: Greyed out on the exports' question and no other: which emulator is set
-    #: -- or whether one is at all -- is answered when the row is used, so the
-    #: setting stays findable from the row that needs it.
+    #: Play the whole cartridge in the editor's own emulator, from its title
+    #: screen. Greyed out until there is a cartridge open, which is all this
+    #: run needs: the build it owes is one it runs itself.
     test_rom: QAction
+
+    #: The same cartridge, opened in the external emulator instead. Greyed out
+    #: on the exports' question -- what it hands over is a project's build --
+    #: and no other: which emulator is set, or whether one is at all, is
+    #: answered when the row is used, so the setting stays findable from the
+    #: row that needs it.
+    test_rom_external: QAction
 
     save: QAction
     revert: QAction
@@ -139,10 +145,6 @@ class Actions:
     #: project's overlay, and a cartridge opened by hand has none.
     strings: QAction
 
-    #: The Map16 tables, edited over the level on the canvas. Greyed out
-    #: without a project to save into and a level to draw them in.
-    map16: QAction
-
     #: The cartridge's secondary entrances, in a window of its own. Greyed
     #: out with no project, for :attr:`strings`' reason: the tables are the
     #: project's overlay to write.
@@ -181,9 +183,26 @@ class Actions:
     go_back: QAction
     go_forward: QAction
 
+    #: The three editing environments, each a checkable row that is checked
+    #: while its picture holds the canvas -- and, on the mode bar, a button.
+    #: The level's row is the way back from the other two by name; it is
+    #: never unchecked by hand, so triggering it is only ever a return.
+    level_mode: QAction
+
     #: The world map mode, checkable: checked while the map is on the canvas.
     #: Greyed out until a cartridge is open.
     world_map: QAction
+
+    #: The Tilemap editor, checkable the same way. Greyed out
+    #: until a project and a level are open: the tables are the project's,
+    #: and the sheet is drawn with a level's graphics.
+    map16_mode: QAction
+
+    #: Ctrl+Tab and Ctrl+Shift+Tab: the next and previous environment of the
+    #: three, skipping any that cannot be entered. Greyed out while the
+    #: level is the only one there is.
+    next_mode: QAction
+    previous_mode: QAction
 
     #: The events view, checkable: the world map with every event replayed.
     #: Greyed out except in world map mode.
@@ -270,12 +289,30 @@ class Actions:
     #: digits, so only one of the two may ever be armed.
     level_editing: QActionGroup
 
-    #: Window. The two panels that take turns in one spot -- the create panel
-    #: over a level, the tile palette over the map -- each greyed out in the
-    #: environment that does not place from it. The other three rows are the
-    #: user's in every environment and are built and forgotten.
-    create_panel: QAction
-    tile_panel: QAction
+    #: Which grain a gesture edits in the Map16 environment -- the Map16
+    #: bar's Editing box as menu rows, on the same bare digits as the other
+    #: two groups and armed in the third mode alone.
+    map16_editing: QActionGroup
+
+    #: The Map16 environment's flips: H and V mirror the selection as one
+    #: picture -- the words change places and each one's bit toggles --
+    #: and Shift+H, Shift+V flip each word in place. Armed with the
+    #: environment, like its Editing rows.
+    map16_flips: tuple[QAction, ...]
+
+    #: The world map's, on the same letters over its Layer 2 tiles. The two
+    #: sets are armed by mode, never together, as the Editing digits are.
+    world_flips: tuple[QAction, ...]
+
+    #: The Map16 environment's own rows, put in the menus with the mode and
+    #: taken out with it, as the level's and the map's are.
+    map16_rows: tuple[QAction, ...]
+
+    #: Window: the row for the offer dock, whose text is the page it shows --
+    #: Create over the level, Tiles over the map, VRAM over a sheet. Kept
+    #: for its text alone; the other rows are the user's in every environment
+    #: and are built and forgotten.
+    offer_panel: QAction
 
     #: Level. The header, graphics and exits dialogs act on the level and are
     #: greyed out when there is none; Test follows the mode instead, testing
@@ -294,9 +331,9 @@ class Actions:
     #:
     #: And on one more question than they ask: whether the emulator on file is
     #: a Mesen, since the warp is the whole of what this row does that
-    #: :attr:`test_rom` does not, and only Mesen can be asked for it. That is
-    #: greying a row for a reason the menu *can* give -- File > Test ROM is
-    #: right there, doing the part that still works.
+    #: :attr:`test_rom_external` does not, and only Mesen can be asked for it.
+    #: That is greying a row for a reason the menu *can* give -- File > Test
+    #: ROM Externally is right there, doing the part that still works.
     test_external: QAction
 
     #: The Level Load Path window: one level's chain from overworld tile to
@@ -352,12 +389,17 @@ def build(window: MainWindow) -> Actions:
         lambda: window.export_rom(with_header=True),
     )
     export_headered.setEnabled(False)
-    # The third thing done with a build, and filed with the two that write it
-    # out: this one opens it. Plain -- the cartridge, from its title screen, in
-    # whatever emulator is set -- which is what makes it a File row rather than
-    # one of Level's, since it tests no document in particular.
+    # The third and fourth things done with a build, and filed with the two
+    # that write it out: these two open it. The cartridge, from its title
+    # screen -- here, or in whatever emulator is set -- which is what makes
+    # them File rows rather than Level's, since they test no document in
+    # particular. Here first: it is the one that needs no preference set.
     test_rom = action(file_menu, window, "&Test ROM", None, window.test_rom)
     test_rom.setEnabled(False)
+    test_rom_external = action(
+        file_menu, window, "Test ROM Externa&lly", None, window.test_rom_external
+    )
+    test_rom_external.setEnabled(False)
     file_menu.addSeparator()
     cartridge = action(
         file_menu, window, "Reference &Cartridge...", None, window.choose_cartridge
@@ -378,23 +420,15 @@ def build(window: MainWindow) -> Actions:
     file_menu.aboutToShow.connect(window.sync_file_menu)
 
     project_menu = bar.addMenu("&Project")
+    rebuild = action(project_menu, window, "&Rebuild", "Ctrl+B", window.rebuild_project)
     action(project_menu, window, "Open Projects &Folder", None, window.reveal_projects)
     project_menu.addSeparator()
-    rebuild = action(project_menu, window, "&Rebuild", "Ctrl+B", window.rebuild_project)
     rom_sizes = project_menu.addMenu("&ROM Size")
     rom_sizes.aboutToShow.connect(window.fill_rom_size_menu)
-    patches = action(project_menu, window, "&Patches...", None, window.edit_patches)
     features = action(project_menu, window, "&Features...", None, window.edit_features)
     level_data = action(
         project_menu, window, "&Level Data...", None, window.view_level_data
     )
-    source_files = action(
-        project_menu, window, "&Source Files...", None, window.edit_source_files
-    )
-    graphics_files = action(
-        project_menu, window, "&Graphics Files...", None, window.edit_graphics_files
-    )
-    map16 = action(project_menu, window, "Map&16 Tiles...", None, window.edit_map16)
     secondary_entrances = action(
         project_menu,
         window,
@@ -402,13 +436,24 @@ def build(window: MainWindow) -> Actions:
         None,
         window.edit_secondary_entrances,
     )
-    # Filed apart from the rows above them: those are settings of the project,
-    # and these two only report what the cartridge they produce looks like.
+    graphics_files = action(
+        project_menu, window, "&Graphics Files...", None, window.edit_graphics_files
+    )
+    audio = action(project_menu, window, "&Audio...", None, window.view_audio)
+    # A window rather than a panel: the text is a document of its own, saved
+    # on its own, and the row opens it or brings it forward.
+    strings = action(project_menu, window, "&Strings...", None, window.edit_strings)
+    strings.setEnabled(False)
+    source_files = action(
+        project_menu, window, "&Source Files...", None, window.edit_source_files
+    )
+    patches = action(project_menu, window, "&Patches...", None, window.edit_patches)
+    # Filed apart from the rows above it: those say what the project is built
+    # from, and this one only reports where it all landed in the cartridge.
     project_menu.addSeparator()
     memory_map = action(
         project_menu, window, "&Memory Map...", None, window.view_memory_map
     )
-    audio = action(project_menu, window, "&Audio...", None, window.view_audio)
     project_menu.aboutToShow.connect(window.sync_project_menu)
 
     edit_menu = bar.addMenu("&Edit")
@@ -487,6 +532,8 @@ def build(window: MainWindow) -> Actions:
         world_editing.addAction(row)
         editing_menu.addAction(row)
     world_editing.setEnabled(False)
+    editing_menu.addSeparator()
+    world_flips = flip_rows(editing_menu, window, window.flip_world)
     # The level's own editing modes, beside the map's and from the level
     # bar's table for the same no-drift reason. Their rows carry the bare
     # digits too, counting the same way the map's do -- 1 is the layer a
@@ -507,6 +554,27 @@ def build(window: MainWindow) -> Actions:
         level_editing.addAction(row)
         level_editing_menu.addAction(row)
     level_editing.setEnabled(False)
+    # And the Tilemap editor's two grains, the third set on the same
+    # digits: whole tiles, or their 8x8 cells. Named for what they are on
+    # every sheet -- a stamp sheet's whole unit is a block. M, not T, which
+    # Cut has.
+    map16_editing_menu = edit_menu.addMenu("Tile&map Editing")
+    map16_editing = QActionGroup(window)
+    map16_editing.setExclusive(True)
+    map16_editing.triggered.connect(
+        lambda chosen: window.set_map16_editing(chosen.data())
+    )
+    for index, name in enumerate(("Tiles", "Cells")):
+        row = QAction(name, window)
+        row.setCheckable(True)
+        row.setChecked(index == 0)
+        row.setData(index)
+        row.setShortcut(QKeySequence(str(index + 1)))
+        map16_editing.addAction(row)
+        map16_editing_menu.addAction(row)
+    map16_editing.setEnabled(False)
+    map16_editing_menu.addSeparator()
+    map16_flips = flip_rows(map16_editing_menu, window, window.flip_map16)
     # The three that act on the level are bound on the *window*, so they work
     # wherever the keyboard is, and two of them go further -- see
     # `MainWindow._wants_the_level_key` for which and why. The menu is not what
@@ -570,21 +638,21 @@ def build(window: MainWindow) -> Actions:
         "Shift+4",
         window.set_sprites,
     )
-    sprite_outlines = toggle(
-        view_menu,
-        window,
-        "Show Sprite Out&lines",
-        options.sprite_outlines,
-        "Shift+5",
-        window.set_sprite_outlines,
-    )
     objects = toggle(
         view_menu,
         window,
         "Show Object &Outlines",
         options.objects,
-        "Shift+6",
+        "Shift+5",
         window.set_objects,
+    )
+    sprite_outlines = toggle(
+        view_menu,
+        window,
+        "Show Sprite Out&lines",
+        options.sprite_outlines,
+        "Shift+6",
+        window.set_sprite_outlines,
     )
     screens = toggle(
         view_menu,
@@ -656,7 +724,7 @@ def build(window: MainWindow) -> Actions:
         world_tile_marks,
         world_frame,
     )
-    level_views = (layer1, layer2, layer3, sprites, sprite_outlines, objects)
+    level_views = (layer1, layer2, layer3, sprites, objects, sprite_outlines)
     for row in world_views:
         row.setEnabled(False)
 
@@ -693,15 +761,51 @@ def build(window: MainWindow) -> Actions:
         go_menu, window, "&Forward", QKeySequence("Alt+Right"), window.go_forward
     )
     go_menu.addSeparator()
-    # Ctrl+M, because the obvious W is what every window on every platform
-    # closes with and M is free: the same key enters and leaves, which is what
-    # makes the mode cheap to peek into.
+    # The three environments, one checkable row each, checked for the one on
+    # the canvas, on Ctrl+1, Ctrl+2, Ctrl+3 in the order they sit -- the keys
+    # a tabbed application gives its tabs, which is what these are, and the
+    # only keys they carry. Ctrl+Tab walks the three as well.
+    level_mode = QAction("&Level", window)
+    level_mode.setToolTip("Edit the level")
+    level_mode.setShortcut(QKeySequence("Ctrl+1"))
+    level_mode.setCheckable(True)
+    level_mode.setChecked(True)
+    level_mode.setEnabled(False)
+    level_mode.triggered.connect(window.toggle_level)
+    go_menu.addAction(level_mode)
+    # Its digit and nothing else: the same key enters and leaves, which is
+    # what makes the mode cheap to peek into.
     world_map = QAction("&World Map", window)
-    world_map.setShortcut(QKeySequence("Ctrl+M"))
+    world_map.setToolTip("Edit the world map")
+    world_map.setShortcut(QKeySequence("Ctrl+2"))
     world_map.setCheckable(True)
     world_map.setEnabled(False)
     world_map.triggered.connect(window.toggle_world_map)
     go_menu.addAction(world_map)
+    # The Map16 tables' own environment, the same shape: one checkable row
+    # in and out, on the third digit.
+    map16_mode = QAction("&Tilemap Editor", window)
+    map16_mode.setToolTip("Edit the Map16 tiles and the world map's stamp sheets")
+    map16_mode.setShortcut(QKeySequence("Ctrl+3"))
+    map16_mode.setCheckable(True)
+    map16_mode.setEnabled(False)
+    map16_mode.triggered.connect(window.toggle_map16)
+    go_menu.addAction(map16_mode)
+    go_menu.addSeparator()
+    # And the three as a ring, on the keys a tabbed window walks its tabs
+    # with: the environments are the tabs this window does not draw.
+    next_mode = action(
+        go_menu, window, "&Next Editor", "Ctrl+Tab", lambda: window.cycle_mode(+1)
+    )
+    next_mode.setEnabled(False)
+    previous_mode = action(
+        go_menu,
+        window,
+        "P&revious Editor",
+        "Ctrl+Shift+Tab",
+        lambda: window.cycle_mode(-1),
+    )
+    previous_mode.setEnabled(False)
     go_menu.aboutToShow.connect(window.sync_go_menu)
 
     find_menu = bar.addMenu("Fi&nd")
@@ -842,8 +946,8 @@ def build(window: MainWindow) -> Actions:
     # The other test run: the project's cartridge as it was built, warped to
     # whichever document is being edited. Greyed out unless the emulator on
     # file is a Mesen, because the warp *is* the row -- opening the cart at its
-    # title screen is File > Test ROM, and two rows that did the same thing
-    # under different names would be one row too many.
+    # title screen is File > Test ROM Externally, and two rows that did the
+    # same thing under different names would be one row too many.
     test_external = action(
         level_menu,
         window,
@@ -864,14 +968,10 @@ def build(window: MainWindow) -> Actions:
     # added: the same action is the panel's row in the dock context menu, and
     # two names for one panel is one name too many.
     window_menu = bar.addMenu("&Window")
-    create_panel = panel(window_menu, window.create, "&Create")
-    # The other occupant of the create panel's spot. Dead outside world map
-    # mode, and Create dead inside it: the two take turns by environment
-    # (`MainWindow._apply_editing_chrome`), so a row that could show the one
-    # this environment does not place from would offer a panel the next mode
-    # switch takes away again.
-    tile_panel = panel(window_menu, window.tile_palette, "&Tiles")
-    tile_panel.setEnabled(False)
+    # One row for what every environment places from: the dock turns to
+    # the environment's page and takes its name, and the row -- the dock's
+    # own toggle action -- follows the name on its own.
+    offer_panel = panel(window_menu, window.offers, "Create")
     panel(window_menu, window.properties, "&Properties")
     panel(window_menu, window.palette_dock, "Pa&lettes")
     # A toolbar rather than a dock, and the one bar whose visibility is the
@@ -879,11 +979,6 @@ def build(window: MainWindow) -> Actions:
     # here. World map mode greys it instead of hiding it (see
     # shiny_mushroom.ui.toolbars).
     panel(window_menu, window.find_bar, "&Find")
-    # A window rather than a panel: the text is a document of its own, saved
-    # on its own, and the row opens it or brings it forward.
-    strings = action(window_menu, window, "&Strings...", None, window.edit_strings)
-    strings.setEnabled(False)
-    window_menu.aboutToShow.connect(window.sync_project_menu)
 
     # Which environment each row belongs to, so the two sets can be put up
     # and taken down as one -- :meth:`MainWindow._show_world_chrome` swaps
@@ -897,16 +992,17 @@ def build(window: MainWindow) -> Actions:
     # Test is in neither: same row, same key, testing whichever document is
     # being edited. Nor is the screen grid, or World Map itself, which is the
     # door between the two.
-    world_rows = (*world_views, *world_dialogs, editing_menu.menuAction(), tile_panel)
+    world_rows = (*world_views, *world_dialogs, editing_menu.menuAction())
     level_rows = (
         *level_views,
         level_editing_menu.menuAction(),
         header,
         graphics_row,
-        create_panel,
     )
-    # The window opens over a level, so the map's half starts out of the menus.
-    for row in world_rows:
+    map16_rows = (map16_editing_menu.menuAction(),)
+    # The window opens over a level, so the other two environments' rows
+    # start out of the menus.
+    for row in (*world_rows, *map16_rows):
         row.setVisible(False)
 
     # Built last, so the guide -- which reads the finished menu bar -- sees
@@ -938,7 +1034,10 @@ def build(window: MainWindow) -> Actions:
         graphics_files=graphics_files,
         memory_map=memory_map,
         audio=audio,
-        map16=map16,
+        level_mode=level_mode,
+        map16_mode=map16_mode,
+        next_mode=next_mode,
+        previous_mode=previous_mode,
         secondary_entrances=secondary_entrances,
         strings=strings,
         rebuild=rebuild,
@@ -985,9 +1084,12 @@ def build(window: MainWindow) -> Actions:
         world_swaps=world_swaps,
         world_editing=world_editing,
         level_editing=level_editing,
+        map16_editing=map16_editing,
+        map16_flips=map16_flips,
+        world_flips=world_flips,
+        map16_rows=map16_rows,
         world_checks=world_checks,
-        create_panel=create_panel,
-        tile_panel=tile_panel,
+        offer_panel=offer_panel,
         header=header,
         graphics_row=graphics_row,
         exits=exits,
@@ -995,6 +1097,7 @@ def build(window: MainWindow) -> Actions:
         test=test,
         test_external=test_external,
         test_rom=test_rom,
+        test_rom_external=test_rom_external,
     )
 
 
@@ -1013,6 +1116,28 @@ def action(
     made.triggered.connect(slot)
     menu.addAction(made)
     return made
+
+
+def flip_rows(
+    menu: QMenu, window: MainWindow, flip: Callable[..., None]
+) -> tuple[QAction, ...]:
+    """The four flip rows of one tile editor, on the letters a tilemap editor
+    binds them to, starting greyed: the mode arms them.
+
+    Bare H and V flip the selected **block** -- the selection as one
+    picture, the tiles changing places across the axis and each one's own
+    bit toggling. With Shift, the **tiles**: each flipped where it stands.
+    ``flip`` is the window's hook, taking ``x``, ``y`` and ``mirror``.
+    """
+    rows = (
+        action(menu, window, "&H Flip Block", "H", lambda: flip(x=True, mirror=True)),
+        action(menu, window, "&V Flip Block", "V", lambda: flip(y=True, mirror=True)),
+        action(menu, window, "H Flip &Tiles", "Shift+H", lambda: flip(x=True)),
+        action(menu, window, "V Flip T&iles", "Shift+V", lambda: flip(y=True)),
+    )
+    for row in rows:
+        row.setEnabled(False)
+    return rows
 
 
 def panel(menu: QMenu, dock: QDockWidget | QToolBar, text: str) -> QAction:

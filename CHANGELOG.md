@@ -1,8 +1,18 @@
 # Changelog
 
+## v0.2.0 - 2026-09-02
+
+- Graphics editing pipeline for editing tiles in the visual context of the level
+- New pixel editor
+- New tilemap editor instead of the Map 16 editor, used for both Map 16 and overworld stamps
+- UberASM and PIXI support improved
+- Improved visual theme and icons
+- Tons of other UX improvements and fixes
+
 ## v0.1.4 - 2026-08-29
 
-- AddMusicKFF and UberASM support
+- UberASM support
+- Audio window
 
 ## v0.1.3 - 2026-08-28
 

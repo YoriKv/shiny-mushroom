@@ -26,7 +26,8 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -34,6 +35,9 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
+    QPushButton,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -43,22 +47,55 @@ from shiny_mushroom.hexnum import hexnum
 from shiny_mushroom.level_graphics import (
     ANIMATED_TILES,
     INHERIT_ROW,
+    LAYER_ROW,
+    OTHER_VRAM,
     SLOT_WORDS,
+    SPRITE_ROW,
     animated_file,
     is_inherit,
     slot_sheets,
     takes_a_row,
 )
+from shiny_mushroom.level_tiles import Area, surface_of_file, tiles_of_file
+from shiny_mushroom.pixel_edit import Surface
 from shiny_mushroom.ui.dialogs import ChoiceBox
+from shiny_mushroom.ui.level_tiles_pane import (
+    LevelTilesPane,
+    TilesHost,
+    colour_editable_under,
+    colour_edits,
+    colour_offsets_of,
+)
+from shiny_mushroom.ui.pixel_editor import PixelEditor
 from shiny_mushroom.ui.render import raster_to_image
 from shiny_mushroom.ui.tables import style_note
 from shiny_mushroom.ui.tips import wrap_tip
-from shiny_mushroom.ui.vram_slots import ROW_GAP, Slot, VramSlots
+from shiny_mushroom.ui.vram_slots import ROW_GAP, Region, Slot, VramSlots
 from shiny_mushroom.ui.zooming import ZoomedArea, ZoomPicker
-from smw_tools.graphics import FILE_NUMBERS, GraphicsError
+from smw_tools.graphics import FILE_NUMBERS, GraphicsError, fits_a_slot
 from smw_tools.level_graphics import INHERIT, LAYER_SLOTS, SLOTS, UPLOAD_SLOTS
 
 TITLE = "Level Graphics"
+
+#: The two pages, where the dialog has a level to show tiles of.
+SLOTS_TAB = "Slots"
+TILES_TAB = "Level Tiles"
+
+#: The dialog's third way out, beside Accepted and Rejected: closed so the
+#: window can sweep an area of the level for the tiles page. The row as it
+#: stood goes with it (:class:`AreaPick`) and comes back when the dialog is
+#: opened again over the area.
+PICK = 2
+
+
+@dataclass(frozen=True)
+class AreaPick:
+    """What :meth:`LevelGraphicsDialog.edit` hands back when the tiles page
+    asked for an area: the row the slots held at that moment, so nothing a
+    reader had picked is lost across the round trip."""
+
+    graphics: bytes
+
 
 #: The footer: whose the row is, and what it costs. Part of the document like
 #: the header's five bytes -- one accept, one undo step, the same save -- but
@@ -140,6 +177,21 @@ VRAM_TIP = (
 VRAM_BAND_NAMES = {"FG1": "FG1 + Anims"}
 
 
+def _regions_after(index: int) -> tuple[Region, ...]:
+    """The VRAM between slot ``index`` and the next one, as lines for the
+    panel to write under that slot's band -- the tilemaps and the 2bpp
+    Layer 3 tiles of :data:`~shiny_mushroom.level_graphics.OTHER_VRAM`,
+    placed by their word addresses rather than pinned to FG3 by hand, so a
+    base that moves a slot moves the lines with it."""
+    below = SLOT_WORDS[index]
+    above = SLOT_WORDS[index + 1] if index + 1 < len(SLOT_WORDS) else None
+    return tuple(
+        Region(name=what, address=hexnum(at, 4))
+        for at, what in OTHER_VRAM
+        if below < at and (above is None or at < above)
+    )
+
+
 @dataclass(frozen=True)
 class _VramPane:
     """The right-hand pane: what VRAM holds while the eight decisions are
@@ -205,6 +257,11 @@ class _VramPane:
         )
 
 
+#: How a file the project added is described on a slot's list, the phrase
+#: :func:`shiny_mushroom.level_graphics.choices` uses.
+ADDED_FILE = "added file"
+
+
 class LevelGraphicsDialog(QDialog):
     """Edit a level's graphics row. :attr:`graphics` is the edited copy."""
 
@@ -226,9 +283,15 @@ class LevelGraphicsDialog(QDialog):
         animated: Sequence[tuple[int, str, str]] = (),
         tileset_rows: TilesetRows | None = None,
         vram: VramFor | None = None,
+        tiles: TilesHost | None = None,
+        area: Area | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(TITLE)
+        #: The tiles page, or ``None`` where no host was passed and the
+        #: dialog is the row alone; and the area it shows.
+        self._tiles_pane: LevelTilesPane | None = None
+        self._area = area
         #: The level's header: not edited here, and asked two things -- which
         #: files its tilesets load, for each slot's first entry, and whether
         #: its level mode is one whose row the game would ever read.
@@ -245,6 +308,13 @@ class LevelGraphicsDialog(QDialog):
         self._animated = tuple(animated)
         self._tileset_rows = tileset_rows
         self._slots: dict[str, QComboBox] = {}
+        #: Each upload slot's Edit and Clone, and the tiles host they act
+        #: through -- absent without one, as the tiles page is.
+        self._edit_buttons: dict[str, QPushButton] = {}
+        self._clone_buttons: dict[str, QPushButton] = {}
+        self._tiles_host = tiles
+        #: The pixel editor over a slot's file, while one is open.
+        self._file_editor: PixelEditor | None = None
         #: The eight files the header's tilesets load, which is what a slot
         #: naming none of its own is showing -- ``None`` where the cartridge
         #: could not say (:meth:`_refresh_tileset_files`).
@@ -257,7 +327,27 @@ class LevelGraphicsDialog(QDialog):
         # Two panes: the eight decisions, and what VRAM holds while they are
         # being made. The buttons span both, since they end the dialog.
         panes = QHBoxLayout()
-        layout.addLayout(panes, 1)
+        self._tabs: QTabWidget | None = None
+        if tiles is None:
+            layout.addLayout(panes, 1)
+        else:
+            # With a level to read, the row is one page and its tiles the
+            # other: the buttons still end the dialog, and only the row
+            # waits for OK -- a tile edit is a file save, made on the spot.
+            self._tabs = QTabWidget()
+            slots_page = QWidget()
+            slots_page.setLayout(panes)
+            self._tabs.addTab(slots_page, SLOTS_TAB)
+            self._tiles_pane = LevelTilesPane(tiles)
+            self._tiles_pane.pick_requested.connect(lambda: self.done(PICK))
+            self._tiles_pane.area_chosen.connect(self.set_area)
+            self._tiles_pane.saved.connect(lambda _said: self._show_vram())
+            self._tabs.addTab(self._tiles_pane, TILES_TAB)
+            layout.addWidget(self._tabs, 1)
+            if area is not None:
+                self._tabs.setCurrentWidget(self._tiles_pane)
+            QShortcut(QKeySequence.StandardKey.Copy, self, self._copy_tiles)
+            QShortcut(QKeySequence.StandardKey.Paste, self, self._paste_tiles)
         left = QVBoxLayout()
         panes.addLayout(left)
         form = QFormLayout()
@@ -282,7 +372,39 @@ class LevelGraphicsDialog(QDialog):
             self._slots[slot] = pick
             label = QLabel(f"{slot}:")
             label.setToolTip(_slot_tip(index))
-            form.addRow(label, pick)
+            field: QWidget = pick
+            if tiles is not None and not animates:
+                # The file the slot holds, painted in the pixel editor, or
+                # copied into a file of the project's own that the slot then
+                # names -- the two things a row is for beyond choosing.
+                field = QWidget()
+                row = QHBoxLayout(field)
+                row.setContentsMargins(0, 0, 0, 0)
+                row.addWidget(pick, 1)
+                edit_button = QPushButton("&Edit...")
+                edit_button.setToolTip(
+                    wrap_tip(
+                        "Paint the file this slot holds in Mushroom Paint; "
+                        "Save writes it back into the file."
+                    )
+                )
+                edit_button.clicked.connect(lambda _=False, i=index: self.edit_slot(i))
+                row.addWidget(edit_button)
+                clone_button = QPushButton("Cl&one...")
+                clone_button.setToolTip(
+                    wrap_tip(
+                        "Copy the file this slot holds into a file of the "
+                        "project's own, and point the slot at the copy. Needs "
+                        "Growable graphics."
+                    )
+                )
+                clone_button.clicked.connect(
+                    lambda _=False, i=index: self.clone_slot(i)
+                )
+                row.addWidget(clone_button)
+                self._edit_buttons[slot] = edit_button
+                self._clone_buttons[slot] = clone_button
+            form.addRow(label, field)
         left.addLayout(form)
 
         self._mode7_note = QLabel(MODE7_NOTE)
@@ -319,6 +441,7 @@ class LevelGraphicsDialog(QDialog):
         self._weigh_the_animated_tiles()
         self._show_vram()
         self._fit_vram()
+        self._sync_slot_buttons()
 
     # -- what is being edited -----------------------------------------------
 
@@ -338,6 +461,167 @@ class LevelGraphicsDialog(QDialog):
         self.changed.emit(self.graphics)
         self._show_vram()
         self._weigh_the_animated_tiles()
+        self._sync_slot_buttons()
+
+    # -- the slots' own buttons ---------------------------------------------------
+
+    def _sync_slot_buttons(self) -> None:
+        """Arm Edit and Clone where the slot holds a file a slot can take:
+        neither means anything over a slot the cartridge could not name."""
+        host = self._tiles_host
+        files = self._effective_files()
+        for index, slot in enumerate(SLOTS[:UPLOAD_SLOTS]):
+            edit_button = self._edit_buttons.get(slot)
+            if edit_button is None:
+                continue
+            file = files[index]
+            have = file is not None and _takes_a_slot(file)
+            edit_button.setEnabled(have and self._vram_pane is not None)
+            self._clone_buttons[slot].setEnabled(
+                have and host is not None and host.clone is not None
+            )
+
+    def _slot_file(self, index: int) -> int | None:
+        file = self._effective_files()[index]
+        return file if file is not None and _takes_a_slot(file) else None
+
+    @property
+    def file_editor(self) -> PixelEditor | None:
+        return self._file_editor
+
+    def edit_slot(self, index: int) -> PixelEditor | None:
+        """Open the pixel editor over the file slot ``index`` holds -- the
+        whole file, sixteen tiles to a row, under the palette row the VRAM
+        panel draws that slot in -- and hand it back. Its Save writes the
+        file whole through the host, as the tiles page's does."""
+        host, pane = self._tiles_host, self._vram_pane
+        number = self._slot_file(index)
+        if host is None or pane is None or number is None:
+            return None
+        if self._file_editor is not None:
+            self._file_editor.raise_()
+            self._file_editor.activateWindow()
+            return self._file_editor
+        held = host.file(number)
+        capture = pane.read(self.graphics)
+        if held is None or capture is None:
+            self._warn(f"GFX{number:02X} could not be read for editing.")
+            return None
+        _vram, cgram = capture
+        row = pane.palette.currentData()
+        if row is None:
+            row = LAYER_ROW if index < LAYER_SLOTS else SPRITE_ROW
+        surface = surface_of_file(held, row, cgram, host.backdrop())
+        baseline = surface.palette
+        offsets = colour_offsets_of(host)
+
+        def save(painted: Surface) -> str:
+            said = []
+            colours = colour_edits(painted, baseline, offsets)
+            if colours and host.save_colours is not None:
+                note = host.save_colours(colours)
+                said.append(
+                    f"{len(colours)} colours changed" + (f". {note}" if note else "")
+                )
+            tiles = tiles_of_file(painted, held)
+            if tiles == list(held.tiles):
+                said.append("no tile changed")
+            else:
+                note = host.save({number: tiles})
+                said.append(f"GFX{number:02X} written" + (f". {note}" if note else ""))
+            return "; ".join(said)
+
+        editor = PixelEditor(
+            surface,
+            save,
+            title=f"Mushroom Paint - GFX{number:02X}",
+            describe=lambda n: f"GFX{number:02X} tile {hexnum(n, 2)}",
+            colour_editable=colour_editable_under(host),
+            parent=self,
+        )
+        editor.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        editor.saved.connect(lambda _said: self._show_vram())
+        editor.finished.connect(self._file_editor_closed)
+        self._file_editor = editor
+        editor.open()
+        return editor
+
+    def _file_editor_closed(self) -> None:
+        self._file_editor = None
+
+    def _warn(self, message: str) -> None:
+        """Say that something did not work -- the seam the tests answer
+        through, since a message box never returns offscreen."""
+        QMessageBox.warning(self, TITLE, message)
+
+    def clone_slot(self, index: int) -> int | None:
+        """Copy the file slot ``index`` holds into a file of the project's
+        own, through the host, and point the slot at the copy -- offered on
+        every upload slot's list from then on, since the project now has
+        it. The new number, or ``None`` for a declined or refused clone."""
+        host = self._tiles_host
+        number = self._slot_file(index)
+        if host is None or host.clone is None or number is None:
+            return None
+        try:
+            new = host.clone(number, self)
+        except GraphicsError as error:
+            self._warn(f"GFX{number:02X} was not cloned: {error}")
+            return None
+        if new is None:
+            return None
+        self._offer_added_file(new)
+        pick = self._slots[SLOTS[index]]
+        pick.setCurrentIndex(self._offered_file(pick, new))
+        return new
+
+    def _offer_added_file(self, number: int) -> None:
+        """List ``number`` on every upload slot as an added file, where it
+        is not listed yet."""
+        entry = (number, f"GFX{number:02X}", ADDED_FILE)
+        if entry not in self._choices:
+            self._choices = (*self._choices, entry)
+        for slot in SLOTS[:UPLOAD_SLOTS]:
+            pick = self._slots[slot]
+            if self._offered_file(pick, number) < 0:
+                pick.addItem(f"{entry[1]} - {entry[2]}", number)
+
+    # -- the tiles page ---------------------------------------------------------
+
+    @property
+    def tiles_pane(self) -> LevelTilesPane | None:
+        return self._tiles_pane
+
+    @property
+    def area(self) -> Area | None:
+        """The area the tiles page shows, or ``None``."""
+        return self._area
+
+    def set_area(self, area: Area | None) -> None:
+        """Show ``area`` on the tiles page, and bring the page forward."""
+        self._area = area
+        self._show_vram()
+        if self._tabs is not None and self._tiles_pane is not None:
+            self._tabs.setCurrentWidget(self._tiles_pane)
+
+    def _on_tiles_page(self) -> bool:
+        return (
+            self._tabs is not None
+            and self._tiles_pane is not None
+            and self._tabs.currentWidget() is self._tiles_pane
+        )
+
+    def _copy_tiles(self) -> None:
+        """Ctrl+C: the area, while the tiles page is in front. The slots page
+        has nothing a copy could mean."""
+        if self._on_tiles_page():
+            assert self._tiles_pane is not None
+            self._tiles_pane.copy()
+
+    def _paste_tiles(self) -> None:
+        if self._on_tiles_page():
+            assert self._tiles_pane is not None
+            self._tiles_pane.paste()
 
     def _weigh_the_animated_tiles(self) -> None:
         """Say that the ninth row waits for the accept, once it has moved.
@@ -398,13 +682,19 @@ class LevelGraphicsDialog(QDialog):
         if pane is None:
             return
         held = pane.read(self.graphics)
+        files = self._effective_files()
+        if self._tiles_pane is not None:
+            # The same capture, read as the tiles of one area under the row
+            # as it stands -- so a slot moved on the other page moves what
+            # file each of those tiles is written back into.
+            vram, cgram = held if held is not None else (None, None)
+            self._tiles_pane.show_area(self._area, vram, cgram, files[:LAYER_SLOTS])
         try:
             sheets = (
                 () if held is None else slot_sheets(*held, pane.palette.currentData())
             )
         except GraphicsError:
             sheets = ()
-        files = self._effective_files()
         pane.view.set_slots(
             [
                 Slot(
@@ -413,6 +703,7 @@ class LevelGraphicsDialog(QDialog):
                     address=hexnum(SLOT_WORDS[index], 4),
                     sheet=raster_to_image(sheets[index]),
                     spoken_for=ANIMATED_TILES[index],
+                    regions=_regions_after(index),
                 )
                 for index, slot in enumerate(SLOTS[:UPLOAD_SLOTS])
             ]
@@ -476,8 +767,12 @@ class LevelGraphicsDialog(QDialog):
         tileset_rows: TilesetRows | None = None,
         vram: VramFor | None = None,
         preview: Callable[[bytes], None] | None = None,
-    ) -> bytes | None:
-        """Show the dialog; return the edited row, or ``None`` if cancelled.
+        tiles: TilesHost | None = None,
+        area: Area | None = None,
+    ) -> bytes | AreaPick | None:
+        """Show the dialog; return the edited row, ``None`` if cancelled, or
+        an :class:`AreaPick` when the tiles page asked the window to sweep
+        an area -- the row as it stood rides in it, for the reopen.
 
         One entry point rather than a build-exec-read dance at the call site,
         so that "cancel changes nothing" is a property of this method instead
@@ -491,7 +786,10 @@ class LevelGraphicsDialog(QDialog):
         for the panel that shows it (:data:`VramFor`); left out, the dialog
         is the decisions alone. ``choices`` is what each of the eight VRAM
         slots may name and ``animated`` what the ninth byte may
-        (:func:`shiny_mushroom.level_graphics.animated_choices`).
+        (:func:`shiny_mushroom.level_graphics.animated_choices`). ``tiles``
+        is the window's side of the tiles page
+        (:class:`~shiny_mushroom.ui.level_tiles_pane.TilesHost`); left out,
+        there is no such page. ``area`` opens it on an area already picked.
         """
         dialog = cls(
             header,
@@ -501,16 +799,31 @@ class LevelGraphicsDialog(QDialog):
             animated=animated,
             tileset_rows=tileset_rows,
             vram=vram,
+            tiles=tiles,
+            area=area,
         )
         if preview is not None:
             dialog.changed.connect(preview)
-        accepted = dialog.exec() == QDialog.DialogCode.Accepted.value
-        row = dialog.graphics if accepted else None
+        result = dialog.exec()
+        row: bytes | AreaPick | None
+        if result == PICK:
+            row = AreaPick(dialog.graphics)
+        else:
+            row = (
+                dialog.graphics if result == QDialog.DialogCode.Accepted.value else None
+            )
         # Parented to the window so that it opens over it, which makes the
         # window its owner: without this, every visit to the page would leave
         # a dialog alive for as long as the window is.
         dialog.deleteLater()
         return row
+
+
+def _takes_a_slot(file: int) -> bool:
+    """Whether Edit and Clone mean anything over ``file``: a stock file the
+    uploader writes into a slot, or any added file -- the only ones a slot's
+    list offers, and not the set's to ask :func:`fits_a_slot` about."""
+    return file not in FILE_NUMBERS or fits_a_slot(file)
 
 
 def _unoffered(file: int) -> str:

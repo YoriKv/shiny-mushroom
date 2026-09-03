@@ -8,6 +8,7 @@ includefrom sa1.asm
 ;; with the consequence of slots no longer being searched but instead hardcoded.
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+if !sa1_hijacks_external == 0
 org $0180D2
 
 sprite_oam_hook:
@@ -85,6 +86,7 @@ org $02DB82
     JSL hammer_bro_fix
     NOP
     NOP
+endif
 
 freecode
 

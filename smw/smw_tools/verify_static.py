@@ -64,18 +64,16 @@ INSERT = re.compile(
 #: The table whose two branches are compared, by the name it is written under.
 TABLE_MACRO = "DATATABLE_SMW_GlobalPalettes"
 
-#: `incbin "palettes/Sky.tpl":6-8` -- one run of the global palette table.
+#: `incbin "palettes/Sky.tpl":$6..$8` -- one run of the global palette table.
 PALETTE_INCBIN = re.compile(
-    r'incbin\s+"(palettes/[\w.]+)":([0-9A-Fa-f]+)-([0-9A-Fa-f]+)'
+    r'incbin\s+"(palettes/[\w.]+)":\$([0-9A-Fa-f]+)\.\.\$([0-9A-Fa-f]+)'
 )
 
 #: `macro INLINEDATATABLE_RT05_SMW_EmptySpace(Address)` -- one freespace
 #: region's macro. Counted so that the insertions found can be held against the
 #: regions there are: a check that finds *some* of them is the shape this went
 #: blind in, and is invisible where a count of zero would not be.
-REGION_MACRO = re.compile(
-    r"^macro INLINEDATATABLE_RT(\d+)_SMW_EmptySpace\(", re.M
-)
+REGION_MACRO = re.compile(r"^macro INLINEDATATABLE_RT(\d+)_SMW_EmptySpace\(", re.M)
 
 #: The versions whose freespace is captured cart bytes rather than `$FF`.
 FILLED_VERSIONS = ("E1", "E2", "ARCADE")
@@ -245,8 +243,8 @@ def _palette_branches(bank00: Path) -> tuple[list[tuple[str, int, int]], ...]:
             hit = PALETTE_INCBIN.search(line)
             if hit:
                 runs.append(
-                (hit.group(1), int(hit.group(2), 16), int(hit.group(3), 16))
-            )
+                    (hit.group(1), int(hit.group(2), 16), int(hit.group(3), 16))
+                )
         branches.append(runs)
     # `!TRUE` selects the `.tpl` branch, which the source writes second.
     return (branches[1], branches[0])

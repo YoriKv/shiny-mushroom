@@ -72,6 +72,7 @@ from smw_tools.levels import (
     LevelRun,
     Packing,
     background_definitions,
+    code_bytes,
     containers,
     definitions,
     is_managed,
@@ -617,7 +618,7 @@ class LevelFiles:
         expansion bank where the cartridge has one
         (:func:`smw_tools.levels.has_level_bank`), so shrinking past it hands
         the packer fewer runs than the streams need -- which the build would
-        refuse with a `warnpc`, too late to do anything about. Priced here
+        refuse at a placement guard, too late to do anything about. Priced here
         against the cartridge being *asked for*, exactly as a feature switch
         is priced against the cartridge it would make.
 
@@ -658,15 +659,42 @@ class LevelFiles:
             return 0
         return level_palettes.bytes_for(count)
 
+    def level_code_bytes(self) -> int:
+        """How many bytes of the level bank this project's own code took on
+        its last build -- the tool's dialect and library, the levels', the
+        game modes' and the global routines, behind the palettes' blobs --
+        read off the build's symbol file
+        (:func:`smw_tools.levels.code_bytes`). What the packer's fourth run
+        opens behind, with the palettes.
+
+        The last build's figure, because the length is whatever the files
+        assembled to and nothing but a build knows it: a code edit since is
+        priced at the old length until the build it already owes. Zero on a
+        project that has never been built, or whose build placed no level
+        bank -- which is every project without one of the bank's features."""
+        from shiny_mushroom.build import built_symbols
+
+        symbols = built_symbols(self)
+        if symbols is None:
+            return 0
+        return code_bytes(symbols) or 0
+
+    def level_bank_ahead(self, palettes: int | None = None) -> int:
+        """What the packer's fourth run opens behind: the palettes' bytes
+        (:meth:`level_palette_bytes`, for ``palettes`` dressed levels) and
+        the project's code's (:meth:`level_code_bytes`)."""
+        return self.level_palette_bytes(palettes) + self.level_code_bytes()
+
     def level_runs(
         self, base: RomBase | None = None, palettes: int | None = None
     ) -> tuple[LevelRun, ...]:
         """The runs the packer fills on ``base`` -- the next build's, unless a
-        feature switch is pricing another -- with the palettes' bytes in
-        front of the level bank's: :func:`smw_tools.levels.runs_for`."""
+        feature switch is pricing another -- with the palettes' bytes and
+        the project's code in front of the level bank's:
+        :func:`smw_tools.levels.runs_for`."""
         if base is None:
             base = self.next_base
-        return runs_for(base, self.level_palette_bytes(palettes))
+        return runs_for(base, self.level_bank_ahead(palettes))
 
     def level_packing(
         self, base: RomBase | None = None, palettes: int | None = None
@@ -716,18 +744,20 @@ class LevelFiles:
         )
 
     def level_bank_spare(self, palettes: int | None = None) -> int:
-        """How many bytes the level bank has left behind its two occupants
-        on this project's next build, with ``palettes`` levels dressed --
-        the saved number unless a palette save is asking about the one it
-        is about to make. Negative by what the packed streams no longer
-        fit, which a palette that took their room is answerable for.
+        """How many bytes the level bank has left behind its occupants on
+        this project's next build, with ``palettes`` levels dressed -- the
+        saved number unless a palette save is asking about the one it is
+        about to make. Negative by what the packed streams no longer fit,
+        which a palette that took their room is answerable for.
 
-        The bank's room is one number for both occupants: the palettes take
-        the head, the streams the managed level banks pack take what
-        follows, and what is spare is what either may still grow into.
+        The bank's room is one number for every occupant: the palettes take
+        the head, the project's code what the last build measured behind
+        them (:meth:`level_code_bytes`), the streams the managed level banks
+        pack take what follows, and what is spare is what any of them may
+        still grow into.
         """
         base = self.next_base
-        run = level_bank_run(base, self.level_palette_bytes(palettes))
+        run = level_bank_run(base, self.level_bank_ahead(palettes))
         if not is_managed(base):
             return run.size
         packing = self.level_packing(base, palettes)
@@ -740,10 +770,10 @@ class LevelFiles:
         build: :func:`shiny_mushroom.level_palettes.capacity` over what the
         level bank has once the packed level streams have taken theirs --
         :data:`shiny_mushroom.level_palettes.CAPACITY` with the bank to
-        themselves, fewer where the streams, the managed level banks' tail
-        or the per-level graphics' block ahead share it."""
+        themselves, fewer where the streams, the project's code or the
+        per-level graphics' block ahead share it."""
         base = self.next_base
-        room = level_bank_run(base).size
+        room = level_bank_run(base, self.level_code_bytes()).size
         if is_managed(base):
             held = len(self.level_palettes())
             packing = self.level_packing(base, held)

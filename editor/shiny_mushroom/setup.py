@@ -28,10 +28,11 @@ reads its own set.
 
 The cartridge the editor actually opens is **the project's own**, assembled from
 the disassembly, those assets and the project's overlay -- see
-:func:`~shiny_mushroom.build.rom_path`. A new project's is byte-identical to the
-reference cart because its overlay is empty; from the first save they diverge,
-and what is on the canvas is what the project produces rather than what somebody
-once dumped.
+:func:`~shiny_mushroom.build.rom_path`. A new project's plays exactly what the
+reference cart plays, because its overlay is empty and the features it starts
+with (:data:`NEW_PROJECT_FEATURES`) only change where the game's own data is
+placed; from the first save they diverge, and what is on the canvas is what the
+project produces rather than what somebody once dumped.
 
 **Every one of them has to be got through before the editor opens.** A half-set-up
 app is a degenerate state rather than a lesser one: with no assets there is
@@ -69,6 +70,7 @@ from smw_tools.extract import (
     extractions,
     record_extraction,
 )
+from smw_tools.features import MANAGED_LEVEL_MEMORY
 from smw_tools.paths import ASSETS_DIR, GAME_DIR, asar_binary
 from smw_tools.rom_image import read_rom
 from smw_tools.rom_versions import ALL_VERSIONS, ROM_VERSIONS, identify
@@ -78,6 +80,23 @@ from smw_tools.rom_versions import ALL_VERSIONS, ROM_VERSIONS, identify
 #: of the default cannot drift from the one the build assembles.
 BASE = DEFAULT_BASE
 TARGET = DEFAULT_TARGET
+
+#: What a project the editor starts asks its build for, as ids into
+#: :data:`smw_tools.features.FEATURES`.
+#:
+#: Growable levels is here because the alternative is the trap it removes: on
+#: the stock packing the levels are seven fixed groups, so an object added to
+#: one level is paid for by another in the same group, and the first edit
+#: someone makes can be refused for a reason that has nothing to do with the
+#: level they are editing. With it on the levels are one budget and nothing
+#: moves until a level grows.
+#:
+#: It is a *start*, not a rule: Project > Features switches it back off from
+#: the first moment the project is open, while the levels still fit the stock
+#: runs. And it is this path's decision rather than
+#: :meth:`~shiny_mushroom.project.Project.create`'s, which makes a project
+#: folder that asks for nothing.
+NEW_PROJECT_FEATURES: tuple[str, ...] = (MANAGED_LEVEL_MEMORY.id,)
 
 #: Where the asset extractor's own scripts live, relative to the game folder.
 ASAR_SCRIPTS = GAME_DIR / "AsarScripts"
@@ -286,6 +305,8 @@ def start_project(
     set, and one made for a release that has not been extracted is a folder
     that looks like it works and does not, with the failure surfacing as a
     build that cannot find a file rather than as the missing step it is.
+
+    The project it makes asks its build for :data:`NEW_PROJECT_FEATURES`.
     """
     if not assets_ready(target_id):
         named = ROM_VERSIONS.get(target_id)
@@ -294,4 +315,6 @@ def start_project(
             f"No graphics for {label} yet. Supply that reference cartridge "
             f"first and the editor will extract them."
         )
-    return Project.create(name, base=base, base_id=base_id, target_id=target_id)
+    project = Project.create(name, base=base, base_id=base_id, target_id=target_id)
+    project.set_feature_state(NEW_PROJECT_FEATURES)
+    return project

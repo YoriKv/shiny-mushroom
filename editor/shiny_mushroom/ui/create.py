@@ -1,6 +1,7 @@
 """The create panel: what can be put into the level, and picking one up.
 
-A dock beside the properties panel, and the two are deliberately a pair: this
+A page of the offer dock (:mod:`shiny_mushroom.ui.offer_dock`) beside the
+properties panel, and the two are deliberately a pair: this
 one says what a level *could* contain and that one says what one record in it
 does. Neither of them knows what an object or a sprite is -- the catalogue
 (:mod:`shiny_mushroom.catalog`) decides what is offered and what placing one
@@ -9,7 +10,7 @@ produces, and this is a widget factory over it, exactly as
 field descriptors.
 
 **Picking a row arms it; it does not place anything.** The panel emits
-:attr:`CreateDock.armed` and stops there. Where a thing goes is a gesture on the
+:attr:`CreatePanel.armed` and stops there. Where a thing goes is a gesture on the
 picture, which is the window's business -- and keeping the two apart is what lets
 one entry be placed six times without the panel knowing it happened, and what
 lets the panel be tested without a canvas behind it.
@@ -23,12 +24,12 @@ tab of its own.
 
 The third is the **Layer 2 background**, which is no catalogue at all: a page
 of Map16 blocks offered by :mod:`shiny_mushroom.ui.level_palette`, shown in
-place of the searchable list. It is here rather than in a dock of its own
+place of the searchable list. It is here rather than in a panel of its own
 because it answers the same question the other two do -- what can I put into
 this level -- and because two panels taking turns in one spot is a spot whose
 size belongs to neither. Picking it is picking an **editing mode**: the tab and
 the level bar's Editing box are two handles on one choice, and the panel says
-which was picked (:attr:`CreateDock.editing_picked`) rather than deciding it.
+which was picked (:attr:`CreatePanel.editing_picked`) rather than deciding it.
 
 **The category filter's words come from the catalogue, not from here.**
 ``standard`` / ``extended`` / ``command`` for objects, which is the branch
@@ -48,7 +49,6 @@ from PySide6.QtGui import QCursor, QImage
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QDockWidget,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -64,9 +64,6 @@ from shiny_mushroom.catalog import ART_LABELS, Art, CatalogKey, Entry, Stream
 from shiny_mushroom.ui.hover_preview import REST_MS, HoverPreview
 from shiny_mushroom.ui.level_palette import NO_LAYER2, LevelPalette
 from shiny_mushroom.ui.tips import wrap_tip
-
-#: Set so that the window can save and restore where the dock is.
-OBJECT_NAME = "create"
 
 #: The tabs, in order, as ``(label, stream)``. A tuple rather than the
 #: :class:`~shiny_mushroom.catalog.Stream` enum's own order, because what the
@@ -94,7 +91,7 @@ TABS: tuple[tuple[str, Stream | None], ...] = (
 #: background gets the palette page; one whose Layer 2 is an *object stream*
 #: gets the catalogue page filled with objects, because on such a level Layer 2
 #: is placed exactly as Layer 1 is. Same tab, same key, same mode -- see
-#: :meth:`CreateDock.offer_layer2`.
+#: :meth:`CreatePanel.offer_layer2`.
 LAYER2_TAB = 2
 
 #: The record streams, in tab order -- the catalogue page's two, without the
@@ -136,7 +133,7 @@ NO_MATCHES = "  Nothing matches."
 HIDDEN = "  {count} hidden -- no graphics for them here."
 
 
-class CreateDock(QDockWidget):
+class CreatePanel(QWidget):
     """What can be put into the level: a searchable catalogue per record
     stream, and the Layer 2 background's page of blocks.
 
@@ -165,11 +162,9 @@ class CreateDock(QDockWidget):
     wants_preview = Signal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__("Create", parent)
-        self.setObjectName(OBJECT_NAME)
-        self.setAllowedAreas(
-            Qt.DockWidgetArea.RightDockWidgetArea | Qt.DockWidgetArea.LeftDockWidgetArea
-        )
+        super().__init__(parent)
+        # The offer dock takes its title from the page it turns to.
+        self.setWindowTitle("Create")
 
         #: The catalogue on offer, by stream. Empty until a level arrives, which
         #: is also what "there is nothing to place" means.
@@ -293,11 +288,9 @@ class CreateDock(QDockWidget):
         self._pages.addWidget(catalogue)
         self._pages.addWidget(self.layer2)
 
-        body = QWidget()
-        layout = QVBoxLayout(body)
+        layout = QVBoxLayout(self)
         layout.addWidget(self._tabs)
         layout.addWidget(self._pages, 1)
-        self.setWidget(body)
 
         # Connected last: the handler shows a page and fills a list, so it must
         # not be reachable before there is either.
@@ -499,6 +492,13 @@ class CreateDock(QDockWidget):
         if entry is not None:
             self.armed.emit(entry)
 
+    def rearm(self, entry: Entry) -> None:
+        """Hold ``entry`` in place of what is in hand, **without saying so**:
+        the same row, its placement reshaped by the keys. The window did
+        the reshaping and already knows; the row stays highlighted."""
+        self._armed = entry
+        self._show_state()
+
     def disarm(self) -> None:
         """Put down what is in hand, **without saying so**.
 
@@ -571,7 +571,9 @@ class CreateDock(QDockWidget):
                 self._hidden += 1
                 continue
             self._list.addItem(self._row(entry, art))
-            if entry == self._armed:
+            # By key: what is in hand may carry a picked-up record's
+            # properties, and it is still this row.
+            if self._armed is not None and entry.key == self._armed.key:
                 self._list.setCurrentItem(self._list.item(self._list.count() - 1))
         self._show_state()
 

@@ -12,9 +12,6 @@ spc x5       ``4``      assembles each SPC700 source to its own ``.bin``
 main         ``1``      the game itself, which incbins those ``.bin`` files
 finalize     ``2``      end-of-ROM fixups
 checksum     ``3``      writes the header checksum, ``--fix-checksum=off``
-patch        --         a patched base only: its third-party patch, applied
-                        over the finished image through the wrapper the base
-                        declares (:attr:`~smw_tools.bases.PostBuildPatch`)
 ===========  =========  ======================================================
 
 The order is load-bearing everywhere except the SPC700 group: those five write
@@ -27,8 +24,8 @@ cart's literal value -- two releases ship a checksum that is simply wrong, and
 "correcting" it breaks byte-exactness.
 
 The upstream batch file also runs ``FileType=6`` to write a firmware filename to
-``Temp.txt``. SMW uses no coprocessor, so that pass is skipped; all five releases
-are byte-exact without it.
+``Temp.txt``. That pass is skipped: no base here needs a firmware file -- the
+SA-1 carries none -- and every target is byte-exact without it.
 
 Three more details carry weight:
 
@@ -55,8 +52,11 @@ Nothing is written into the source tree
 
 from __future__ import annotations
 
+import json
+import os
 import shutil
 import tempfile
+import time
 from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
@@ -75,7 +75,6 @@ from .paths import (
 )
 from .rom_sizes import DEFINE as ROM_SIZE_DEFINE
 from .rom_sizes import ROM_SIZES, RomSize
-from .symbols import merge_pack_labels
 
 #: Assembled individually, then incbin'd by the main pass.
 SPC_SOURCES = ("Engine", "samples", "overworld_music", "level_music", "credits_music")
@@ -98,6 +97,17 @@ SPC_DIR = "SPC700"
 #: one -- and a fifth thread would only wait on the four ahead of it.
 SPC_WORKERS = 4
 
+#: Beside each image: what the build that wrote it was asked for.
+RECORD_SUFFIX = ".build.json"
+
+#: How long :func:`stock_build` waits for another process's rebuild of the same
+#: output before giving up, and how old a lock has to be before it is taken for
+#: one left by a process that died holding it. The lock is held for one build
+#: of one target -- some twenty seconds on a mounted Windows drive -- so a lock
+#: minutes old belongs to nothing that is still running.
+LOCK_WAIT = 300.0
+LOCK_STALE = 180.0
+
 
 @dataclass
 class BuildResult:
@@ -106,6 +116,92 @@ class BuildResult:
     output_path: Path
     symbols_path: Path | None = None
     warnings: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class BuildRecord:
+    """What one build in an output directory was asked for.
+
+    Every kind of build of a target writes the same file: ``smw build U``,
+    ``smw build U --feature uberasm`` and ``smw build U --rom-size 1mb`` all
+    leave ``build/SMW_U.sfc``, and an editor project's build of its merged tree
+    can land there too. The image does not say which it is, and a symbol file
+    from any of them reads exactly like the stock one -- it parses, resolves
+    every name, and answers with the addresses of a cartridge nobody asked
+    about. So each build leaves this beside its image, and whatever needs a
+    particular kind of build reads it before reading the ROM: the test
+    fixtures and ``smw symbol`` through :func:`stock_build`.
+
+    ``defines`` are the caller's -- the feature switches -- and never the ones a
+    patched base adds to every build of itself. ``overlaid`` says the build read
+    a project's merged tree or assets rather than the checkout's.
+    """
+
+    base: str
+    target: str
+    rom_size: str
+    defines: tuple[tuple[str, str], ...] = ()
+    symbols: str | None = None
+    overlaid: bool = False
+
+    @property
+    def stock(self) -> bool:
+        """Whether this is the build the pinned hash describes: the checkout's
+        own tree, at the base's stock size, with nothing switched on."""
+        return (
+            not self.defines
+            and not self.overlaid
+            and self.rom_size == default_base(self.base).stock_size
+        )
+
+    @property
+    def asked_for(self) -> str:
+        """The request, for a message: ``stock``, or what made it not."""
+        parts = []
+        if self.defines:
+            parts.append("with " + ", ".join(f"{n}={v}" for n, v in self.defines))
+        if self.rom_size != default_base(self.base).stock_size:
+            parts.append(f"at {ROM_SIZES[self.rom_size].label}")
+        if self.overlaid:
+            parts.append("from a project's tree")
+        return ", ".join(parts) or "stock"
+
+    def write(self, path: Path) -> None:
+        path.write_text(
+            json.dumps(
+                {
+                    "base": self.base,
+                    "target": self.target,
+                    "rom_size": self.rom_size,
+                    "defines": [list(pair) for pair in self.defines],
+                    "symbols": self.symbols,
+                    "overlaid": self.overlaid,
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+    @classmethod
+    def read(cls, path: Path) -> BuildRecord | None:
+        """The record at ``path``, or ``None`` when there is none to read -- a
+        build older than records, or one that is still being written."""
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        try:
+            return cls(
+                base=raw["base"],
+                target=raw["target"],
+                rom_size=raw["rom_size"],
+                defines=tuple((str(n), str(v)) for n, v in raw.get("defines", ())),
+                symbols=raw.get("symbols"),
+                overlaid=bool(raw.get("overlaid", False)),
+            )
+        except (KeyError, TypeError, ValueError):
+            return None
 
 
 @contextmanager
@@ -155,35 +251,118 @@ def symbols_path(
 ) -> Path:
     """Where a ``--symbols`` build of ``base``'s ``target`` writes its symbols.
 
-    One file per build, the patched bases' included. The main pass writes the
-    source's labels -- the RAM map resolved with the base's own defines, ROM
-    addresses as the ROM map placed them -- and the patch pass merges its own
-    in afterwards (:func:`~smw_tools.symbols.merge_pack_labels`). The source's
-    addresses stay true on the patched cartridge because the patch edits bytes
-    in place and never moves a label, so the merged file describes the
-    cartridge the build actually produced.
+    One file per build. The main pass writes every label -- the RAM map
+    resolved with the base's own defines, ROM addresses as the ROM map placed
+    them, and a vendored tree's own labels where it assembled them, since it
+    assembles in the same pass.
     """
     out = output_dir or BUILD_DIR
     return out / target.output_name.replace(".sfc", ".sym")
 
 
-def assembled_image_path(
+def record_path(
     base: RomBase, target: BuildTarget, output_dir: Path | None = None
 ) -> Path:
-    """Where the ROM passes' output is, before any patch pass has edited it.
+    """Where the :class:`BuildRecord` for a build of ``base``'s ``target`` is."""
+    return (output_dir or BUILD_DIR) / target.output_name.replace(
+        ".sfc", RECORD_SUFFIX
+    )
 
-    A patched base's cartridge is its assemble *plus* its patch pass, and what
-    the patch changed is only measurable against what it was handed -- so the
-    build keeps the assemble beside the cartridge instead of overwriting it.
-    It is not a cartridge of its own: for ``sa1`` it is an image that needs an
-    SA-1 to boot and has not had the pack applied, which is why it wears the
-    ``.assemble`` suffix rather than a target's name. For a plain base the
-    assemble *is* the cartridge, and this is :func:`output_path`.
+
+def read_record(
+    base: RomBase, target: BuildTarget, output_dir: Path | None = None
+) -> BuildRecord | None:
+    """What the build of ``base``'s ``target`` in ``output_dir`` was asked for,
+    or ``None`` when nothing says."""
+    return BuildRecord.read(record_path(base, target, output_dir))
+
+
+@contextmanager
+def _exclusive(output: Path) -> Iterator[None]:
+    """Hold the lock on ``output`` for the block.
+
+    An ``O_EXCL`` create rather than ``fcntl`` or ``msvcrt``, because it is the
+    one primitive every host this runs on honours the same way: a DrvFS mount
+    under WSL, NTFS from Windows, ext4 on CI. A lock older than
+    :data:`LOCK_STALE` is one a process died holding, and is taken over.
     """
-    out = output_dir or BUILD_DIR
-    if base.patch is not None:
-        return out / target.output_name.replace(".sfc", ".assemble.sfc")
-    return output_path(base, target, out)
+    lock = output.with_name(output.name + ".lock")
+    deadline = time.monotonic() + LOCK_WAIT
+    while True:
+        try:
+            os.close(os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            break
+        except FileExistsError:
+            try:
+                age = time.time() - lock.stat().st_mtime
+            except FileNotFoundError:
+                continue
+            if age > LOCK_STALE:
+                lock.unlink(missing_ok=True)
+                continue
+            if time.monotonic() > deadline:
+                raise AsarError(
+                    f"{lock} has been held for {int(age)}s -- another build of "
+                    f"{output.name} is still running, or died; remove the lock "
+                    f"if nothing is building"
+                ) from None
+            time.sleep(0.2)
+    try:
+        yield
+    finally:
+        lock.unlink(missing_ok=True)
+
+
+def stock_build(
+    base: RomBase,
+    target_id: str | None = None,
+    symbols: bool = True,
+    output_dir: Path | None = None,
+    on_progress: Callable[[str], None] | None = None,
+) -> BuildResult | None:
+    """The stock build of ``base``'s ``target`` in ``output_dir``, rebuilt if
+    what is there was asked for something else.
+
+    ``None`` when there is no build there at all: a checkout without assets
+    cannot make one, and whether that is a skip or a failure is the caller's
+    to say. A build that *is* there but was made otherwise -- with a feature
+    switched on, at another size, from a project's tree, or (when ``symbols``)
+    without the symbol file -- is replaced by the stock build with symbols,
+    which is the one every literal address in this package describes. A build
+    older than records is taken at its word; the pinned hash is what tells on
+    it.
+
+    Safe from several processes at once: the check and the rebuild happen under
+    a lock on the output, so parallel test workers that all find a feature
+    build wait for one rebuild rather than each starting their own.
+    """
+    target = base.target(target_id) if target_id else analysis_target(base)
+    out_dir = output_dir or BUILD_DIR
+    rom = output_path(base, target, out_dir)
+    sym = symbols_path(base, target, out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    with _exclusive(rom):
+        if not rom.is_file():
+            return None
+        record = read_record(base, target, out_dir)
+        has_symbols = sym.is_file() and (record is None or record.symbols is not None)
+        if record is not None and not record.stock:
+            why = f"was built {record.asked_for}"
+        elif symbols and not has_symbols:
+            why = "has no symbol file"
+        else:
+            return BuildResult(
+                target.id, target.label, rom, sym if has_symbols else None
+            )
+        if on_progress:
+            on_progress(f"{rom.name} {why} -- rebuilding the stock cartridge")
+        return build_rom(
+            target.id,
+            base=base,
+            output_dir=out_dir,
+            symbols="wla",
+            on_progress=on_progress,
+        )
 
 
 def analysis_target(base: RomBase) -> BuildTarget:
@@ -204,10 +383,7 @@ def build_symbols(
 ) -> Path:
     """Assemble what a symbol file for ``base`` describes, and say where it is.
 
-    The base's own build, whole: for a patched base that includes the patch
-    pass, which is what puts the patch's labels in the file -- the pass costs
-    about a second, and a file without those labels would go on describing the
-    cartridge as though the patch placed nothing.
+    The base's own build, whole.
     """
     target = analysis_target(base)
     result = build_rom(
@@ -261,6 +437,10 @@ def build_rom(
         target = rom_base.target(version)
     except BaseError as error:
         raise AsarError(str(error)) from None
+    # What the caller asked for, before the base adds its own -- the record
+    # says what was *switched on*, and a patched base's defines are on always.
+    asked = defines
+    overlaid = game_dir is not None or assets_dir is not None
 
     wanted = rom_size if rom_size is not None else ROM_SIZES[rom_base.stock_size]
     if wanted.id not in rom_base.sizes:
@@ -271,25 +451,22 @@ def build_rom(
             f"{rom_base.id} cannot be assembled at {wanted.label} -- it offers "
             f"{', '.join(rom_base.sizes)}"
         )
-    # A patched base's ROM passes assemble the image its patch pass will edit,
-    # so their size is the *source's* question: usually the source's stock,
-    # left small for the patch to expand -- which is what the pinned hash was
-    # taken over -- and larger only where `_source_size` says the assembler
-    # itself has to provide the room. The base's own defines go on every pass,
-    # the patch pass included, so the wrapper and the source read one switch.
-    patch = rom_base.patch
-    if patch is not None:
+    # A base with a vendored tree assembles it inside the main pass, so the
+    # ROM passes run at the size the cartridge needs (`_source_size`) with
+    # the tree on the include path, and the base's own defines on every pass.
+    pack = rom_base.pack
+    if pack is not None:
         # Located before anything assembles: a missing tree should cost the
         # message, not a build that dies at its final pass.
-        pack_root = patch.locate()
+        pack_root = pack.locate()
         if pack_root is None:
-            raise AsarError(patch.missing_message())
+            raise AsarError(pack.missing_message())
         source = _source_base(rom_base)
-        assemble_size = _source_size(rom_base, wanted, defines) or ROM_SIZES[
-            source.stock_size
-        ]
+        assemble_size = (
+            _source_size(rom_base, wanted, defines) or ROM_SIZES[source.stock_size]
+        )
         stock_id = source.stock_size
-        defines = (*patch.source_defines, *defines)
+        defines = (*pack.source_defines, *defines)
     else:
         pack_root = None
         assemble_size = wanted
@@ -304,12 +481,14 @@ def build_rom(
     out_path = output_path(rom_base, target, out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     # asar patches an existing file in place; a stale one would leave bytes from
-    # a previous version wherever the current build writes nothing.
+    # a previous version wherever the current build writes nothing. The record
+    # and the symbol file go with it: until this build has written its own,
+    # nothing beside the image may claim to describe it.
     out_path.unlink(missing_ok=True)
-    # The ROM passes write here: the cartridge itself for a plain base, the
-    # image the patch pass is handed for a patched one.
-    assembled = assembled_image_path(rom_base, target, out_dir)
-    assembled.unlink(missing_ok=True)
+    record_at = record_path(rom_base, target, out_dir)
+    record_at.unlink(missing_ok=True)
+    symbols_path(rom_base, target, out_dir).unlink(missing_ok=True)
+    assembled = out_path
 
     game = game_dir or rom_base.game_dir
     # The SPC700 blobs the passes below write and read go here rather than
@@ -322,6 +501,9 @@ def build_rom(
             # spelling every host reads the same way.
             "--include",
             relative_path(blobs, game),
+            # A base with a vendored tree reads it as well: Config/SA1Pack.asm
+            # includes its entry from the end of the ROM map.
+            *(["--include", relative_path(pack_root, game)] if pack_root else []),
             *warning_flags(),
             "--define",
             f"GameID={rom_base.game_id}",
@@ -424,74 +606,14 @@ def build_rom(
                 f"the ROM to fit it: build at a larger --rom-size instead"
             )
 
-        if patch is not None:
-            # The patch edits its input in place, so it runs over a copy and
-            # the assemble stays what the ROM passes made of it.
-            shutil.copy2(assembled, out_path)
-            if on_progress:
-                on_progress(f"applying {patch.label}")
-            # The wrapper applies the patch when the base's define is set, and
-            # reaches the patch's tree through the include path -- never a path
-            # of its own, so an env override and a staged copy both resolve.
-            # Symbols are merged for WLA only, which is the format everything
-            # here reads; a no$sns request keeps its main-pass file unmerged.
-            pack_sym = out_path.with_suffix(".pack.sym") if symbols == "wla" else None
-            # The build's own defines reach the patch pass too: a
-            # define-switched feature can need a fix-up *after* the patch --
-            # the translevel remap's hook shares bytes with the pack's RAM
-            # remapping -- and the pass entry is what tests them. A stock
-            # build passes none, so the pinned cartridge's pass is exactly
-            # what it was. Names the patch defines itself are the patch's:
-            # asar refuses a command line naming one twice.
-            own = {name for name, _ in patch.patch_defines} | {patch.define}
-            pack_args = [
-                *_define_args(
-                    (
-                        *(pair for pair in defines if pair[0] not in own),
-                        *patch.patch_defines,
-                        (patch.define, "1"),
-                    )
-                ),
-                "--include",
-                relative_path(pack_root, game),
-            ]
-            if pack_sym is not None:
-                pack_args += [f"--symbols={symbols}", f"--symbols-path={pack_sym}"]
-            warnings += run_asar(
-                asar_binary(),
-                [*pack_args, patch.pass_entry, str(out_path.resolve())],
-                cwd=game,
-                verbose=verbose,
-            ).warnings
-            if pack_sym is not None and sym_out is not None:
-                try:
-                    merge_pack_labels(sym_out, pack_sym, patch.label)
-                except ValueError as error:
-                    raise AsarError(str(error)) from None
-                pack_sym.unlink()
-
-            # Over the patched image, which is what the patch's own size files
-            # pad and mirror the header of.
-            extra = patch.entry_for(wanted.id)
-            if extra is not None:
-                if on_progress:
-                    on_progress(f"expanding to {wanted.label}")
-                warnings += run_asar(
-                    asar_binary(),
-                    [extra, str(out_path.resolve())],
-                    cwd=pack_root,
-                    verbose=verbose,
-                ).warnings
-
-            # The same question the assemble was asked, and here it covers the
-            # patch too: it takes its freespace from asar, so an overrun comes
-            # back longer than anyone asked for rather than failing.
-            if (grew := out_path.stat().st_size) != wanted.size:
-                raise AsarError(
-                    f"asked for a {wanted.label} cartridge and got {grew:,} "
-                    f"bytes -- {patch.label} placed something past the end of "
-                    f"{wanted.size:,}. Build at a larger --rom-size instead"
-                )
+    BuildRecord(
+        base=rom_base.id,
+        target=target.id,
+        rom_size=wanted.id,
+        defines=tuple(asked),
+        symbols=symbols,
+        overlaid=overlaid,
+    ).write(record_at)
 
     return BuildResult(
         version=version,
@@ -505,51 +627,40 @@ def build_rom(
 def _source_size(
     base: RomBase, rom_size: RomSize, defines: tuple[tuple[str, str], ...]
 ) -> RomSize | None:
-    """What size to assemble a patched base's intermediate at, or ``None`` to
-    leave it to the patch.
+    """What size to assemble a vendored-pack base's image at, or ``None`` when
+    the assembler reaches nothing at or below what was asked for.
 
-    Only a size the *assembler* can reach reaches the intermediate, so the two
-    the patch's own files place are ``None`` here. The stock size is ``None``
-    too: the patch expands a 512 KB input itself, and that expansion is what
-    the base's pinned hash was taken over.
+    The pack's code assembles *inside* the main pass (``Config/SA1Pack.asm``),
+    and its freespace search lands in the expansion the cartridge has -- so
+    the image is assembled as large as the assembler can get it: the size
+    asked for, since every size a base offers now carries a define the memory
+    map reaches (past 4 MB, ``Config/SA1Pack.asm`` does the fills, the header
+    mirror and the MMC values the pack's own size files used to). A feature
+    that reserves an expansion bank needs that bank to exist while this
+    assemble runs for the same reason. ``None`` only when nothing the
+    assembler reaches lies at or below what was asked for.
 
-    **Extra defines are the exception**, and they are the source's own: a
-    feature that reserves an expansion bank needs that bank to exist while
-    *this* assemble runs, and an expansion the patch performs afterwards comes
-    too late to org into. So a build carrying any is assembled as large as the
-    assembler can get it -- the size asked for, or, where the patch's own file
-    is the only way to reach that, the largest size below it that the assembler
-    *can* reach. A 6 MB `sa1` cartridge is assembled from a 4 MB intermediate
-    and expanded by `asm/6mb.asm` as before; what it must not be is left at
-    512 KB, where the bank the feature reserves does not exist at all and the
-    source refuses itself.
-
-    Nothing without a feature reaches that branch, so the pinned hash still
-    describes the build anyone gets by default.
+    The base's stock size is a size the assembler reaches, so the stock
+    build assembles at it and the pinned hash describes exactly that.
     """
-    if defines:
-        reachable = [
-            ROM_SIZES[size_id]
-            for size_id in base.sizes
-            if ROM_SIZES[size_id].define is not None
-            and ROM_SIZES[size_id].size <= rom_size.size
-        ]
-        return max(reachable, key=lambda size: size.size) if reachable else None
-    if rom_size.define is None:
-        return None
-    if rom_size.id != base.stock_size:
-        return rom_size
-    return None
+    reachable = [
+        ROM_SIZES[size_id]
+        for size_id in base.sizes
+        if ROM_SIZES[size_id].define is not None
+        and ROM_SIZES[size_id].size <= rom_size.size
+    ]
+    return max(reachable, key=lambda size: size.size) if reachable else None
 
 
 def _source_base(base: RomBase) -> RomBase:
-    """The base whose tree the patched one is assembled from.
+    """The base whose tree the derived one is assembled from.
 
-    The same tree, by construction: a patched base shares ``src_root`` with the
-    base it derives from, and differs in what happens *after* the assembler.
-    What the derived base still takes from here is the size its ROM passes
-    assemble at when the patch is left to do the expanding -- the *source's*
-    stock, not its own, which already counts the patch's growth.
+    The same tree, by construction: a base with a vendored pack shares
+    ``src_root`` with the base it derives from, and differs in what its
+    define switches on. What the derived base still takes from here is the
+    size to fall back to should its own list offer nothing the assembler
+    reaches -- the *source's* stock, not its own, which already counts the
+    pack's growth.
     """
     from .bases import base as lookup  # noqa: PLC0415 -- avoids an import cycle
 

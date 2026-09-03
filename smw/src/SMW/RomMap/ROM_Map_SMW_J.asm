@@ -93,28 +93,6 @@ macro SMW_GlobalAssemblySettings()
 endmacro
 
 macro SMW_LoadROMMap()
-; The translevel remap table, at the head of the reserved run -- before any
-; bank emits into it, so the fixed-size occupant is the one everything else
-; is measured from. Nothing unless the feature is on: the mechanism is in
-; Config/TranslevelRemap.asm.
-%SMW_PlaceTranslevelLevelTable()
-; The level number stash at the level bank's fixed head, then the level
-; graphics' rows and stubs and the custom level palettes behind it -- all
-; before any bank emits into it, so the packed level streams the managed
-; level banks place behind them are measured from fixed occupants. The
-; stash is laid down whenever any reader wants it and each occupant only
-; where its own feature is on: the mechanisms are in
-; Config/LevelNumberStash.asm, Config/LevelGraphics.asm and
-; Config/LevelCustomPalettes.asm.
-%SMW_PlaceLevelNumberStash()
-%SMW_PlaceLevelGraphics()
-%SMW_PlaceLevelCode()
-%SMW_PlaceLevelCustomPalettes()
-; The managed graphics' head, at the head of the first graphics bank --
-; before any bank emits into it, so the packed streams behind it are
-; measured from a fixed occupant. Nothing unless the feature is on: the
-; mechanism is in Config/ManagedGraphicsMemory.asm.
-%SMW_PlaceManagedGraphicsHead()
 %BANK_START(!BANK_00)
 	%ROUTINE_RT00_SMW_InitAndMainLoop($008000)
 	%ROUTINE_RT00_SMW_HandleSPCUploads($008079)
@@ -1359,50 +1337,51 @@ macro SMW_LoadROMMap()
 ;#############################################################################################################
 ;#############################################################################################################
 
-; The relocated text, at the tail of the reserved run: the stubs and both
-; sets of tables in one block, placed once every bank above has emitted, and
-; nothing unless the feature is on -- the mechanism is in
-; Config/StringTableRelocation.asm.
-%SMW_PlaceRelocatedStrings()
-; The levels' own code, and whatever it hijacks: variable-size, so it goes
-; behind the palettes' blobs rather than in the packed head, and read once
-; every bank has emitted, so a hijack into the game survives. Before the
-; managed level banks close, so the packer sees the cursor it leaves. The
-; mechanism is in Config/LevelCode.asm.
-; The tool's dialect and its shared library, ahead of every kind of project
-; code because any of them may be written in it. The mechanism is in
-; Config/UberASM.asm.
-%SMW_PlaceUberASM()
-%SMW_PlaceLevelCodeData()
-; The game modes' own code, and the four bytes of bank $00 that reach it:
-; the pointer rewrite and the jump both write into a bank that has to have
-; emitted first. The mechanism is in Config/GameModeCode.asm.
-%SMW_PlaceGameModeCode()
-; The global and status bar routines, and their stubs: same place and same
-; two reasons -- variable-size, and their hooks write into banks that have
-; to have emitted. The mechanism is in Config/GlobalCode.asm.
-%SMW_PlaceGlobalCode()
-; The reserved bank itself, on an expanded cartridge only: the RATS tag over
-; the run its three occupants packed into. Nothing unless one of them is on
-; -- the whole mechanism is in Config/ReservedBank.asm.
+; The run the growable features share, on an expanded cartridge only: the
+; reserved bank's RATS tag, then the run itself in one sequence from its
+; head -- the translevel remap table, the relocated overworld tables, the
+; relocated text -- each nothing unless its feature is on. Once every bank
+; has emitted, because the tables come out of the banks' own macros and the
+; remap's lookup jumps into bank $05. The mechanism is in
+; Config/ReservedBank.asm and the three occupants' files.
 %SMW_ReserveBank()
-; The managed level banks' close: the level files the project adds,
-; packed after the banks' own streams, and what the last run has left,
-; filled -- nothing unless the feature is on. The mechanism is in
-; Config/ManagedLevelMemory.asm.
-%SMW_ManagedLevelMemory_Close()
-; The managed level banks' tail -- the sprite-bank stub and table at the
-; level bank's fixed end -- and then the level bank itself: the RATS tag
-; over the run the custom level palettes and the packed streams share.
-; Nothing unless one of them is on; the mechanisms are in
-; Config/ManagedLevelMemory.asm and Config/LevelBank.asm.
-%SMW_ManagedLevelMemory_Tail()
+%SMW_PlaceReservedRun()
+; The level bank, on an expanded cartridge only: its RATS tag, then the
+; bank itself in one sequence from its head -- the level number stash, the
+; level graphics, the per-level code's tables, the custom level palettes,
+; the tool's dialect and library, then the project's own code, a level's,
+; a game mode's and the global routines -- each nothing unless its feature
+; is on. Once every bank has emitted, because the project's code may hijack
+; the game. The mechanism is in Config/LevelBank.asm and the occupants'
+; files.
 %SMW_ReserveLevelBank()
-; The managed graphics' close -- the graphics files the project adds,
-; packed after the game's own, and what the runs have left, filled -- and
-; then the graphics banks themselves: a RATS tag over each. Nothing unless
-; the feature is on; the mechanisms are in Config/ManagedGraphicsMemory.asm
-; and Config/GraphicsBank.asm.
-%SMW_ManagedGraphicsMemory_Close()
+%SMW_PlaceLevelBank()
+; The managed level banks: the seven level macros' streams packed into
+; banks $06 and $07 and, where the cartridge has one, the level bank
+; behind its own sequence; then the level files the project adds, the
+; fills, and the sprite-bank stub and table at the top of bank $07.
+; Nothing unless the feature is on -- the mechanism is in
+; Config/ManagedLevelMemory.asm.
+%SMW_PlaceManagedLevels()
+; The sprite bank, on a cartridge with custom sprites: a RATS tag over
+; the bank, the feature's tables and stubs at its head, the dialect the
+; sprites are spelled in, then the sprites' own code. Nothing unless the
+; feature is on -- the mechanisms are in Config/SpriteBank.asm and
+; Config/CustomSprites.asm.
+%SMW_ReserveSpriteBank()
+%SMW_PlaceSpriteBank()
+; The graphics banks, on an expanded cartridge only: a RATS tag over
+; each, then the managed graphics in one sequence -- the head of the first
+; bank, the game's own files packed into banks $08-$0B and on into the
+; graphics banks, the files the project adds, the fills. Nothing unless
+; the feature is on; the mechanisms are in Config/GraphicsBank.asm and
+; Config/ManagedGraphicsMemory.asm.
 %SMW_ReserveGraphicsBanks()
+%SMW_PlaceManagedGraphics()
+; The music banks, above the graphics: a RATS tag over each, then the
+; project's own songs -- the driver blob, the pointer tables and the
+; sequences and samples they name. Nothing unless the custom music is on;
+; the mechanisms are in Config/MusicBank.asm and Config/CustomMusic.asm.
+%SMW_ReserveMusicBanks()
+%SMW_PlaceMusicBanks()
 endmacro

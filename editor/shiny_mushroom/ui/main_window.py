@@ -49,7 +49,6 @@ from functools import partial
 from pathlib import Path
 
 from PySide6.QtCore import (
-    QByteArray,
     QEvent,
     QPoint,
     QRect,
@@ -58,14 +57,13 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
-from PySide6.QtGui import QAction, QActionGroup, QImage, QKeySequence
+from PySide6.QtGui import QActionGroup, QImage, QKeySequence, QPainter
 from PySide6.QtWidgets import (
     QApplication,
     QDockWidget,
     QFileDialog,
     QLabel,
     QMainWindow,
-    QMenu,
     QProgressBar,
     QToolBar,
     QWidget,
@@ -79,6 +77,7 @@ from shiny_mushroom import (
     level_palettes,
     palette_map,
     palettes,
+    project_sprites,
     secondary_entrances,
     source_files,
 )
@@ -94,7 +93,7 @@ from shiny_mushroom.build import (
     symbol_file,
     world_map_room,
 )
-from shiny_mushroom.catalog import Entry, key_of
+from shiny_mushroom.catalog import CatalogKey, Entry, key_of
 from shiny_mushroom.edit import (
     History,
     Level,
@@ -126,7 +125,10 @@ from shiny_mushroom.level import (
     changed_blocks,
     geometry,
     layer2_block_at,
+    layer2_index,
+    layer2_shape,
     level_shape,
+    pipe_tables,
 )
 from shiny_mushroom.level_exits import (
     EXIT_ADD,
@@ -148,13 +150,16 @@ from shiny_mushroom.level_files import (
 )
 from shiny_mushroom.level_palettes import LevelPalettes, PaletteDocument
 from shiny_mushroom.level_snapshot import LevelSnapshot
+from shiny_mushroom.level_tiles import Area, FileTiles
 from shiny_mushroom.load_path import (
     OPEN_LEVEL,
 )
+from shiny_mushroom.map16 import TILESET_COUNT, Map16Error
 from shiny_mushroom.music_tables import MusicTableError
 from shiny_mushroom.mwl import MwlError
 from shiny_mushroom.navigation import Place, Trail
 from shiny_mushroom.objects import (
+    OPEN_DESTINATION,
     LevelObject,
     carried_footprints,
     parse_objects,
@@ -211,6 +216,7 @@ from shiny_mushroom.tile_clipboard import (
     FloatController,
     FloatingSelection,
     FloatStep,
+    GridStamp,
     SelectionMark,
     TileClipboard,
     centred,
@@ -220,6 +226,7 @@ from shiny_mushroom.tile_clipboard import (
 )
 from shiny_mushroom.ui import graphics_dialog, menus
 from shiny_mushroom.ui.audio_dialog import AudioDialog
+from shiny_mushroom.ui.brk_dialog import show_brk
 from shiny_mushroom.ui.canvas import (
     DEFAULT_ZOOM,
     RESET_ZOOM,
@@ -230,8 +237,6 @@ from shiny_mushroom.ui.canvas import (
     from_percent,
 )
 from shiny_mushroom.ui.canvas_view import CanvasView
-from shiny_mushroom.ui.context_menu import SEPARATOR, Row, build
-from shiny_mushroom.ui.create import CreateDock
 from shiny_mushroom.ui.dialogs import Choice, ask, ask_to_save, warn
 from shiny_mushroom.ui.emulator import LevelLoader
 from shiny_mushroom.ui.features_dialog import FeaturesDialog
@@ -241,23 +246,29 @@ from shiny_mushroom.ui.gestures import (
     Grip,
     block_center,
     box_between,
+    grab_stamp,
     grip_within,
     landing_beside,
     next_in_stack,
     pulled_to,
+    snapped_box,
 )
-from shiny_mushroom.ui.graphics_dialog import GraphicsDialog
+from shiny_mushroom.ui.graphics_dialog import GraphicsDialog, over_budget
 from shiny_mushroom.ui.header_dialog import HeaderDialog, Layer2Options
 from shiny_mushroom.ui.help_dialogs import AboutDialog, ShortcutGuide, shortcut_sections
 from shiny_mushroom.ui.level_bar import LevelBar
 from shiny_mushroom.ui.level_data_dialog import LevelDataDialog
 from shiny_mushroom.ui.level_exits_dialog import LevelExits
-from shiny_mushroom.ui.level_graphics_dialog import LevelGraphicsDialog
+from shiny_mushroom.ui.level_graphics_dialog import AreaPick, LevelGraphicsDialog
 from shiny_mushroom.ui.level_palette import NO_LAYER2, BackgroundTile
+from shiny_mushroom.ui.level_tiles_pane import PICK_PROMPT, TilesHost
 from shiny_mushroom.ui.load_path_dialog import LoadPathDialog
 from shiny_mushroom.ui.loading import CAPTURING, LevelLoadingDialog
-from shiny_mushroom.ui.map16_dialog import Map16Dialog
+from shiny_mushroom.ui.map16_bar import SHEET_2X2, SHEET_6X6, Map16Bar
+from shiny_mushroom.ui.map16_mode import GRAINS, Map16Mode
 from shiny_mushroom.ui.memory_map_dialog import MemoryMapDialog
+from shiny_mushroom.ui.mode_bar import ModeBar
+from shiny_mushroom.ui.offer_dock import OfferDock
 from shiny_mushroom.ui.overlays import (
     DASH_LENGTH,
     SELECTION_DASH,
@@ -276,7 +287,7 @@ from shiny_mushroom.ui.patches_dialog import PatchesDialog
 from shiny_mushroom.ui.picture import Picture
 from shiny_mushroom.ui.play import PlayController
 from shiny_mushroom.ui.play_window import PlayWindow
-from shiny_mushroom.ui.previews import Held, Previews
+from shiny_mushroom.ui.previews import Held, Previews, Thumb
 from shiny_mushroom.ui.project_dialog import (
     CART_FILTER,
     BuildDialog,
@@ -301,7 +312,7 @@ from shiny_mushroom.ui.settings_dialog import SettingsDialog, external_emulator
 from shiny_mushroom.ui.source_files_dialog import SourceFilesDialog
 from shiny_mushroom.ui.strings_window import StringsWindow
 from shiny_mushroom.ui.theme import THEME_KEY, Theme, apply_theme
-from shiny_mushroom.ui.tile_palette import PaletteTab, TilePaletteDock
+from shiny_mushroom.ui.tile_palette import PaletteTab
 from shiny_mushroom.ui.toolbars import ModeToolbars
 from shiny_mushroom.ui.view_bar import LEVEL_BUTTONS, WORLD_BUTTONS, ViewBar
 from shiny_mushroom.ui.view_options import ViewOptions
@@ -311,9 +322,11 @@ from shiny_mushroom.ui.window.level_tree import LevelTree
 from shiny_mushroom.ui.window.load_path import LoadPathWindow
 from shiny_mushroom.ui.window.modes import EditorMode, LevelEditing
 from shiny_mushroom.ui.window.parts import (
+    BUILD_ONLY,
     DISASSEMBLY,
     LEVEL_PALETTE,
     POINTER_PARTS,
+    RAW_FILES,
     SOURCE_FILES,
     WORLD_PARTS,
     WORLD_TABLES,
@@ -339,6 +352,7 @@ from smw_tools.asm_room import Run
 from smw_tools.bases import BaseError
 from smw_tools.bases import base as rom_base
 from smw_tools.features import (
+    CUSTOM_SPRITES,
     LEVEL_GRAPHICS,
     MANAGED_GRAPHICS_MEMORY,
     OVERWORLD_TABLES_RELOCATED,
@@ -360,23 +374,25 @@ PROJECT_KEY = "project/current"
 #: open there.
 EXPORT_KEY = "export/folder"
 GEOMETRY_KEY = "window/geometry"
+#: Where the dock arrangement is remembered. One arrangement for every
+#: editing environment: what each places from is a page of one dock (see
+#: :mod:`shiny_mushroom.ui.offer_dock`), so nothing about the docks moves
+#: when the environment does.
 STATE_KEY = "window/state"
-#: Where each editing environment's dock arrangement is remembered -- see
-#: :meth:`MainWindow._swap_chrome_layout`. Two arrangements rather than one,
-#: because the create panel and the world map's tile palette take turns in a
-#: single spot: one dragged wider or taller is a decision about *that*
-#: environment, and handing the other the size it was left at loses it. The
-#: level keeps the original key, so an arrangement made before there were two
-#: is the one a returning session opens on.
-CHROME_STATE_KEYS = {
-    "level": STATE_KEY,
-    "world": "window/state-world",
-}
 
 # Refuse to render something enormous as a byte map rather than spending a
 # minute building a QImage nobody asked for. 8 MiB is well past the largest SNES
 # cartridge, so anything above it was opened by mistake.
 MAX_FILE_BYTES = 8 * 1024 * 1024
+
+#: How far past a label an address may be and still be reported as inside it,
+#: when a ``BRK`` is named from the project's symbol file. A symbol table has a
+#: name every few dozen bytes in code and then nothing at all across a data
+#: table, so an unbounded "nearest label below" would confidently place an
+#: exception in the last routine before a kilobyte of graphics. Half a kilobyte
+#: is longer than the routines in this game and short enough to say nothing
+#: rather than something wrong.
+BRK_LABEL_REACH = 0x200
 
 # A level is never opened magnified. A byte map is 256 pixels wide and wants
 # magnifying; a level is up to 4096, and inheriting the byte map's 4x would open
@@ -788,14 +804,21 @@ class MainWindow(
         # drawn from the catalogue entry instead -- see `Placing`.
         self._placing: Entry | None = None
         self._placing_at: tuple[int, int] | None = None
+        # The last picture the ghost drew and the row it was of: what a hand
+        # the keys have just reshaped goes on showing while the picture of its
+        # new shape is out -- see `_placed`.
+        self._ghost_art: tuple[CatalogKey, Thumb] | None = None
         # The Layer 2 background's counterpart of the pair above: the tile in
         # hand while the level's Editing mode is Layer 2, its full-size image
         # for the ghost, and -- during a paint stroke -- the document the
         # stroke is being applied to, committed whole when the button comes
         # up so the stroke is one undo step. See `_bg_place` and friends.
-        self._bg_placing: BackgroundTile | None = None
+        self._bg_placing: BackgroundTile | GridStamp | None = None
         self._bg_tile_image: QImage | None = None
         self._bg_stroke: Level | None = None
+        # A right drag in flight, grabbing a region of the pattern to stamp
+        # with: where it began and where the pointer is, in image pixels.
+        self._bg_grab: tuple[QPoint, QPoint] | None = None
         # The painting mode's selection: level *blocks*, boxed or clicked out
         # of the picture -- one instance, though the pattern entry behind
         # each repeats across the level -- and the set a shift-marquee
@@ -830,10 +853,6 @@ class MainWindow(
         # the key that asks for one arrives from wherever the keyboard is rather
         # than from the canvas.
         self._pointing_at: tuple[int, int] | None = None
-        #: The context menu last popped up, or ``None``. Kept so it is
-        #: released when the next one is built rather than leaking a
-        #: menu per right click, and so a test can read its rows.
-        self._context_menu: QMenu | None = None
         # Whether the press that began a drag has already been taken as a
         # placement, so its release is not read as a second one. A placement is
         # a *click*, and at 4x zoom the four device pixels that turn one into a
@@ -955,6 +974,11 @@ class MainWindow(
         # that the level's buffered picture no longer matches the options and
         # leaving the mode must render it again -- see `_redraw_layers`.
         self._level_stale = False
+        # And its twin for the libraries drawn beside the canvas: whether the
+        # capture moved while another mode held it, so the background page,
+        # the ghost and the catalogue's pictures are of colours and graphics
+        # that have since changed -- see `_capture_changed`.
+        self._offers_stale = False
 
         self._build_canvas()
         self._build_docks()
@@ -1002,14 +1026,18 @@ class MainWindow(
             gesture.connect(self._left_palettes)
         self.canvas.clicked_away.connect(self._canvas_clicked_away)
         self.canvas.middle_clicked.connect(self._canvas_middle_clicked)
-        # The right button is the way back to selecting. It reaches here from
-        # the surround as well as from the picture, which is the point: putting
-        # something down should not require finding a piece of level to do it
-        # over.
+        # The right button is the eyedropper. It reaches here from the
+        # surround as well as from the picture, which is the point: out there
+        # it picks nothing, and picking nothing is how a tool is put down
+        # without finding a piece of level to do it over.
         self.canvas.right_clicked.connect(self._canvas_right_clicked)
+        self.canvas.double_clicked.connect(self._canvas_double_clicked)
         self.canvas.drag_begun.connect(self._canvas_drag_begun)
         self.canvas.drag_moved.connect(self._canvas_drag_moved)
         self.canvas.drag_ended.connect(self._canvas_drag_ended)
+        self.canvas.right_drag_begun.connect(self._canvas_right_drag_begun)
+        self.canvas.right_drag_moved.connect(self._canvas_right_drag_moved)
+        self.canvas.right_drag_ended.connect(self._canvas_right_drag_ended)
 
         # The view is what the canvas is looked at through: it scrolls, pans and
         # zooms, and the canvas itself stays a picture of a fixed size.
@@ -1036,12 +1064,19 @@ class MainWindow(
         tile palette -- tabbed with the properties panel, and only the
         current mode's visible."""
         # Above the properties panel and on the same side, because the two are a
-        # pair: this one says what a level could contain and that one says what
-        # one record in it does. Tabbed together rather than stacked, so the
-        # dock's width is spent on one of them at a time -- a catalogue of names
-        # and a column of value boxes both want the room, and neither is looked
-        # at while the other is being used.
-        self.create = CreateDock(self)
+        # pair: this one says what the picture could contain and that one says
+        # what one record in it does. Tabbed together rather than stacked, so
+        # the dock's width is spent on one of them at a time -- a catalogue of
+        # names and a column of value boxes both want the room, and neither is
+        # looked at while the other is being used. One dock with a page per
+        # editing environment: the level's catalogue, the world map's tile
+        # palette and the Map16 environment's VRAM chars, turned to by
+        # `_apply_editing_chrome`. The pages are named here as the window has
+        # always known them; the dock owns nothing but the turn.
+        self.offers = OfferDock(self)
+        self.create = self.offers.create
+        self.tile_palette = self.offers.tile_palette
+        self.map16_panel = self.offers.map16_panel
         self.create.armed.connect(self._arm_placement)
         # The level's third placeable thing lives in the same panel, under its
         # own tab: the Layer 2 background's page of blocks. It says what was
@@ -1052,12 +1087,13 @@ class MainWindow(
         self.level_palette = self.create.layer2
         self.level_palette.armed.connect(self._bg_armed)
         self.create.editing_picked.connect(self.set_level_editing)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.create)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.offers)
 
         # What the panel is offering, and the round trips that fill it in. It
         # reads the window through `_held` -- asked afresh each time rather than
         # captured, because a probe outlives several edits.
         self._catalog = Previews(self.create, self._held, self)
+        self._catalog.shaped_ready.connect(self._draw_overlays)
 
         self.properties = PropertiesDock(self)
         self.properties.edited.connect(self._commit_field)
@@ -1066,23 +1102,14 @@ class MainWindow(
         # spin box. The selection stays -- what was let go of is the panel.
         self.properties.dismissed.connect(self.view.setFocus)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.properties)
-        self.tabifyDockWidget(self.create, self.properties)
+        self.tabifyDockWidget(self.offers, self.properties)
         # The properties panel in front on a first run: it is the one that
         # answers a click on the level, which is the first thing anybody does.
         # A remembered arrangement overrides this -- see `_restore_geometry`.
         self.properties.raise_()
 
-        # The world map's tile palette, in the create panel's place: the two
-        # are the same kind of thing for the two modes, so they share the spot
-        # and only the current mode's is visible.
-        self.tile_palette = TilePaletteDock(self)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.tile_palette)
-        self.tabifyDockWidget(self.tile_palette, self.properties)
-        self.tile_palette.setVisible(False)
-
-        # The palettes, in both modes: the colours are the game's rather than
-        # any one level's, so unlike the two above this does not take turns
-        # with anything.
+        # The palettes, in every mode: the colours are the game's rather than
+        # any one level's.
         self.palette_dock = PaletteDock(self)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.palette_dock)
         self.tabifyDockWidget(self.palette_dock, self.properties)
@@ -1103,11 +1130,6 @@ class MainWindow(
         # Which editing mode a gesture on the level is in: `self._level_editing`,
         # this window's, like the editor mode above.
         self._level_editing = LevelEditing.RECORDS
-        # Each environment's dock arrangement, kept as it is left and put back
-        # when it comes round again -- see `_swap_chrome_layout`. Which one is
-        # on screen, against `_chrome`'s answer for which one should be.
-        self._layouts: dict[str, QByteArray] = {}
-        self._chrome_shown: str | None = None
         # Panels a restored arrangement left floating, kept off screen until the
         # window is -- see `_hold_floating_panels`.
         self._held_panels: list[QWidget] = []
@@ -1184,9 +1206,22 @@ class MainWindow(
         #: The Strings window: the game's text, kept like the viewers above
         #: and closed with the project -- see :meth:`edit_strings`.
         self._strings: StringsWindow | None = None
-        #: The Map16 editor, kept and closed with the project the same way,
-        #: and redrawn as levels arrive -- see :meth:`edit_map16`.
-        self._map16: Map16Dialog | None = None
+        # Everything the Map16 editing environment is: its document,
+        # selection and gestures, behind this window like the world map's --
+        # see shiny_mushroom.ui.map16_mode.
+        self._map16 = Map16Mode(
+            self.canvas,
+            self.view,
+            self.properties,
+            self.map16_panel,
+            self._position_label_text,
+            self._map16_changed,
+            self._world,
+        )
+        #: Whether a Map16 save is owed a level reload on the way out of the
+        #: mode: the reload repaints the canvas, which is the mode's while it
+        #: is up, so it waits at the door -- see :meth:`_leave_map16`.
+        self._map16_reload_owed = False
         #: The Secondary Entrances window, kept and closed with the project
         #: whose tables it holds -- see :meth:`edit_secondary_entrances`.
         self._secondary_entrances: SecondaryEntrancesDialog | None = None
@@ -1224,6 +1259,17 @@ class MainWindow(
         # the row, committed as one step onto the document the reopen's reload
         # brings -- see :meth:`edit_level_graphics`.
         self._pending_graphics_edit: tuple[int, bytes] | None = None
+        #: A pick on the canvas for the Level Graphics dialog's tiles page:
+        #: the row the dialog held when its Select Layer 1 Area button closed it,
+        #: carried until the dialog is opened again over the area swept --
+        #: and the two corners of the sweep while one is in flight. ``None``
+        #: outside a pick.
+        self._area_pick: bytes | None = None
+        self._area_box: tuple[QPoint, QPoint] | None = None
+        #: Whether the Level Graphics dialog is up with its tiles page, which
+        #: is the other window whose saves want the capture's slot files kept
+        #: (:meth:`_graphics_window_open`).
+        self._level_graphics_open = False
         # Whether the next refresh's arrival must re-sync what the Layer 2
         # kind decides -- the palette's offer and the editing mode. Set by a
         # walk across a repoint step, which can flip the kind under chrome a
@@ -1238,6 +1284,11 @@ class MainWindow(
         # was last true -- see :meth:`_sync_rebuild_action`.
         self._build_current = False
         self._built_stamp: int | None = None
+        # Which BRKs this cartridge has already been reported for, as
+        # ``(address, signature)``. Cleared when a cartridge is opened, which
+        # is the only thing that can change what the code at that address is
+        # -- see :meth:`_cartridge_broke`.
+        self._brks_shown: set[tuple[int, int]] = set()
         # The project build's symbol table, held against the file it was read
         # from -- see :meth:`_build_symbols`. One slot: a stale key re-reads.
         self._symbols_held: tuple[tuple[str, int, int], SymbolTable] | None = None
@@ -1337,6 +1388,11 @@ class MainWindow(
         # Whether the palette panel is the surface being worked in -- what
         # decides which document Ctrl+Z and Ctrl+S mean.
         self._palette_active = False
+        # And whether the graphics files are: a save from the Level Tiles
+        # page or the pixel editor is a step on this stack, each step the
+        # files it wrote as they stood before, so Ctrl+Z writes them back.
+        self._graphics_active = False
+        self._graphics_history: History[dict[int, tuple[bytes, ...]]] = History({})
         # A repaint owed to a picker still being dragged -- see
         # :data:`PALETTE_PREVIEW_MS`.
         self._palette_pending = False
@@ -1376,16 +1432,25 @@ class MainWindow(
         # bar's box is a second handle on it, kept saying the same thing.
         self.world_bar.layer_picked.connect(self._world_layer_picked)
         self.tile_palette.tab_changed.connect(self._world_layer_changed)
-        self.tile_palette.sheet_edit_asked.connect(self._world_sheet_asked)
         # The Warps/Exits tab arms nothing: its rows reach a warp or path-exit
         # entry already on the map, so a pick is a selection rather than
         # something in hand.
         self.tile_palette.transfer_picked.connect(self._world.select_transfer)
         # A colour of the row being placed under, opened in the Palettes panel.
         self.tile_palette.colour_activated.connect(self.show_palette_offset)
+        # And the stamp tabs' button: the sheet the blocks come off, opened
+        # in the Tilemap editor.
+        self.tile_palette.edit_sheet_asked.connect(self._edit_stamp_sheet)
         self.world_bar.event_picked.connect(self._world_event_picked)
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.world_bar)
         self.toolbars.add(self.world_bar, {EditorMode.WORLD})
+
+        # And the Map16 environment's, taking the same turn.
+        self.map16_bar = Map16Bar(self)
+        self.map16_bar.sheet_picked.connect(self._map16_sheet_picked)
+        self.map16_bar.editing_picked.connect(self.set_map16_editing)
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.map16_bar)
+        self.toolbars.add(self.map16_bar, {EditorMode.MAP16})
 
         # Beside the level bar rather than inside it: a picture zooms whether or
         # not there is a cart behind it, and the level bar is switched off
@@ -1465,6 +1530,12 @@ class MainWindow(
         )
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.world_view_bar)
         self.toolbars.add(self.world_view_bar, {EditorMode.WORLD})
+        # The mode bar: every environment's, since it is how each is reached
+        # from the others, and ahead of whichever environment's picker is up
+        # so it reads as the row's heading.
+        self.mode_bar = ModeBar(self.menu_actions, self)
+        self.insertToolBar(self.level_bar, self.mode_bar)
+        self.toolbars.add(self.mode_bar, head=True)
         # Every bar is registered: put up the starting mode's arrangement.
         self.toolbars.enter(self._mode)
         # Two of them start out asking a question nothing has answered yet: what
@@ -1509,12 +1580,20 @@ class MainWindow(
         what a map run carries too.
         """
         rows = self.menu_actions
-        level_mode = self._mode is not EditorMode.WORLD
+        level_mode = self._mode is EditorMode.LEVEL
         holding = level_mode and self._doc is not None
         rows.header.setEnabled(holding)
         rows.graphics_row.setEnabled(holding)
         rows.exits.setEnabled(holding)
         rows.test.setEnabled(self._doc is not None)
+        # The Map16 environment's door, armed eagerly rather than when its
+        # menu opens: the row carries a shortcut, and a disabled action's
+        # shortcut is a dead key. It draws in a level's graphics, so it
+        # needs a project for the tables and a level to draw them with.
+        rows.map16_mode.setEnabled(
+            self._project is not None and self._snapshot is not None
+        )
+        self.sync_mode_rows()
         self.level_bar.setEnabled(
             level_mode and self._path is not None and not self._loading
         )
@@ -1554,6 +1633,25 @@ class MainWindow(
         The one place the three-way choice is made -- see
         :class:`_EditSurface` for why it is worth having only one.
         """
+        if self._editing_graphics():
+            # The graphics files, after a save from the Level Tiles page or
+            # the pixel editor: a document of the project's, like the
+            # palettes, with a stack of its own. Nothing to copy or paste
+            # here -- the files are edited in their own windows.
+            history = self._graphics_history
+            return _EditSurface(
+                walk=self._walk_graphics,
+                copy=lambda: None,
+                cut=lambda: None,
+                delete=lambda: None,
+                paste=lambda: None,
+                commit_field=lambda key, value: None,
+                can_undo=history.can_undo,
+                can_redo=history.can_redo,
+                can_copy=False,
+                can_paste=False,
+                can_order=False,
+            )
         if self._editing_palettes():
             # The palettes are a document of their own, and the panel showing
             # them is where Edit acts while it has the focus. Not by *mode*
@@ -1591,6 +1689,21 @@ class MainWindow(
                 can_redo=history is not None and history.can_redo,
                 can_copy=world.can_copy,
                 can_paste=world.can_paste,
+                can_order=False,
+            )
+        if self._mode is EditorMode.MAP16:
+            sheet = self._map16
+            return _EditSurface(
+                walk=self._walk_map16,
+                copy=sheet.copy_selection,
+                cut=sheet.cut_selection,
+                delete=sheet.delete_selection,
+                paste=sheet.paste,
+                commit_field=sheet.commit_field,
+                can_undo=sheet.can_undo,
+                can_redo=sheet.can_redo,
+                can_copy=sheet.can_copy,
+                can_paste=sheet.can_paste,
                 can_order=False,
             )
         history = self._history
@@ -1811,6 +1924,10 @@ class MainWindow(
             return
         self._close_play()
         self._release_loader()
+        # A new cartridge is new code: an exception reported over the last one
+        # says nothing about this one, and it should be shown again if it is
+        # still there.
+        self._brks_shown.clear()
         outgoing, self._path = self._path, path
         self._world_runs = None
         # Before anything reads the image: every offset below is resolved
@@ -2074,6 +2191,7 @@ class MainWindow(
             self._loader.loaded.connect(self._show_level)
             self._loader.player_art_ready.connect(self._hold_player_art)
             self._loader.failed.connect(self._level_failed)
+            self._loader.broke.connect(self._cartridge_broke)
             self._loader.overworld_loaded.connect(self._show_overworld)
             self.level_requested.connect(self._loader.load)
             self.player_art_requested.connect(self._loader.player_art)
@@ -2182,6 +2300,10 @@ class MainWindow(
 
         A refresh, again, gets none of it.
         """
+        if replacing:
+            # The row a pick carries is the outgoing level's; a dialog
+            # reopened over the next one would commit it there.
+            self._drop_area_pick()
         self._lock(
             partial(self._loading_dialog.begin, level, booting=booting)
             if replacing
@@ -2324,8 +2446,10 @@ class MainWindow(
         # The panel shows the colours of whatever is on the canvas.
         self._show_palette()
         # And the Map16 editor draws its sheet in the level's own graphics.
-        if self._map16 is not None and self._map16.isVisible():
-            self._map16.show_snapshot(snapshot)
+        if self._mode is EditorMode.MAP16 and self._map16.ready:
+            # A refresh arrived under the mode: the sheet is drawn with the
+            # level's graphics, so it follows the new capture.
+            self._map16.activate()
         # **Which level this is, before anything reads the snapshot.** Everything
         # keyed by level number -- the test start the marker is drawn at, the
         # catalogue's idea of what it is describing -- is asked for during the
@@ -2335,14 +2459,20 @@ class MainWindow(
         self._level = snapshot.level
         self._read_level(keep_document=refreshing, previous=previous)
         if refreshing:
+            # A refresh whose header named another tileset dropped the object
+            # pictures with the list they belonged to, and this is the path a
+            # header edit takes -- so the new tileset's are asked for here.
+            # The load below probes for the same reason a load does.
+            self._catalog.probe_if_owed()
             # Whatever the document became while this one was out. One load, not
             # one per edit: the picture nobody waited for is not worth drawing.
             if self._refresh_pending:
                 self._refresh_pending = False
                 self._refresh_picture()
             return
-        if self._mode is EditorMode.WORLD:
-            # **The canvas is the map's, so the level does not take it.** Every
+        if not self._level_has_the_canvas:
+            # **The canvas is the map's -- or the Map16 sheet's -- so the
+            # level does not take it.** Every
             # deliberate level switch is refused over the map at the gesture,
             # but the windows that stay open over it reload the level as a
             # side effect of an edit -- Project > Graphics Files and Project >
@@ -2528,6 +2658,10 @@ class MainWindow(
             # A fresh document, and a history that starts empty: undo belongs to
             # the level being worked on, and a stack that survived a level change
             # would offer to take back an edit made somewhere else.
+            custom = (
+                self._project is not None
+                and CUSTOM_SPRITES.id in self._project.features
+            )
             fresh = Level.read(
                 self._snapshot.objects,
                 self._snapshot.sprites,
@@ -2547,6 +2681,18 @@ class MainWindow(
                 layer2_header=self._snapshot.layer2_header,
                 secondary=self._secondary_header_bytes(self._snapshot.level),
                 graphics=self._level_graphics_bytes(self._snapshot.level),
+                # The built cartridge's own reading of the second extra bit:
+                # the snapshot came off that build, so the flag follows what
+                # it has rather than what the next build will. A window over
+                # a bare cartridge has no project to ask and reads stock.
+                custom_sprites=custom,
+                extra_counts=self._snapshot.extra_counts,
+                # ...and the project's own names for its custom numbers,
+                # read off the sprite folders here so the records and the
+                # create panel say the same word for one sprite.
+                custom_names=(
+                    project_sprites.custom_names(self._project) if custom else {}
+                ),
             )
             pending, self._pending_repoint = self._pending_repoint, None
             if (
@@ -2826,6 +2972,25 @@ class MainWindow(
         self._picture.patch(runs)
         self._show_picture()
 
+    @property
+    def _level_has_the_canvas(self) -> bool:
+        """Whether the canvas is the level's to paint on.
+
+        **The one place this is asked.** The world map and the Map16 sheet
+        each take the canvas for the length of their mode, and a level
+        redraw arriving meanwhile must defer rather than paint over them --
+        :attr:`_level_stale` is the note it leaves, and
+        :meth:`_give_the_canvas_back_to_the_level` reads it. Written as one
+        predicate because it was four: three sites asked
+        ``is EditorMode.WORLD`` and had never heard of the sheet, so a level
+        reload under the Map16 mode -- which Project > Graphics Files and
+        Project > Level Data both cause, being reachable from there --
+        painted the level over it while every other piece of chrome still
+        said Map16. A fifth environment is now one enum member rather than
+        a hunt.
+        """
+        return self._mode is EditorMode.LEVEL
+
     def _show_picture(self) -> None:
         """Compose the level, its sprites and the player, and hand it over.
 
@@ -2839,13 +3004,14 @@ class MainWindow(
         part of the picture rather than a mark over it. What is *marked* over it
         is :meth:`_draw_overlays`, and none of that reaches the buffer.
 
-        **Nothing while the world map holds the canvas.** The level's picture
-        would be painted over the map, so the composition is deferred and
-        :attr:`_level_stale` says so -- :meth:`_leave_world` redraws from it.
+        **Nothing while another mode holds the canvas.** The level's picture
+        would be painted over the map or the Map16 sheet, so the composition
+        is deferred and :attr:`_level_stale` says so -- the way back out
+        redraws from it.
         """
         if self._snapshot is None:
             return
-        if self._mode is EditorMode.WORLD:
+        if not self._level_has_the_canvas:
             self._level_stale = True
             return
         image = self._picture.compose(
@@ -2882,6 +3048,7 @@ class MainWindow(
         holding = (
             self._moving is not None
             or self._marquee is not None
+            or self._area_box is not None
             or self._stretching is not None
             or self._placing is not None
             or self._bg_placing is not None
@@ -2948,6 +3115,15 @@ class MainWindow(
         the box is caught, so the ants already outline the box itself, and a
         second rectangle in another colour is one statement drawn twice.
         """
+        if self._bg_grab is not None:
+            # The region a right drag is grabbing to stamp with: unlike the
+            # painting marquee, no ants trace it, so the box is the feedback
+            # -- drawn as whole blocks, which is what it grabs.
+            return snapped_box(*self._bg_grab, BLOCK)
+        if self._area_box is not None:
+            # The area being swept for the Level Graphics dialog's tiles
+            # page: the same rule, since what it picks is whole blocks.
+            return snapped_box(*self._area_box, BLOCK)
         if self._painting:
             return None
         return self._marquee_rect()
@@ -3007,6 +3183,7 @@ class MainWindow(
           differently, and the next cart's is a probe or a cache read away.
         """
         self._test_start.clear()
+        self._offers_stale = False
         self._player_art = None
         self._player_art_asked = False
         self._pending = None
@@ -3050,6 +3227,7 @@ class MainWindow(
         # belongs to a tileset, and the next cartridge's is not this one's.
         self._placing = None
         self._placing_at = None
+        self._ghost_art = None
         self._placed_by_drag = False
         # The painting mode goes down with its level: the tile in hand, the
         # library it came from, the selection over its pattern, and the mode
@@ -3058,6 +3236,7 @@ class MainWindow(
         self._bg_placing = None
         self._bg_tile_image = None
         self._bg_stroke = None
+        self._bg_grab = None
         self._bg_selection = frozenset()
         self._bg_marquee_from = frozenset()
         # The float's edits are already committed, so nothing is lost here;
@@ -3066,7 +3245,6 @@ class MainWindow(
         self.level_palette.set_tiles([])
         if self._level_editing is LevelEditing.LAYER2:
             self._level_editing = LevelEditing.RECORDS
-            self._apply_editing_chrome()
             self._sync_level_editing()
         self._sync_level_editing_offer()
         self.view.set_hover_cursor(None)
@@ -3170,7 +3348,7 @@ class MainWindow(
 
     def set_sprites(self, checked: bool) -> None:
         self.options.set("sprites", checked)
-        if self._mode is EditorMode.WORLD:
+        if not self._level_has_the_canvas:
             # Sprites are composed in at :meth:`_show_picture`, which leaving
             # the mode runs anyway; the selection drop waits there too.
             return
@@ -3186,7 +3364,7 @@ class MainWindow(
         # -- a placement, most plausibly, since the menu is reachable with one in
         # hand -- is holding a cached copy of the old answer.
         self._resting = None
-        if self._mode is EditorMode.WORLD:
+        if not self._level_has_the_canvas:
             return
         self._drop_a_hidden_sprite()
         self._draw_overlays()
@@ -3211,7 +3389,7 @@ class MainWindow(
         # See `set_sprite_outlines`: this changes what the cached resting
         # outlines would be, and a gesture may be holding the old ones.
         self._resting = None
-        if self._mode is EditorMode.WORLD:
+        if not self._level_has_the_canvas:
             return
         self._draw_overlays()
 
@@ -3227,12 +3405,61 @@ class MainWindow(
         self.options.set("layer3", checked)
         self._redraw_layers()
 
+    def _capture_changed(self, offers: bool = True) -> None:
+        """Redraw everything the level's capture feeds, after it moved.
+
+        **The canvas is not the only thing drawn from the capture.** The
+        Layer 2 background library the create panel offers, the catalogue's
+        object and sprite pictures, and the armed Layer 2 tile's
+        follow-the-pointer ghost all come out of the same VRAM, CGRAM, Map16
+        definitions and backdrop, so a colour edit, a graphics edit or a
+        previewed header moves every one of them. The one door the three
+        take, because each used to hand-list what to redraw and each listed
+        a different subset: the canvas alone.
+
+        `Map16Mode._capture_changed` and `OverworldMode._refresh_offers` are
+        the same door for the other two modes, ``offers`` included: off holds
+        the libraries back for a picker drag's frames, which cost more than
+        the picture and which nobody is looking at mid-drag. They catch up on
+        the finished pick.
+        """
+        self._redraw_layers()
+        if not offers:
+            return
+        if not self._level_has_the_canvas:
+            # **The picture is not the only half that waits.** The libraries
+            # are the level's too -- 256 background thumbnails and the
+            # catalogue's pictures -- and nobody is looking at them while the
+            # map or the Map16 sheet holds the canvas, so a colour pick
+            # finished under either of them notes them stale rather than
+            # spending them. `_give_the_canvas_back_to_the_level` spends it.
+            self._offers_stale = True
+            return
+        self._redraw_offers()
+
+    def _redraw_offers(self) -> None:
+        """Draw everything the level offers beside its canvas from the capture
+        as it now stands -- :meth:`_capture_changed`'s other half, and what
+        :attr:`_offers_stale` is owed."""
+        # The library is redrawn, not replaced, so the hand survives it --
+        # `set_tiles` drops one, which is right for another level's page and
+        # wrong for the same page in new colours.
+        held = self.level_palette.held
+        self._offer_background()
+        if held is not None:
+            self.level_palette.hold(held)
+        if self._bg_placing is not None:
+            self._bg_tile_image = self._bg_ghost_for(self._bg_placing)
+        # Cheap when nothing moved: `redraw` keys on what it drew from.
+        self._catalog.redraw()
+
     def _redraw_layers(self) -> None:
         """Draw the level again with the layers as they now stand."""
-        if self._mode is EditorMode.WORLD:
-            # The render waits for the level's return -- see `_leave_world`.
-            # Unlike the compose-time toggles this one has a buffer to
-            # invalidate: the pixels held are of the layers as they were.
+        if not self._level_has_the_canvas:
+            # The canvas is the map's or the Map16 sheet's, so the render
+            # waits for the level's return. Unlike the compose-time toggles
+            # this one has a buffer to invalidate: the pixels held are of the
+            # layers as they were.
             self._level_stale = True
             return
         self._draw_level()
@@ -3615,6 +3842,7 @@ class MainWindow(
         """
         self._placing = entry
         self._placing_at = None
+        self._ghost_art = None
         self._select(frozenset())
         # A crosshair, because the pointer is now naming a place rather than
         # picking something out of the picture. It goes through the same hover
@@ -3635,6 +3863,7 @@ class MainWindow(
             return
         self._placing = None
         self._placing_at = None
+        self._ghost_art = None
         # Told rather than asked: the panel's highlight is its own way of saying
         # what is in hand, and it cannot know that a click on the level has put
         # the thing down. It does not emit on the way back, so this cannot loop.
@@ -3726,17 +3955,37 @@ class MainWindow(
         fallback, which is what the ghost always used to be.
         """
         if self._bg_placing is not None:
-            # The painting mode's ghost: the armed tile itself, one block,
-            # over whichever block the pointer is naming.
+            # The painting mode's ghost: the armed tile itself -- or the
+            # grabbed region -- over whichever block the pointer is naming.
             if self._placing_at is None:
                 return None
             column, row = self._placing_at
+            if isinstance(self._bg_placing, GridStamp):
+                return Placing(
+                    column,
+                    row,
+                    self._bg_placing.width,
+                    self._bg_placing.height,
+                    art=self._bg_tile_image,
+                    offset=(0, 0),
+                )
             return Placing(column, row, 1, 1, art=self._bg_tile_image, offset=(0, 0))
         if self._placing is None or self._placing_at is None or self._doc is None:
             return None
         column, row = self._placing_at
         extent = self._placing.preview(column, row, self._doc.shape)
-        found = self._catalog.thumb(self._placing.key)
+        # The row's picture, or the reshaped hand's own once it has been
+        # probed -- the first ask sends the probe, and the answer repaints.
+        found = self._catalog.thumb_for(self._placing)
+        if found is not None:
+            self._ghost_art = (self._placing.key, found)
+        elif self._holds_ghost_art(self._placing):
+            # Reshaped, and the picture of the new shape is still out: the
+            # hand goes on being drawn as it last was rather than collapsing
+            # to the record's rectangle for the length of a load. A tap of V
+            # otherwise flashed a whole object down to one block and back.
+            assert self._ghost_art is not None
+            found = self._ghost_art[1]
         if found is None:
             return Placing(*extent)
         return Placing(
@@ -3746,6 +3995,18 @@ class MainWindow(
             extent[3],
             art=found.image,
             offset=(found.dx, found.dy),
+        )
+
+    def _holds_ghost_art(self, entry: Entry) -> bool:
+        """Whether the picture already on screen still stands for ``entry``.
+
+        Only while the shape it has been reshaped into is out being drawn, and
+        only for a picture of this same row: another row's artwork under the
+        pointer would be a ghost of something the click is not going to place.
+        """
+        held = self._ghost_art
+        return (
+            held is not None and held[0] == entry.key and self._catalog.awaiting(entry)
         )
 
     # -- editing the Layer 2 background --------------------------------------
@@ -3799,11 +4060,10 @@ class MainWindow(
             # for. A floating paste is fixed where it sits on the way out.
             self._bg_hand.land()
             self._bg_select(frozenset())
-        self._apply_editing_chrome()
         # The panel comes to the front whichever way the mode went: what was
         # just asked for is a tab of it, and a panel behind the properties
         # dock is a tab nobody can see.
-        self.create.raise_()
+        self.offers.raise_()
         self._sync_level_editing()
         self._sync_screen_selecting()
         self.sync_edit_actions()
@@ -3825,7 +4085,7 @@ class MainWindow(
         # The world map's rows carry the same bare digits, so the two groups
         # are never armed together: a level to edit *and* the level on the
         # canvas is what makes the digits mean these rows.
-        group.setEnabled(self._doc is not None and self._mode is not EditorMode.WORLD)
+        group.setEnabled(self._doc is not None and self._mode is EditorMode.LEVEL)
         rows = group.actions()
         if len(rows) > 1:
             rows[1].setEnabled(editable)
@@ -3879,56 +4139,25 @@ class MainWindow(
         mode."""
         return self._level_editing is LevelEditing.LAYER2 and not self._painting
 
-    @property
-    def _chrome(self) -> str:
-        """Which editing environment the window is in, as the key its dock
-        arrangement is remembered under.
-
-        The level's two editing modes are one environment: they are two tabs
-        of the create panel, so nothing about the docks moves between them.
-        """
-        return "world" if self._mode is EditorMode.WORLD else "level"
-
     def _apply_editing_chrome(self) -> None:
-        """Put up the dock the current environment places from, and no other.
+        """Turn the offer dock to the page the current environment places
+        from: the level's catalogue, the map's tile palette, the sheet's
+        VRAM chars. Also what :meth:`_restore_geometry` asserts over a
+        remembered arrangement, which says where the dock is and not what it
+        shows.
 
-        The create panel and the world map's tile palette take turns in one
-        spot: what a level can hold against what the map can. Also what
-        :meth:`_restore_geometry` reasserts over a remembered layout.
-
-        Visibility is asserted *after* the arrangement is swapped, because a
-        remembered arrangement carries the visibility it was saved with and
-        that is the environment's answer to give, not the layout's.
+        The two non-level environments bring the dock to the front on the
+        way in: what they place from is behind the properties panel on a
+        first run, and a page nobody can see is no offer.
         """
-        if self._chrome != self._chrome_shown:
-            self._swap_chrome_layout()
-        in_world = self._mode is EditorMode.WORLD
-        self.create.setVisible(not in_world)
-        self.tile_palette.setVisible(in_world)
-        if in_world:
-            self.tile_palette.raise_()
-
-    def _swap_chrome_layout(self) -> None:
-        """Keep the arrangement the outgoing environment was left in, and put
-        the incoming one's back up.
-
-        Where the docks sit and how big they are belongs to the environment
-        that was arranged, not to the window: three of them share one spot, so
-        a palette dragged taller here would otherwise be handed to the next
-        environment at that height and come back at whatever height that one
-        left the spot at. Nothing to restore is not a failure -- an environment
-        entered for the first time inherits the arrangement on screen, which is
-        the only sensible starting point it has.
-        """
-        if self._chrome_shown is not None:
-            self._layouts[self._chrome_shown] = self.saveState()
-        self._chrome_shown = self._chrome
-        remembered = self._layouts.get(self._chrome_shown)
-        if remembered is not None:
-            self.restoreState(remembered)
-            # An arrangement carries the toolbars it was saved with; the
-            # registry's answer for this environment goes back on top.
-            self.toolbars.reassert()
+        if self._mode is EditorMode.WORLD:
+            self.offers.turn_to(self.tile_palette)
+            self.offers.raise_()
+        elif self._mode is EditorMode.MAP16:
+            self.offers.turn_to(self.map16_panel)
+            self.offers.raise_()
+        else:
+            self.offers.turn_to(self.create)
 
     def _reoffer_background(self) -> None:
         """Re-read the Layer 2 page this level offers, and fall back off the
@@ -3941,11 +4170,17 @@ class MainWindow(
         self._offer_background()
         if self._level_editing is LevelEditing.LAYER2 and not self._layer2_editable():
             self._level_editing = LevelEditing.RECORDS
-            self._apply_editing_chrome()
             self._sync_level_editing()
 
     def _offer_background(self) -> None:
-        """Fill the level palette with this level's placeable tiles."""
+        """Fill the level palette with this level's placeable tiles.
+
+        Where the page is drawn, so this is where :attr:`_offers_stale` is
+        paid off -- :meth:`_draw_level`'s clearing of :attr:`_level_stale`, for
+        the other half of what a capture feeds. A level arriving comes through
+        here too, and its page is of the capture that just landed.
+        """
+        self._offers_stale = False
         snapshot = self._snapshot
         if (
             snapshot is None
@@ -3959,7 +4194,7 @@ class MainWindow(
             first=background_tiles(snapshot).start,
         )
 
-    def _bg_armed(self, payload: BackgroundTile) -> None:
+    def _bg_armed(self, payload: BackgroundTile | GridStamp) -> None:
         """Take ``payload`` from the palette: the next click places it."""
         # Arming a placement drops the selection, as it does for records: a
         # click means "put it here" now, so the ants would mark something no
@@ -3968,17 +4203,53 @@ class MainWindow(
         self._bg_select(frozenset())
         self._bg_placing = payload
         self._placing_at = None
-        snapshot = self._snapshot
-        if snapshot is not None:
-            blocks = Blocks(snapshot, layer2=True)
-            self._bg_tile_image = raster_to_image(
-                Raster(BLOCK, BLOCK, b"".join(blocks.rows(payload.number)))
-            )
+        self._bg_tile_image = self._bg_ghost_for(payload)
         self.view.set_hover_cursor(Qt.CursorShape.CrossCursor)
         self._draw_overlays()
         self.statusBar().showMessage(
-            f"Placing tile {hexnum(payload.number)}", EDIT_REFUSED_MS
+            f"Placing a {payload.width}x{payload.height} grabbed region"
+            if isinstance(payload, GridStamp)
+            else f"Placing tile {hexnum(payload.number)}",
+            EDIT_REFUSED_MS,
         )
+
+    def _bg_ghost_for(self, payload: BackgroundTile | GridStamp) -> QImage | None:
+        """``payload``'s follow-the-pointer ghost over the Layer 2 pattern.
+
+        Drawn from the capture, which is why :meth:`_capture_changed` asks
+        again rather than leaving it as it was picked up: the ghost is a
+        promise about what a click will draw, and a stale one lies.
+        `OverworldMode._ghost_for` is its twin.
+        """
+        snapshot = self._snapshot
+        if snapshot is None:
+            return None
+        blocks = Blocks(snapshot, layer2=True)
+        if isinstance(payload, GridStamp):
+            return self._bg_stamp_image(payload, blocks)
+        return raster_to_image(
+            Raster(BLOCK, BLOCK, b"".join(blocks.rows(payload.number)))
+        )
+
+    @staticmethod
+    def _bg_stamp_image(stamp: GridStamp, blocks: Blocks) -> QImage:
+        """The grabbed region's own picture, for the ghost: each block's
+        raster composed at its offset."""
+        image = QImage(
+            stamp.width * BLOCK,
+            stamp.height * BLOCK,
+            QImage.Format.Format_ARGB32_Premultiplied,
+        )
+        image.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(image)
+        for dx, dy, leaf in stamp.entries:
+            assert isinstance(leaf, BackgroundTile)
+            tile = raster_to_image(
+                Raster(BLOCK, BLOCK, b"".join(blocks.rows(leaf.number)))
+            )
+            painter.drawImage(dx * BLOCK, dy * BLOCK, tile)
+        painter.end()
+        return image
 
     def _bg_stop_placing(self) -> None:
         """Put the tile down, and roll back a stroke that never committed.
@@ -4050,13 +4321,26 @@ class MainWindow(
         placing = self._bg_placing
         if placing is None or self._doc is None:
             return
-        index = background_index(pos.x() // BLOCK, pos.y() // BLOCK)
         if not self._commit(
-            self._doc.layer2_placed({index: placing.number}), self._bg_hand.mark()
+            self._doc.layer2_placed(self._bg_changes(placing, pos)),
+            self._bg_hand.mark(),
         ):
             return
         if not modifiers & Qt.KeyboardModifier.ShiftModifier:
             self._bg_stop_placing()
+
+    @staticmethod
+    def _bg_changes(placing: BackgroundTile | GridStamp, pos: QPoint) -> dict[int, int]:
+        """What the hand writes at ``pos``: one entry for a tile, the whole
+        region for a grabbed stamp, its top-left block under the pointer."""
+        column, row = pos.x() // BLOCK, pos.y() // BLOCK
+        if isinstance(placing, BackgroundTile):
+            return {background_index(column, row): placing.number}
+        changes: dict[int, int] = {}
+        for dx, dy, leaf in placing.entries:
+            assert isinstance(leaf, BackgroundTile)
+            changes[background_index(column + dx, row + dy)] = leaf.number
+        return changes
 
     def _bg_drag_begun(self, pos: QPoint, modifiers: Qt.KeyboardModifier) -> None:
         """A drag with a tile in hand paints; with nothing in hand, one begun
@@ -4308,8 +4592,7 @@ class MainWindow(
         placing = self._bg_placing
         if placing is None or self._bg_stroke is None:
             return
-        index = background_index(pos.x() // BLOCK, pos.y() // BLOCK)
-        painted = self._bg_stroke.layer2_placed({index: placing.number})
+        painted = self._bg_stroke.layer2_placed(self._bg_changes(placing, pos))
         if painted is self._bg_stroke:
             return
         self._bg_stroke = painted
@@ -4382,6 +4665,7 @@ class MainWindow(
             drawn=self._drawn,
             rom=self._rom if self._addressable else None,
             addresses=self._addresses,
+            assets=self._saved_assets_patch,
         )
 
     def _probe_catalog(self) -> None:
@@ -4610,14 +4894,26 @@ class MainWindow(
             return None
 
     def _project_patches(self) -> dict[int, bytes]:
-        """What the open project has already saved for the level being loaded."""
-        return cart_patches.project_patches(
+        """What the open project has already saved for the level being
+        loaded, with the Map16 tables the editor is holding over them.
+
+        :func:`~shiny_mushroom.cart_patches.all_patches` with no held document:
+        a level *arriving* is the one door where the project's saved streams
+        are the answer, because the level being loaded is not yet the one the
+        editor holds. The reading rides with it as it does through every other
+        door -- a reading no gather makes is a reading nothing clears, which
+        would leave a repoint put back to stock reported as still needing a
+        build.
+        """
+        return cart_patches.all_patches(
             self._project,
             self._rom,
             self._level,
             self._addresses,
             self._build_symbols(),
             self._status_message,
+            map16=self._map16.held_tables,
+            note=lambda parts: self._note_skipped(POINTER_PARTS, parts),
         )
 
     def _layer2_pointer_patch(self) -> dict[int, bytes]:
@@ -5002,6 +5298,17 @@ class MainWindow(
         if self._doc is None or found is None:
             return
         record, fields = found
+        edited = self._resized(record, fields, columns, rows)
+        if edited is not record:
+            self._commit(self._doc.replaced(record.uid, edited))
+
+    @staticmethod
+    def _resized(
+        record: Record, fields: list[Field], columns: int, rows: int
+    ) -> Record:
+        """``record`` with its size fields stepped by ``(columns, rows)`` --
+        the arithmetic :meth:`resize_selection` explains, over any record
+        and its descriptors."""
         by_key = {field.key: field for field in fields}
         if "width" in by_key or "height" in by_key:
             steps = [("width", columns), ("height", rows)]
@@ -5014,8 +5321,84 @@ class MainWindow(
             field = by_key.get(key)
             if field is not None and delta:
                 edited = field.applied(edited, field.value(edited) + delta)
+        return edited
+
+    def cycle_variant(self, by: int = 1) -> None:
+        """V: step the variant of the held object, or of the one in hand --
+        forward, or back with Shift (``by`` of -1).
+
+        An object whose settings byte has a nibble measured as a *variant*
+        -- which form of it is drawn -- offers that nibble as a field, and
+        this steps it round the sixteen, where an arrow will not: a variant
+        is not a size, and stepping it by accident would silently turn a
+        bullet shooter into a different shooter. Deliberately, by its own
+        key, it is exactly what is wanted. A record with no such field does
+        nothing.
+        """
+        if self._placing is not None:
+            found = self._placing_fields()
+            if found is None:
+                return
+            record, fields = found
+            edited = self._cycled(record, fields, by)
+            if edited is not record:
+                self._reshape_placing(edited)
+            return
+        found = self._selected_fields()
+        if self._doc is None or found is None:
+            return
+        record, fields = found
+        edited = self._cycled(record, fields, by)
         if edited is not record:
             self._commit(self._doc.replaced(record.uid, edited))
+
+    @staticmethod
+    def _cycled(record: Record, fields: list[Field], by: int) -> Record:
+        field = next(
+            (found for found in fields if found.key.endswith("-variant")), None
+        )
+        if field is None:
+            return record
+        return field.applied(record, (field.value(record) + by) & 0x0F)
+
+    # -- shaping what is in hand ---------------------------------------------
+    #
+    # The same keys that resize the held record shape the one the Create
+    # panel armed: what the ghost shows is what the next click places, so
+    # Shift+arrows and V step the entry's template record where they would
+    # step the held one. The panel is told quietly -- the row is still the
+    # row; only what placing it produces has moved.
+
+    def resize_placing(self, columns: int, rows: int) -> None:
+        """Shift+arrows with something in hand: step its size fields."""
+        found = self._placing_fields()
+        if found is None:
+            return
+        record, fields = found
+        edited = self._resized(record, fields, columns, rows)
+        if edited is not record:
+            self._reshape_placing(edited)
+
+    def _placing_fields(self) -> tuple[Record, list[Field]] | None:
+        """The record the ghost stands for and the fields it offers: the
+        entry's template, or the fresh record it would place -- at the
+        ghost's block, or the origin while the pointer is off the picture,
+        which the placement overwrites anyway."""
+        entry = self._placing
+        if entry is None or self._doc is None:
+            return None
+        record = entry.template
+        if record is None:
+            column, row = self._placing_at or (0, 0)
+            record = entry.at(column, row, self._doc.shape)
+        return record, self._record_fields(record)
+
+    def _reshape_placing(self, record: Record) -> None:
+        entry = self._placing
+        assert entry is not None
+        self._placing = replace(entry, template=record)
+        self.create.rearm(self._placing)
+        self._draw_overlays()
 
     def reorder_selection(self, delta: int) -> None:
         """Bring everything held one step forward, or send it one step back.
@@ -5037,8 +5420,13 @@ class MainWindow(
     # save, the title -- and nowhere else.
 
     def _canvas_clicked(self, pos: QPoint, modifiers: Qt.KeyboardModifier) -> None:
-        if self._mode is EditorMode.WORLD:
+        if self._area_pick is not None and self._mode is EditorMode.LEVEL:
+            # A click picks the one block under it.
+            self._area_pick_ended(pos, pos)
+        elif self._mode is EditorMode.WORLD:
             self._world.clicked(pos, modifiers)
+        elif self._mode is EditorMode.MAP16:
+            self._map16.clicked(pos, modifiers)
         elif self._painting:
             self._bg_clicked(pos, modifiers)
         else:
@@ -5047,6 +5435,8 @@ class MainWindow(
     def _canvas_clicked_away(self, modifiers: Qt.KeyboardModifier) -> None:
         if self._mode is EditorMode.WORLD:
             self._world.clicked_away(modifiers)
+        elif self._mode is EditorMode.MAP16:
+            self._map16.clicked_away(modifiers)
         elif self._painting:
             # The surround means the same thing to both editing modes:
             # "nothing here", unless shift says "as well as". Putting the
@@ -5065,219 +5455,88 @@ class MainWindow(
         elif self._mode is EditorMode.LEVEL:
             self._set_test_start(pos)
 
-    def _canvas_right_clicked(self, image: QPoint | None, at: QPoint) -> None:
-        """Put down what is in hand -- and with nothing in hand, offer the
-        context menu for the spot.
+    def _canvas_double_clicked(
+        self, pos: QPoint, modifiers: Qt.KeyboardModifier
+    ) -> None:
+        """A plain double click opens the level the clicked thing names.
 
-        Two meanings on one button, decided by whether anything is armed:
-        cancelling a placement is the gesture everyone reaches for mid-tool
-        and is kept exactly as it was, and the menu takes the presses that
-        used to mean nothing. A menu that also opened over an armed tool
-        would need a "cancel" row for what one press already does.
+        The first click of the pair has already selected it -- a screen exit
+        record, a level tile on the map -- so this only follows where the
+        selection leads, through the same gates the properties panel's Open
+        Level button goes through. With a tool in hand, or over anything
+        that names no level, the pair stays two ordinary clicks.
+        """
+        del pos
+        if modifiers != Qt.KeyboardModifier.NoModifier:
+            return
+        if self._mode is EditorMode.WORLD:
+            self._load_path_level_edit(OPEN_LEVEL, 1)
+        elif (
+            self._mode is EditorMode.LEVEL
+            and not self._painting
+            and self._placing is None
+        ):
+            self._open_selected_destination()
+
+    def _open_selected_destination(self) -> None:
+        """Open the level the held screen exit leads to, if that is what is
+        held -- the Open Level button's work, shared with the double click."""
+        if self._doc is None:
+            return
+        held = self._doc.records(self._selection)
+        if len(held) != 1 or not isinstance(held[0], LevelObject):
+            return
+        fields = held[0].fields(self._doc.fg_bg_tileset, self._doc.shape)
+        destination = next(
+            (found for found in fields if found.key == "destination"), None
+        )
+        if destination is not None:
+            self._level_file_followed(destination.value(held[0]))
+
+    def _canvas_right_clicked(
+        self, image: QPoint | None, modifiers: Qt.KeyboardModifier
+    ) -> None:
+        """The right button is the eyedropper: pick up the thing under the
+        pointer, and put the tool down where there is nothing to pick.
+
+        One rule everywhere: a pick that fills the hand replaces whatever
+        was in it, and a press that finds nothing -- the surround, bare
+        level with no record under it -- is picking up nothing, which is how
+        a tool goes down without finding a piece of level to do it over.
         """
         if self._mode is EditorMode.WORLD:
-            if self._world.right_clicked():
-                return
-        elif self._placing is not None or self._bg_placing is not None:
+            self._world.right_clicked(image)
+        elif self._mode is EditorMode.MAP16:
+            self._map16.right_clicked(image)
+        elif self._painting:
+            self._bg_right_clicked(image)
+        else:
+            self._record_right_clicked(image)
+
+    def _record_right_clicked(self, image: QPoint | None) -> None:
+        """The records half of the right button: the record eyedropper, or
+        the way back to selecting where it has nothing to pick."""
+        if self._doc is not None and image is not None and self._pick_up_record(image):
+            return
+        self._stop_all_placing()
+
+    def _bg_right_clicked(self, image: QPoint | None) -> None:
+        """The painting half: every block holds a tile, so only a press off
+        the picture -- or a level with no pattern -- finds nothing."""
+        if (
+            image is None
+            or self._doc is None
+            or not self._doc.layer2
+            or self._snapshot is None
+        ):
             self._stop_all_placing()
             return
-        self._show_context_menu(image, at)
+        self._bg_pick_up(image)
 
-    # -- the context menu -----------------------------------------------------
-    #
-    # A second handle on gestures the editor already has, found under the
-    # pointer: the Edit menu's own actions for the clipboard, the eyedropper,
-    # the properties panel's buttons, the middle click's test-run setup, and
-    # the ways from a record to the level it names. Nothing here is a new
-    # edit -- see shiny_mushroom.ui.context_menu for the shape, and
-    # docs/editor/context-menu.md for the rows each mode offers and why.
-
-    @property
-    def context_menu(self) -> QMenu | None:
-        """The context menu last popped up. The window's own state, for
-        tests: a menu is shown without blocking, so its rows can be read."""
-        return self._context_menu
-
-    def _show_context_menu(self, image: QPoint | None, at: QPoint) -> None:
-        """Pop up the menu for image pixel ``image`` -- ``None`` off the
-        picture -- anchored at widget position ``at``.
-
-        What is under the pointer is selected first, unless it is held
-        already, so the rows are about the thing the menu was opened over
-        and the panel describes it. ``popup`` rather than ``exec``: the menu
-        must not run a nested event loop the suite cannot get out of, and
-        nothing here needs its answer.
-        """
-        if self._context_menu is not None:
-            self._context_menu.deleteLater()
-            self._context_menu = None
-        rows = self._context_rows(image)
-        menu = build(self, rows)
-        if menu is None:
-            return
-        self._context_menu = menu
-        menu.popup(self.canvas.mapToGlobal(at))
-
-    def _context_rows(self, image: QPoint | None) -> list[Row | QAction | None]:
-        """The rows for a right click at ``image``, by what the canvas is
-        editing -- one list per editing environment, with the clipboard
-        group shared."""
-        if self._mode is EditorMode.WORLD:
-            return self._world_context_rows(image)
-        if self._doc is None:
-            return []
-        if self._painting:
-            return self._layer2_context_rows(image)
-        return self._record_context_rows(image)
-
-    def _clipboard_rows(
-        self, image: QPoint | None, *, records: bool
-    ) -> list[Row | QAction | None]:
-        """Cut, Copy, Paste, Delete -- and Duplicate and the reorder rows
-        where the selection is records -- as the Edit menu's own actions,
-        which keep their keys and their greying. Paste alone is the menu's
-        own row, because the pointer left the picture for the menu and the
-        paste has to land where the click was rather than where the pointer
-        went."""
-        rows = self.menu_actions
-        paste = Row(
-            "Paste",
-            lambda: self._paste_at(image),
-            enabled=rows.paste.isEnabled(),
-            shortcut=rows.paste.shortcut().toString(),
-        )
-        group: list[Row | QAction | None] = [rows.cut, rows.copy, paste]
-        if records:
-            group.append(rows.duplicate)
-        group.append(rows.delete)
-        group.append(SEPARATOR)
-        if records:
-            group += [rows.forward, rows.back, SEPARATOR]
-        return group
-
-    def _paste_at(self, image: QPoint | None) -> None:
-        """Paste, landing at ``image`` where there is one -- the place the
-        menu was opened over, re-noted as the pointer because the paste
-        reads the pointer and the pointer is on the menu."""
-        if image is not None:
-            if self._mode is EditorMode.WORLD:
-                self._world.note_pointer(image)
-            else:
-                self._note_pointer(image)
-        self.paste()
-
-    def _record_context_rows(self, image: QPoint | None) -> list[Row | QAction | None]:
-        """The records mode's rows: the clipboard and the order, the
-        eyedropper, the level a screen exit names, the test start and the
-        header."""
-        assert self._doc is not None
-        stack = [] if image is None else self._stack_at(image)
-        if stack and not any(record.uid in self._selection for record in stack):
-            # As a plain click selects: the topmost thing there. A selection
-            # already under the pointer is kept whole, so a group is not
-            # collapsed to the one record the menu was opened over.
-            self._select({stack[0].uid})
-        rows = self._clipboard_rows(image, records=True)
-        rows.append(
-            Row(
-                "Pick",
-                lambda: None if image is None else self._pick_up_record(image),
-                enabled=bool(stack),
-                shortcut="Alt+click",
-            )
-        )
-        rows.append(SEPARATOR)
-        # A screen exit names a level: the row opens it, through the gate
-        # every other way of asking for a level goes through.
-        held = self._doc.records(self._selection)
-        if len(held) == 1 and isinstance(held[0], LevelObject):
-            fields = held[0].fields(self._doc.fg_bg_tileset, self._doc.shape)
-            destination = next(
-                (found for found in fields if found.key == "destination"), None
-            )
-            if destination is not None:
-                level = destination.value(held[0])
-                rows.append(
-                    Row(
-                        f"Open level {hexnum(level, 3)}",
-                        lambda: self._level_file_followed(level),
-                    )
-                )
-        rows.append(SEPARATOR)
-        rows += self._level_rows(image)
-        return rows
-
-    def _layer2_context_rows(self, image: QPoint | None) -> list[Row | QAction | None]:
-        """The painting mode's rows: the clipboard over blocks, the
-        eyedropper, the test start and the header."""
-        if image is not None:
-            block = (image.x() // BLOCK, image.y() // BLOCK)
-            if block not in self._bg_selection:
-                self._bg_clicked(image, Qt.KeyboardModifier.NoModifier)
-        rows = self._clipboard_rows(image, records=False)
-        rows.append(
-            Row(
-                "Pick",
-                lambda: None if image is None else self._bg_pick_up(image),
-                enabled=image is not None,
-                shortcut="Alt+click",
-            )
-        )
-        rows.append(SEPARATOR)
-        rows += self._level_rows(image)
-        return rows
-
-    def _level_rows(self, image: QPoint | None) -> list[Row | QAction | None]:
-        """What a level offers wherever it is right-clicked: the test start
-        under the pointer, the header, and the load path."""
-        rows: list[Row | QAction | None] = []
-        if image is not None and self._snapshot is not None and self._level is not None:
-            # The middle click's own arithmetic, so the caption says what the
-            # click would do: clear the mark it is on, or set one.
-            block_x = (image.x() // BLOCK) * BLOCK
-            floor_y = (image.y() // BLOCK) * BLOCK + BLOCK
-            here = PlayerPosition.standing_on(block_x, floor_y)
-            rows.append(
-                Row(
-                    "Test runs start at the level's own entrance"
-                    if self._player_at() == here
-                    else "Start test runs here",
-                    lambda: self._set_test_start(image),
-                    shortcut="Middle-click",
-                )
-            )
-        rows += [
-            SEPARATOR,
-            self.menu_actions.header,
-            self.menu_actions.graphics_row,
-            self.menu_actions.load_path,
-        ]
-        return rows
-
-    def _world_context_rows(self, image: QPoint | None) -> list[Row | QAction | None]:
-        """The world map's rows: the clipboard, the mode's own rows, and the
-        level a selected tile loads."""
-        if not self._world.ready:
-            return []
-        if image is not None:
-            self._world.select_under(image)
-        rows = self._clipboard_rows(image, records=False)
-        rows += self._world.context_rows(image)
-        rows.append(SEPARATOR)
-        level, _cell, _reading, _world_mode = self._load_path_subject()
-        if level is not None:
-            rows.append(
-                Row(
-                    f"Open level {hexnum(level, 3)}",
-                    lambda: self._load_path_level_edit(OPEN_LEVEL, 1),
-                )
-            )
-            rows.append(self.menu_actions.load_path)
-        return rows
-
-    def _pick_up_record(self, pos: QPoint) -> None:
+    def _pick_up_record(self, pos: QPoint) -> bool:
         """The eyedropper over records: arm the create panel with the thing
-        under ``pos``, so the next click places another one.
+        under ``pos``, so the next click places another one -- reporting
+        whether anything was armed.
 
         The held record when it is under the pointer -- the one reached by
         clicking down through a stack -- and the topmost otherwise, which is
@@ -5285,10 +5544,15 @@ class MainWindow(
         the record's key, so what is armed is exactly what the panel offers,
         and a record the catalogue does not offer -- an unnamed object
         number, a screen jump -- says so rather than arming a guess.
+
+        **The record rides along as the entry's template**, so what the next
+        click places is the thing picked up as it is -- its size, its
+        variant, a sprite's extra bits, an exit's destination -- and not the
+        catalogue's fresh one of its kind.
         """
         stack = self._stack_at(pos)
         if not stack:
-            return
+            return False
         record = next(
             (found for found in stack if found.uid in self._selection), stack[0]
         )
@@ -5301,11 +5565,12 @@ class MainWindow(
             self.statusBar().showMessage(
                 "The Create panel does not offer this one", EDIT_REFUSED_MS
             )
-            return
+            return False
         self.create.show_tab(entry.stream)
         # Through the panel's own arming, so the highlight, the hint line and
         # the ghost all follow as they do for a row picked by hand.
-        self.create.arm(entry)
+        self.create.arm(replace(entry, template=record))
+        return True
 
     # -- the canvas's gestures, forwarded by mode -----------------------------
     #
@@ -5314,32 +5579,125 @@ class MainWindow(
     # gesture goes whole to the level's handler or to `self._world`.
 
     def _canvas_drag_begun(self, pos: QPoint, modifiers: Qt.KeyboardModifier) -> None:
-        if self._mode is EditorMode.WORLD:
+        if self._area_pick is not None and self._mode is EditorMode.LEVEL:
+            self._area_box = (pos, pos)
+            self._draw_overlays()
+        elif self._mode is EditorMode.WORLD:
             self._world.drag_begun(pos, modifiers)
+        elif self._mode is EditorMode.MAP16:
+            self._map16.drag_begun(pos, modifiers)
         elif self._painting:
             self._bg_drag_begun(pos, modifiers)
         else:
             self._drag_begun(pos, modifiers)
 
     def _canvas_drag_moved(self, pos: QPoint) -> None:
-        if self._mode is EditorMode.WORLD:
+        if self._area_pick is not None and self._mode is EditorMode.LEVEL:
+            if self._area_box is not None:
+                self._area_box = (self._area_box[0], pos)
+                self._draw_overlays()
+        elif self._mode is EditorMode.WORLD:
             self._world.drag_moved(pos)
+        elif self._mode is EditorMode.MAP16:
+            self._map16.drag_moved(pos)
         elif self._painting:
             self._bg_drag_moved(pos)
         else:
             self._drag_moved(pos)
 
     def _canvas_drag_ended(self, pos: QPoint) -> None:
-        if self._mode is EditorMode.WORLD:
+        if self._area_pick is not None and self._mode is EditorMode.LEVEL:
+            if self._area_box is not None:
+                self._area_pick_ended(self._area_box[0], pos)
+        elif self._mode is EditorMode.WORLD:
             self._world.drag_ended(pos)
+        elif self._mode is EditorMode.MAP16:
+            self._map16.drag_ended(pos)
         elif self._painting:
             self._bg_drag_ended(pos)
         else:
             self._drag_ended(pos)
 
+    # A right drag grabs a region to stamp with, on the tile grids: the
+    # world map's cells, tiles and sheets, and the level's Layer 2 pattern.
+    # The records mode keeps no grid of values, so it ignores the gesture.
+
+    def _canvas_right_drag_begun(
+        self, pos: QPoint, modifiers: Qt.KeyboardModifier
+    ) -> None:
+        del modifiers
+        if self._mode is EditorMode.WORLD:
+            self._world.right_drag_begun(pos)
+        elif self._mode is EditorMode.MAP16:
+            self._map16.right_drag_begun(pos)
+        elif self._painting:
+            self._bg_right_drag_begun(pos)
+
+    def _canvas_right_drag_moved(self, pos: QPoint) -> None:
+        if self._mode is EditorMode.WORLD:
+            self._world.right_drag_moved(pos)
+        elif self._mode is EditorMode.MAP16:
+            self._map16.right_drag_moved(pos)
+        elif self._painting:
+            self._bg_right_drag_moved(pos)
+
+    def _canvas_right_drag_ended(self, pos: QPoint) -> None:
+        if self._mode is EditorMode.WORLD:
+            self._world.right_drag_ended(pos)
+        elif self._mode is EditorMode.MAP16:
+            self._map16.right_drag_ended(pos)
+        elif self._painting:
+            self._bg_right_drag_ended(pos)
+
+    def _bg_right_drag_begun(self, pos: QPoint) -> None:
+        if self._doc is None or not self._doc.layer2 or self._snapshot is None:
+            return
+        self._bg_grab = (pos, pos)
+        self._draw_overlays()
+
+    def _bg_right_drag_moved(self, pos: QPoint) -> None:
+        if self._bg_grab is None:
+            return
+        self._bg_grab = (self._bg_grab[0], self._bg_grab_clamped(pos))
+        self._draw_overlays()
+
+    def _bg_right_drag_ended(self, pos: QPoint) -> None:
+        if self._bg_grab is None:
+            return
+        start, _ = self._bg_grab
+        box = box_between(start, self._bg_grab_clamped(pos))
+        self._bg_grab = None
+        self._draw_overlays()
+        assert self._doc is not None and self._snapshot is not None
+        page = background_tiles(self._snapshot).start
+        layer2 = self._doc.layer2
+
+        def payload_at(column: int, row: int) -> object:
+            # The pattern repeats, so every spot the box covers holds one.
+            return BackgroundTile(page + layer2[background_index(column, row)])
+
+        grab_stamp(box, BLOCK, payload_at, self._bg_pick_up, self.level_palette.arm)
+
+    def _bg_grab_clamped(self, pos: QPoint) -> QPoint:
+        """``pos`` held within one pattern's reach of the grab's start, for
+        :meth:`_bg_marquee_clamped`'s reason: a region wider than the repeat
+        would hold entries it already holds."""
+        assert self._bg_grab is not None
+        start = self._bg_grab[0]
+        c0, r0 = start.x() // BLOCK, start.y() // BLOCK
+        left = (c0 - BACKGROUND_COLUMNS + 1) * BLOCK
+        top = (r0 - BACKGROUND_ROWS + 1) * BLOCK
+        return QPoint(
+            min(max(pos.x(), left), (c0 + BACKGROUND_COLUMNS) * BLOCK - 1),
+            min(max(pos.y(), top), (r0 + BACKGROUND_ROWS) * BLOCK - 1),
+        )
+
     def _canvas_cursor_moved(self, pos: QPoint) -> None:
         if self._mode is EditorMode.WORLD:
             self._world.cursor_moved(pos)
+            return
+        if self._mode is EditorMode.MAP16:
+            self._map16.cursor_moved(pos)
             return
         self._show_position(pos)
         if self._painting:
@@ -5357,6 +5715,9 @@ class MainWindow(
     def _canvas_cursor_left(self) -> None:
         if self._mode is EditorMode.WORLD:
             self._world.cursor_left()
+            return
+        if self._mode is EditorMode.MAP16:
+            self._map16.cursor_left()
             return
         self._clear_position()
         self._drop_grip()
@@ -5386,11 +5747,6 @@ class MainWindow(
         # an already-checked action emits nothing, so this cannot loop.
         if self._mode is EditorMode.WORLD:
             self.menu_actions.world_events.setChecked(self._world.events_view)
-        # The sheet can go up or down inside the mode -- a tab switch, a new
-        # map -- so the dock's button and the map's chrome follow it here,
-        # the way the event box follows the events view.
-        self.tile_palette.set_sheet_editing(self._world.sheet_view)
-        self._sync_world_bar_reach()
         self.world_bar.set_event(self._world_event_pick())
         # Auto-select framing moves the map inside the mode; the bar's map
         # and palette boxes follow rather than lead, as the event box does.
@@ -5450,30 +5806,6 @@ class MainWindow(
         for editing in self.menu_actions.world_editing.actions():
             editing.setChecked(editing.data() == row)
 
-    def _world_sheet_asked(self, on: bool) -> None:
-        """The stamp tab's button: put that sheet on the canvas, or give the
-        canvas back to the map. Which sheet is the open tab's."""
-        if self._mode is not EditorMode.WORLD:
-            return
-        self._world.set_sheet_view(
-            on, small=self.tile_palette.tab is PaletteTab.STAMPS_2X2
-        )
-        self._sync_world_bar_reach()
-
-    def _sync_world_bar_reach(self) -> None:
-        """Grey what describes a map while a sheet holds the canvas.
-
-        The map is untouched behind the sheet -- every box and toggle comes
-        back saying exactly what it said -- but a pick would move a picture
-        nobody can see. The Editing rows stay live: picking another layer is
-        how the sheet is left, and the Palette box too, since the sheet is
-        drawn under the framed map's colours like every other offer.
-        """
-        on_map = self._mode is EditorMode.WORLD and not self._world.sheet_view
-        self.world_bar.set_map_reach(on_map)
-        for row in self.menu_actions.world_views:
-            row.setEnabled(on_map)
-
     def _world_event_picked(self, pick: int) -> None:
         """The world bar's event pick: isolate one event on the events view
         -- that event alone replayed and focused -- or show every event, or
@@ -5500,6 +5832,75 @@ class MainWindow(
             self._enter_world()
         else:
             self._leave_world()
+        self.sync_mode_rows()
+
+    # -- the three environments, as one ring --------------------------------
+
+    def toggle_level(self, _checked: bool = False) -> None:
+        """The Go menu's Level row, or the mode bar's button: come back to
+        the level from whichever environment has the canvas. Unchecking it
+        means nothing -- the level is left by entering somewhere else -- so
+        the row is put back either way."""
+        self.enter_mode(EditorMode.LEVEL)
+
+    def enter_mode(self, mode: EditorMode) -> None:
+        """Put ``mode``'s picture on the canvas, from wherever the canvas is.
+
+        The one door the mode bar and Ctrl+Tab go through. Each entry
+        routes through the level itself when it has to, and each may refuse
+        -- a load in flight, unsaved work kept -- so the rows are re-read
+        from the mode afterwards rather than trusted.
+        """
+        if mode is EditorMode.WORLD:
+            self._enter_world()
+        elif mode is EditorMode.MAP16:
+            self._enter_map16()
+        elif self._mode is EditorMode.WORLD:
+            self._leave_world()
+        elif self._mode is EditorMode.MAP16:
+            self._leave_map16()
+        self.sync_mode_rows()
+
+    def cycle_mode(self, step: int) -> None:
+        """Ctrl+Tab and Ctrl+Shift+Tab: the next or previous environment
+        that can be entered, round the ring Level, World Map, Map16."""
+        rows = self.menu_actions
+        ring = (
+            (EditorMode.LEVEL, rows.level_mode),
+            (EditorMode.WORLD, rows.world_map),
+            (EditorMode.MAP16, rows.map16_mode),
+        )
+        here = next(at for at, (mode, _row) in enumerate(ring) if mode is self._mode)
+        for offset in range(1, len(ring)):
+            mode, row = ring[(here + step * offset) % len(ring)]
+            # The level is always there to come back to, whatever its row
+            # -- which is armed only while there is somewhere else -- says.
+            if mode is EditorMode.LEVEL or row.isEnabled():
+                self.enter_mode(mode)
+                return
+
+    def sync_mode_rows(self) -> None:
+        """Keep the three environment rows -- and the mode bar's buttons,
+        which are the same actions -- saying which picture holds the canvas,
+        and arm the level's row and the cycling pair only while there is
+        somewhere else to go.
+
+        Called on the way in and out of each environment and after every
+        toggle, refused or not: a row the menu or the bar checked ahead of
+        an entry that was then refused would otherwise stay checked over the
+        wrong picture.
+        """
+        rows = self.menu_actions
+        for row, mode in (
+            (rows.level_mode, EditorMode.LEVEL),
+            (rows.world_map, EditorMode.WORLD),
+            (rows.map16_mode, EditorMode.MAP16),
+        ):
+            row.setChecked(self._mode is mode)
+        elsewhere = rows.world_map.isEnabled() or rows.map16_mode.isEnabled()
+        rows.level_mode.setEnabled(elsewhere)
+        rows.next_mode.setEnabled(elsewhere)
+        rows.previous_mode.setEnabled(elsewhere)
 
     def set_world_events(self, on: bool) -> None:
         """The View toggle: the world map with every event replayed."""
@@ -5535,6 +5936,13 @@ class MainWindow(
         """Put the world map on the canvas, fetching it first if need be."""
         if self._mode is EditorMode.WORLD:
             return
+        if self._mode is EditorMode.MAP16:
+            # Through the level: no pair of the non-level modes knows how to
+            # unwind the other's chrome.
+            self._leave_map16()
+            if self._mode is EditorMode.MAP16:
+                self.menu_actions.world_map.setChecked(False)
+                return
         # Not during a load -- a replacing one holds the lock, and even a
         # refresh is about to paint the *level's* picture onto the canvas
         # this mode is taking over.
@@ -5546,21 +5954,7 @@ class MainWindow(
         ):
             self.menu_actions.world_map.setChecked(False)
             return
-        # And not over an edited level without saying so: the title's mark is
-        # the canvas's, so the level's work has to be settled before the map
-        # takes the canvas from it.
-        if not self._may_leave_level_for_map():
-            self.menu_actions.world_map.setChecked(False)
-            return
-        # A gesture cannot cross the mode boundary: what is armed belongs to
-        # the level, and the marquee's arithmetic to its picture.
-        self._stop_all_placing()
-        self._drop_grip()
-        # So Alt+Left after coming back returns to this view rather than to
-        # the level's own opening position.
-        if self._snapshot is not None:
-            self._note_where_we_are_looking()
-        self._level_look = self.view.looking_at
+        self._leaving_the_level()
         self._mode = EditorMode.WORLD
         self._show_world_chrome(True)
         # The panel shows the colours of whatever is on the canvas, so the mode
@@ -5579,24 +5973,11 @@ class MainWindow(
         # it changes on the way in whether or not a map is here to show yet.
         self._update_title()
 
-    def _leave_world(self, ask: bool = True) -> None:
-        """Give the canvas back to the level, exactly as it was left.
-
-        ``ask`` is the map's half of the unsaved-work question, and is off for
-        the two unwinds that come through here -- a capture that could not be
-        made a document, and one that never arrived. Neither is a way *out* of
-        the mode the user chose: the map on the canvas failed to be one, and
-        there is nothing to offer to save.
-        """
+    def _leave_world(self) -> None:
+        """Give the canvas back to the level, exactly as it was left."""
         if self._mode is EditorMode.LEVEL:
             return
-        if ask and not self._may_leave_map_for_level():
-            self.menu_actions.world_map.setChecked(True)
-            return
         self._world.stop_placing()
-        # A sheet on the canvas goes down with the mode: the canvas is about
-        # to be the level's, and coming back should show the map.
-        self._world.set_sheet_view(False)
         # The events view goes down *before* the mode flips: the uncheck
         # routes through :meth:`set_world_events`, whose world-mode guard
         # would drop it a line later -- leaving the mode showing the events
@@ -5605,22 +5986,56 @@ class MainWindow(
         self._mode = EditorMode.LEVEL
         self.menu_actions.world_map.setChecked(False)
         self._show_world_chrome(False)
+        self._give_the_canvas_back_to_the_level()
+
+    def _leaving_the_level(self) -> None:
+        """What every mode that takes the canvas from the level does first.
+
+        A gesture cannot cross the mode boundary: what is armed belongs to
+        the level, and the marquee's arithmetic to its picture. Where the
+        view was looking is noted on the way out, so Alt+Left and the way
+        back return to it rather than to the level's opening position.
+
+        Called while the mode is still the level's, since that is whose
+        state is being put down.
+        """
+        self._stop_all_placing()
+        self._drop_grip()
+        if self._snapshot is not None:
+            self._note_where_we_are_looking()
+        self._level_look = self.view.looking_at
+
+    def _give_the_canvas_back_to_the_level(self) -> None:
+        """What every mode that had the canvas does on the way out.
+
+        **The one place the level's chrome comes back**, so a mode cannot
+        put back six of the seven things it moved -- which is how the Map16
+        environment came to leave the Palette panel saying the level's
+        colours were shared when they were its own. Called with the mode
+        already flipped back and the leaving mode's own chrome already down.
+        """
+        if self._offers_stale:
+            # A colour or graphics edit landed while the other mode had the
+            # canvas, so the libraries beside it are drawn from a capture that
+            # has moved -- see `_capture_changed`.
+            self._redraw_offers()
         if self._snapshot is not None and self._shape is not None:
             if self._level_stale:
-                # A layer toggle moved while the map held the canvas, so the
-                # buffered pixels are of layers no longer asked for.
+                # A layer toggle moved while the other mode held the canvas,
+                # so the buffered pixels are of layers no longer asked for.
                 self._draw_level()
             else:
                 self._show_picture()
             self._show_screen_grid(self._shape)
             self._show_screen_exits()
             self._draw_overlays()
-            # The panel is the world map's, and the held set never moved while
-            # the map was up -- so it is re-described rather than re-selected:
-            # `_select` repaints only on a change, and a stale world panel over
-            # the level routes its edits through the level's record machinery.
+            # The panel was the other mode's, and the held set never moved
+            # while it was up -- so it is re-described rather than
+            # re-selected: `_select` repaints only on a change, and a stale
+            # panel over the level routes its edits through the level's
+            # record machinery.
             self._describe_selection()
-            # Both sprite toggles may have gone off over the map, leaving a
+            # Both sprite toggles may have gone off meanwhile, leaving a
             # selected sprite that is no longer in the picture.
             self._drop_a_hidden_sprite()
             if self._level_look is not None:
@@ -5630,8 +6045,8 @@ class MainWindow(
             self.canvas.set_screen_size(QSize())
             self.canvas.set_screen_notes({})
             self.properties.show_nothing(NO_LEVEL)
-        # The panel was the map's, colours and name both; the canvas is the
-        # level's again, so it is too.
+        # The panel was the other mode's, colours and name both; the canvas
+        # is the level's again, so it is too.
         self._show_palette()
         self._refresh_load_path()
         self.sync_edit_actions()
@@ -5643,9 +6058,9 @@ class MainWindow(
 
         The toolbars swap as one registry -- each is declared level-owned,
         world-owned or shared where it is built, and :attr:`toolbars` puts up
-        the mode's set. The docks, which genuinely take turns in one spot, are
-        :meth:`_apply_editing_chrome`'s: the map is one of the three editing
-        environments, with its own arrangement of them.
+        the mode's set. The offer dock's page is :meth:`_apply_editing_chrome`'s:
+        the map is one of the three editing environments, and places from
+        the page that is its own.
         """
         # Each environment's menu rows go with it, rather than sitting in the
         # menus greyed: see :attr:`menus.Actions.world_rows`, which is where
@@ -5664,11 +6079,7 @@ class MainWindow(
         # `_show_overworld` fills it.
         self.world_bar.setEnabled(on and self._world.ready)
         self._apply_editing_chrome()
-        # And the Window rows for the two panels that just swapped: the one
-        # this environment does not place from is not the user's to put up,
-        # because the next mode switch would take it away again.
-        self.menu_actions.create_panel.setEnabled(not on)
-        self.menu_actions.tile_panel.setEnabled(on)
+        self.sync_mode_rows()
         # The events view means nothing off the world map. :meth:`_leave_world`
         # already unchecked the action while the mode could still act on it;
         # this uncheck is the backstop for any other path into level chrome.
@@ -5699,6 +6110,10 @@ class MainWindow(
         # Entering mirrors the palette's tab, which survives a trip out of the
         # mode along with everything else it holds.
         self.menu_actions.world_editing.setEnabled(on)
+        # And the flip rows, H and V over the map's Layer 2 tiles: armed
+        # only while the map is what the letters can mean.
+        for row in self.menu_actions.world_flips:
+            row.setEnabled(on)
         self._sync_level_editing_offer()
         if on:
             self._world_layer_changed(self.tile_palette.tab)
@@ -5730,6 +6145,291 @@ class MainWindow(
         # Save and Revert answer per mode -- both their labels and whether
         # they can be reached at all. See :meth:`sync_save_rows`.
         self.sync_save_rows()
+
+    # -- the Map16 environment -------------------------------------------------
+
+    def toggle_map16(self, checked: bool) -> None:
+        """The Go menu's checkable row: enter the mode, or come back."""
+        if checked:
+            self._enter_map16()
+        else:
+            self._leave_map16()
+        self.sync_mode_rows()
+
+    def _enter_map16(self) -> None:
+        """Put the Map16 sheet on the canvas, loading the tables if need be."""
+        if self._mode is EditorMode.MAP16:
+            return
+        if self._mode is EditorMode.WORLD:
+            # Through the level: no pair of the non-level modes knows how to
+            # unwind the other's chrome.
+            self._leave_world()
+            if self._mode is EditorMode.WORLD:
+                self.menu_actions.map16_mode.setChecked(False)
+                return
+        if (
+            self._path is None
+            or self._project is None
+            or self._snapshot is None
+            or self._replacing
+            or self._loading
+        ):
+            self.menu_actions.map16_mode.setChecked(False)
+            return
+        tables = self._map16.tables
+        if tables is None:
+            try:
+                tables = self._project.map16_tables()
+            except (Map16Error, ProjectError, OSError) as error:
+                self._alert("The Map16 tables could not be read.", detail=str(error))
+                self.menu_actions.map16_mode.setChecked(False)
+                return
+        self._leaving_the_level()
+        self._mode = EditorMode.MAP16
+        self.menu_actions.map16_mode.setChecked(True)
+        self._show_map16_chrome(True)
+        if self._map16.tables is tables and self._map16.history is not None:
+            # The document outlives the mode, exactly as the world map's
+            # does: coming back finds it as it was left.
+            self._map16.activate()
+        else:
+            tileset = self._snapshot.fg_bg_tileset
+            if tileset >= TILESET_COUNT:
+                # $0F names no tables of its own; opening another tileset's
+                # in its place would edit files this level never reads, so
+                # the sheet opens on the shared view and says so.
+                self.statusBar().showMessage(
+                    f"Tileset {hexnum(tileset)} has no Map16 tables of its "
+                    "own: showing tileset $00's.",
+                    8000,
+                )
+                tileset = 0
+            self._map16.show(tables, self._map16_snapshot, tileset)
+        self._map16_changed()
+        # The dock's row-colour strip follows the mode: the panel refeeds it
+        # now that the sheet holds the canvas.
+        self._show_palette()
+        self._update_title()
+
+    def _leave_map16(self) -> None:
+        """Give the canvas back to the level, exactly as it was left."""
+        if self._mode is not EditorMode.MAP16:
+            return
+        self._map16.stop_placing()
+        self._mode = EditorMode.LEVEL
+        self.menu_actions.map16_mode.setChecked(False)
+        self._show_map16_chrome(False)
+        owed, self._map16_reload_owed = self._map16_reload_owed, False
+        self._give_the_canvas_back_to_the_level()
+        if owed:
+            # The save's reload waited at the door: the canvas was the
+            # sheet's, and now the level's picture is the one to redraw.
+            self._refresh_picture()
+
+    def _show_map16_chrome(self, on: bool) -> None:
+        """Swap the level-only chrome for the Map16 environment's, or back --
+        :meth:`_show_world_chrome`'s twin, entered only from level chrome."""
+        for row in self.menu_actions.level_rows:
+            row.setVisible(not on)
+        for row in self.menu_actions.map16_rows:
+            row.setVisible(on)
+        self.toolbars.enter(EditorMode.MAP16 if on else EditorMode.LEVEL)
+        self.map16_bar.setEnabled(on and self._map16.ready)
+        self._apply_editing_chrome()
+        self.sync_mode_rows()
+        # The Editing rows carry the bare digits, and the flip rows H and
+        # V: armed only while the sheet is what the keys can mean.
+        self.menu_actions.map16_editing.setEnabled(on)
+        for row in self.menu_actions.map16_flips:
+            row.setEnabled(on)
+        for row in self.menu_actions.level_views:
+            row.setEnabled(not on)
+        self._sync_level_editing_offer()
+        self.sync_level_rows()
+        self._sync_screen_selecting()
+        self.sync_save_rows()
+
+    def _map16_changed(self) -> None:
+        """The Map16 mode moved: keep the bar, the rows and the title in
+        step -- :meth:`_world_changed`'s twin."""
+        if self._mode is not EditorMode.MAP16:
+            return
+        self.map16_bar.set_sheet(self._map16.sheet_index)
+        self.map16_bar.set_edit_rows(self._map16.edit_rows)
+        self.map16_bar.set_editing(GRAINS.index(self._map16.grain))
+        self.map16_bar.offer_stamp_sheets(self._world.ready)
+        self.map16_bar.setEnabled(self._map16.ready)
+        for row in self.menu_actions.map16_editing.actions():
+            row.setChecked(row.data() == GRAINS.index(self._map16.grain))
+        if self._map16.tables_edited:
+            # The tables the emulator is handed carry the held document, so
+            # the level's picture is owed a redraw for an edit and not only
+            # for a save -- spent on the way out, whose canvas it is.
+            self._map16_reload_owed = True
+        self.sync_edit_actions()
+        self.sync_save_rows()
+        # The trail is the level's -- the sheet is not a place on it -- so
+        # Back and Forward grey out here as they do over the map. They stay
+        # visible in every mode, so nothing else would take them down.
+        self.sync_go_menu()
+        self._update_title()
+
+    def _edit_stamp_sheet(self, small: bool) -> None:
+        """The Tiles panel's Edit Sheet button: put that stamp sheet on the
+        canvas in the Tilemap editor.
+
+        The environment is entered exactly as its Go row enters it -- through
+        the level, since no pair of the non-level modes unwinds the other's
+        chrome -- and the sheet is then picked as the Sheet box picks one. A
+        refused entry leaves the map where it was.
+        """
+        self.toggle_map16(True)
+        if self._mode is not EditorMode.MAP16:
+            return
+        self._map16_sheet_picked(SHEET_2X2 if small else SHEET_6X6)
+
+    def _map16_sheet_picked(self, index: int) -> None:
+        """The Map16 bar's Sheet box: show that sheet. A stamp sheet needs
+        the world map captured; refused, the box snaps back to the sheet on
+        the canvas, and the status line says why."""
+        if not self._map16.set_sheet(index):
+            self.map16_bar.set_sheet(self._map16.sheet_index)
+            return
+        # The palette panel and the dock's colour strip follow the sheet:
+        # the level's colours over the tables, the framed submap's over a
+        # stamp sheet.
+        self._show_palette()
+        self._update_title()
+
+    def flip_map16(
+        self, x: bool = False, y: bool = False, mirror: bool = False
+    ) -> None:
+        """The Map16 environment's flip rows: the hand, or the selection."""
+        if self._mode is EditorMode.MAP16:
+            self._map16.flip(x=x, y=y, mirror=mirror)
+
+    def flip_world(
+        self, x: bool = False, y: bool = False, mirror: bool = False
+    ) -> None:
+        """The world map's flip rows: the Layer 2 hand, or the selected
+        Layer 2 tiles."""
+        if self._mode is EditorMode.WORLD:
+            self._world.flip(x=x, y=y, mirror=mirror)
+
+    def set_map16_editing(self, index: int) -> None:
+        """The Map16 bar's Editing box, the Edit menu's row, or its digit
+        key: edit at that grain."""
+        if self._mode is EditorMode.MAP16:
+            self._map16.set_grain(index)
+
+    def _map16_snapshot(self, tileset: int) -> LevelSnapshot | None:
+        """The captured level wearing ``tileset``'s own FG/BG slot files.
+
+        The mode shows any tileset's tables, and the honest picture draws
+        them with that tileset's graphics: the four layer slots are swapped
+        over the captured VRAM exactly as :meth:`_regraphicsed` swaps a
+        graphics row's. The colours stay the open level's -- a palette is a
+        level's, not a tileset's -- and so does the animated half of FG1,
+        which no slot file supplies. Anything this cannot answer falls back
+        to the capture unchanged.
+        """
+        snapshot = self._snapshot
+        if snapshot is None:
+            return None
+        if (
+            tileset == snapshot.fg_bg_tileset
+            or self._rom is None
+            or not self._addressable
+            or self._captured_graphics is None
+            or self._captured_vram is None
+        ):
+            return snapshot
+        try:
+            _sprite_row, fgbg_row = level_graphics.tileset_rows(
+                self._rom, self._addresses, snapshot.sprite_tileset, tileset
+            )
+        except (level_graphics.LevelGraphicsError, ValueError):
+            return snapshot
+        swaps = []
+        for slot in range(4):
+            was = self._captured_graphics[slot]
+            now = fgbg_row[slot]
+            if was == now:
+                continue
+            held = self._graphics_file_vram(was, snapshot.fg_bg_tileset)
+            fresh = self._graphics_file_vram(now, tileset)
+            if held is None or fresh is None or held == fresh:
+                continue
+            swaps.append((slot, held, fresh))
+        if not swaps:
+            return snapshot
+        return replace(snapshot, vram=vram_with_graphics(self._captured_vram, swaps))
+
+    def _may_lose_map16(self, detail: str) -> bool:
+        """Offer to save the tables, like every other document's question."""
+        answer = self._ask_to_save("The Map16 tables have unsaved changes.", detail)
+        if answer is Choice.CANCEL:
+            return False
+        return True if answer is Choice.DISCARD else self.save_map16_tables()
+
+    def save_map16_tables(self) -> bool:
+        """Write the Map16 tables into the project, reporting success."""
+        if not self._have_somewhere_to_save():
+            return False
+        if not self._map16.ready or self._project is None:
+            return False
+        try:
+            self._project.save_map16(self._map16.write_tables())
+        except (Map16Error, ProjectError, OSError) as error:
+            self._alert("The Map16 tables could not be saved.", detail=str(error))
+            return False
+        self._map16.saved()
+        # The level's picture is drawn from the cartridge, so it is owed a
+        # reload -- on the way out of the mode, whose canvas this is.
+        self._map16_reload_owed = True
+        self.statusBar().showMessage("Saved the Map16 tables", 4000)
+        self._map16_changed()
+        return True
+
+    def revert_map16_tables(self) -> None:
+        """Take every saved Map16 file back out of the project, and reload."""
+        if self._project is None or not self._map16.ready:
+            return
+        if not self._confirm(
+            "Revert the Map16 tables?",
+            "Every saved edit is taken out of the project, every edit in "
+            "hand is lost, and so is the undo history. The tables reload "
+            "as the disassembly ships them.",
+        ):
+            return
+        try:
+            self._project.revert_map16()
+            tables = self._project.map16_tables()
+        except (Map16Error, ProjectError, OSError) as error:
+            self._alert("The Map16 tables could not be reverted.", detail=str(error))
+            return
+        self._map16.show(tables, self._map16_snapshot, self._map16.tileset)
+        self._map16_reload_owed = True
+        self.statusBar().showMessage("Map16 tables put back", 4000)
+        self._map16_changed()
+
+    def _walk_map16(self, back: bool) -> None:
+        """One step along the Map16 stack, said out loud."""
+        if back:
+            self._map16.undo()
+        else:
+            self._map16.redo()
+        self.statusBar().showMessage("Undo" if back else "Redo", 2000)
+
+    def _forget_map16(self) -> None:
+        """Drop the Map16 environment with the project it was editing."""
+        if self._mode is EditorMode.MAP16:
+            self._mode = EditorMode.LEVEL
+            self._show_map16_chrome(False)
+        self.menu_actions.map16_mode.setChecked(False)
+        self._map16_reload_owed = False
+        self._map16.forget()
+        self.map16_bar.setEnabled(False)
 
     def _request_overworld(self) -> None:
         """Ask the loader for the world map, under the replacing-load lock.
@@ -5856,7 +6556,7 @@ class MainWindow(
             # saved fragment from before a feature grew one. Refused with the
             # table named rather than opened at the wrong length, which is what
             # would edit some rows and write the rest off the end.
-            self._leave_world(ask=False)
+            self._leave_world()
             self._alert(
                 "The world map does not match what this cartridge was built as.",
                 detail=f"{error}. Rebuild and reopen its ROM to put the two "
@@ -5898,10 +6598,13 @@ class MainWindow(
             self._show_world_chrome(False)
         self.menu_actions.world_map.setChecked(False)
         self.menu_actions.world_map.setEnabled(False)
+        self.sync_mode_rows()
         self._awaiting_world = False
         self._world_stale = False
         self._level_look = None
         self._level_stale = False
+        self._offers_stale = False
+        self._map16.drop_world()
         self._world.forget()
         # After the forget, so re-checking cannot re-render a dropped map:
         # the mode's guards answer "not ready" and only the actions move.
@@ -5920,6 +6623,11 @@ class MainWindow(
             return self.save_palettes()
         if self._mode is EditorMode.WORLD:
             return self.save_world_map()
+        if self._mode is EditorMode.MAP16:
+            if self._map16.on_stamps:
+                # The sheet is the world map's document, and so is its save.
+                return self.save_world_map()
+            return self.save_map16_tables()
         return self.save_level()
 
     def revert_current(self) -> None:
@@ -5934,6 +6642,10 @@ class MainWindow(
             self.revert_palettes()
             return
         if self._mode is EditorMode.WORLD:
+            return
+        if self._mode is EditorMode.MAP16:
+            if not self._map16.on_stamps:
+                self.revert_map16_tables()
             return
         self.revert_level()
 
@@ -6260,8 +6972,8 @@ class MainWindow(
         writes the store itself on OK; what follows here is the one row a
         preference decides -- Test Level Externally, which is dead unless the
         emulator on file is a Mesen, since warping is the whole of what it
-        adds to File > Test ROM. That row carries a key, so it cannot wait for
-        its menu to be opened.
+        adds to File > Test ROM Externally. That row carries a key, so it
+        cannot wait for its menu to be opened.
         """
         SettingsDialog(self).exec()
         self.sync_project_menu()
@@ -6277,11 +6989,15 @@ class MainWindow(
         exportable = self._project is not None and self._project.buildable
         self.menu_actions.export.setEnabled(exportable)
         self.menu_actions.export_headered.setEnabled(exportable)
-        # Test ROM opens what the exports copy, so it asks their question and
-        # not a word more: which emulator is set is answered when the row is
-        # used, since a row greyed for an unset preference is a row that
-        # cannot say what preference it wants.
-        self.menu_actions.test_rom.setEnabled(exportable)
+        # The external run hands over what the exports copy, so it asks their
+        # question and not a word more: which emulator is set is answered when
+        # the row is used, since a row greyed for an unset preference is a row
+        # that cannot say what preference it wants.
+        self.menu_actions.test_rom_external.setEnabled(exportable)
+        # The internal one asks less, because it needs less: a cartridge to
+        # play, whether it came from a project or off the command line. A
+        # project's stale build is the row's own to run before it plays.
+        self.menu_actions.test_rom.setEnabled(self._path is not None)
         self.sync_save_rows()
 
     def sync_save_rows(self) -> None:
@@ -6302,6 +7018,30 @@ class MainWindow(
             self.menu_actions.save.setEnabled(self._palette_unsaved)
             self.menu_actions.revert.setEnabled(
                 self._project is not None and self._project.palette_edited
+            )
+            return
+        if self._mode is EditorMode.MAP16 and self._map16.on_stamps:
+            # A stamp sheet is the world map's document: Ctrl+S is its save,
+            # and the map has no revert.
+            self.menu_actions.save.setText("&Save World Map")
+            self.menu_actions.revert.setText("Re&vert World Map")
+            self.menu_actions.save.setEnabled(
+                self._project is not None and self._world.ready
+            )
+            self.menu_actions.revert.setEnabled(False)
+            return
+        if self._mode is EditorMode.MAP16:
+            self.menu_actions.save.setText("&Save Map16 Tables")
+            self.menu_actions.revert.setText("Re&vert Map16 Tables")
+            self.menu_actions.save.setEnabled(
+                self._project is not None and self._map16.ready
+            )
+            # Revert takes the saved files back out *and* drops the edits in
+            # hand -- the old dialog's rule: it stands while either exists.
+            self.menu_actions.revert.setEnabled(
+                self._project is not None
+                and self._map16.ready
+                and (self._project.map16_edited or self._map16.tables_edited)
             )
             return
         world = self._mode is EditorMode.WORLD
@@ -6360,10 +7100,6 @@ class MainWindow(
         self.menu_actions.audio.setEnabled(project is not None)
         # The strings are the project's overlay, so they need one too.
         self.menu_actions.strings.setEnabled(project is not None)
-        # The Map16 editor draws in a level's graphics, so it needs one open.
-        self.menu_actions.map16.setEnabled(
-            project is not None and self._snapshot is not None
-        )
         # The secondary entrances are the project's overlay, like the strings:
         # the tables are read out of its tree and saved back into it.
         self.menu_actions.secondary_entrances.setEnabled(project is not None)
@@ -6382,7 +7118,7 @@ class MainWindow(
         #
         # Plus the one question no other row asks: whether the emulator on file
         # can be told where to start. Only Mesen can, and warping is the whole
-        # of what this row adds to File > Test ROM.
+        # of what this row adds to File > Test ROM Externally.
         emulator = external_emulator()
         self.menu_actions.test_external.setEnabled(
             project is not None
@@ -6409,11 +7145,25 @@ class MainWindow(
         Greyed out, then, exactly when a build would say "already up to date",
         and a project that cannot build at all has nothing to arm.
         """
+        self.menu_actions.rebuild.setEnabled(self._build_is_stale())
+
+    def _build_is_stale(self) -> bool:
+        """Whether the open project's next build would have anything to do.
+
+        The reading :meth:`_sync_rebuild_action` arms Rebuild on, asked
+        directly by the one row that acts on it rather than on the level in
+        hand: File > Test ROM plays the *built* cartridge, so it owes that
+        build before it runs --
+        :meth:`~shiny_mushroom.ui.window.testing.Testing.test_rom`.
+        False without a project to build, which is a cartridge nothing here
+        could rebuild anyway.
+        """
         project = self._project
-        wanted = project is not None and project.buildable
-        if wanted and self._build_current and not project.build_needed:
-            wanted = _project_stamp(project) != self._built_stamp
-        self.menu_actions.rebuild.setEnabled(wanted)
+        if project is None or not project.buildable:
+            return False
+        if self._build_current and not project.build_needed:
+            return _project_stamp(project) != self._built_stamp
+        return True
 
     def fill_rom_size_menu(self) -> None:
         """Rebuild the ROM Size submenu from the open project's **base**.
@@ -6599,6 +7349,12 @@ class MainWindow(
             return
         dialog = SourceFilesDialog(project, self)
         dialog.exec()
+        # A feature switched on from a tab may have grown the cartridge, and
+        # a project is frozen: take the one the dialog is holding, as
+        # :meth:`edit_features` does.
+        if dialog.project is not project:
+            self._project = dialog.project
+            self.sync_project_menu()
         # A file edited through the dialog's own Open button was edited while
         # the *dialog* held the focus, so the window's activation check never
         # ran for it. Asking here is what keeps such an edit from being
@@ -6635,8 +7391,8 @@ class MainWindow(
         # holding a project the dialog has not seen: the same folder, and
         # the one whose settings the next save is priced by.
         self._graphics_files.adopt(self._project)
-        self._graphics_files.set_cgram(
-            self._snapshot.cgram if self._snapshot is not None else None
+        self._graphics_files.show_colours(
+            self._canvas_cgram(), self._held_palette_blob()
         )
         self._graphics_files.show()
         self._graphics_files.raise_()
@@ -6655,7 +7411,7 @@ class MainWindow(
         self._capture_slot_files()
 
     def _graphics_feature_needed(self, gesture: str, number: int) -> None:
-        """An add, a duplicate or a delete in the Graphics window needs the managed
+        """An add, a clone or a delete in the Graphics window needs the managed
         graphics banks: offer the feature the way the first level-file add
         does (:meth:`add_level_file`) -- asked first, then the Features
         dialog's own switch, rebuild and reopen -- and finish the gesture.
@@ -6673,8 +7429,8 @@ class MainWindow(
             return
         if gesture == graphics_dialog.ADD:
             dialog.add_file()
-        elif gesture == graphics_dialog.DUPLICATE:
-            dialog.duplicate_file(number)
+        elif gesture == graphics_dialog.CLONE:
+            dialog.clone_file(number)
         elif gesture == graphics_dialog.DELETE:
             dialog.delete_file(number)
 
@@ -6778,7 +7534,7 @@ class MainWindow(
         self._close_level_data()
         self._close_graphics_files()
         self._close_strings()
-        self._close_map16()
+        self._forget_map16()
         self._close_secondary_entrances()
         self._close_memory_map()
         self._close_audio()
@@ -6823,6 +7579,9 @@ class MainWindow(
         # every one of them in, so the reading clears with it.
         self._source_stamps = source_files.stamps(project)
         self._note_skipped(SOURCE_FILES, [])
+        self._note_skipped(RAW_FILES, [])
+        # The build carries what no patch could, so those readings clear too.
+        self._note_skipped(BUILD_ONLY, [])
         self.load_file(rom_path(project))
         # Whether that cartridge is the one the next build would make: the
         # merge it costs is a moment against the build that just ran, and it
@@ -6850,13 +7609,13 @@ class MainWindow(
         dot over every level opened afterwards -- with nothing on screen the
         dot could be pointing at.
 
-        Neither is left behind silently: the mode boundary asks, in both
-        directions -- :meth:`_may_leave_level_for_map` and
-        :meth:`_may_leave_map_for_level` -- so reaching the map with an
-        unsaved level, or a level with an unsaved map, takes aiming at
-        Discard. What keeps that work from being *lost* is still
-        :meth:`_may_discard`, asked at the doors that close the cartridge,
-        not the dot.
+        **The mode boundary asks nothing.** Each document outlives the mode
+        that shows it and comes back as it was left, so a switch has nothing
+        to save from and nothing to discard -- a question there could only
+        offer a Discard that discarded nothing. What keeps the work from
+        being *lost* is :meth:`_may_discard`, asked at the doors that close
+        the cartridge, and :meth:`_may_replace` at the ones that replace the
+        level.
 
         The level in hand counts as unsaved the moment the history says it
         has been edited, and every way of replacing it asks first --
@@ -6883,6 +7642,8 @@ class MainWindow(
         """Whether the document the mode is showing has outstanding edits."""
         if self._mode is EditorMode.WORLD:
             return self._world.edited
+        if self._mode is EditorMode.MAP16:
+            return self._map16.edited
         return self._level_unsaved
 
     @property
@@ -7199,37 +7960,6 @@ class MainWindow(
             return True
         return self.save_palettes()
 
-    def _may_leave_level_for_map(self) -> bool:
-        """Ask before the map takes the canvas from an edited level.
-
-        True to go on. **Discard here keeps the work**, unlike the question
-        :meth:`_may_discard` puts at the cartridge's doors: the document is
-        held while the map is up and :meth:`_leave_world` gives it back
-        untouched, so there is nothing for going ahead to throw away and
-        nothing for discarding to undo. What the question is for is that the
-        title's mark answers for the view it sits over -- see :attr:`unsaved`
-        -- so without it an edited level would go quietly dark behind the map.
-        """
-        if self._project is None or self._level is None or not self._level_unsaved:
-            return True
-        return self._may_lose_level(
-            "The map takes the canvas. Going on keeps them as they are; "
-            "only Save puts them in the project."
-        )
-
-    def _may_leave_map_for_level(self) -> bool:
-        """:meth:`_may_leave_level_for_map`'s twin, asked on the way back.
-
-        The same question for the same reason, and the map keeps its work the
-        same way: the document outlives the mode, and coming back finds it.
-        """
-        if self._project is None or not self._world.edited:
-            return True
-        return self._may_lose_world(
-            "The level takes the canvas. Going on keeps them as they are; "
-            "only Save puts them in the project."
-        )
-
     def _may_replace(self, level: int) -> bool:
         """Ask before a load puts ``level`` where the level in hand is.
 
@@ -7345,8 +8075,12 @@ class MainWindow(
             and not self._may_lose_strings("Discarding reverts to the last save.")
         ):
             return False
-        # And the Map16 tables, which their window asks about itself.
-        if self._map16 is not None and not self._map16.may_close():
+        # And the Map16 tables, saved separately like the rest.
+        if (
+            self._project is not None
+            and self._map16.tables_edited
+            and not self._may_lose_map16("Discarding reverts to the last save.")
+        ):
             return False
         # And the secondary entrances, which ask the same way.
         if self._secondary_entrances is not None and (
@@ -7372,9 +8106,10 @@ class MainWindow(
         can be switched off from the View menu, and a shortcut that focused
         something invisible would read as doing nothing at all.
         """
-        # Search is over levels, and the world map is not one: focusing a bar
-        # whose every result would load a level over the map means nothing.
-        if self._mode is EditorMode.WORLD:
+        # Search is over levels, and neither the world map nor the Map16
+        # sheet is one: focusing a bar whose every result would load a level
+        # over them means nothing.
+        if self._mode is not EditorMode.LEVEL:
             return
         self.find_bar.setVisible(True)
         self.find_bar.focus_query()
@@ -7603,9 +8338,14 @@ class MainWindow(
         if len(records) != 1:
             return None
         thing = records[0]
-        if isinstance(thing, Sprite):
-            return thing, thing.fields(self._doc.shape)
-        return thing, thing.fields(self._doc.fg_bg_tileset, self._doc.shape)
+        return thing, self._record_fields(thing)
+
+    def _record_fields(self, record: Record) -> list[Field]:
+        """The fields ``record`` offers, whichever kind it is."""
+        assert self._doc is not None
+        if isinstance(record, Sprite):
+            return record.fields(self._doc.shape)
+        return record.fields(self._doc.fg_bg_tileset, self._doc.shape)
 
     def _refresh_properties(self) -> None:
         """Put the held record's current values back into the panel's widgets.
@@ -7649,6 +8389,11 @@ class MainWindow(
         """
         if self._screen_selected is not None and not self._selection:
             self.commit_screen_field(self._screen_selected, key, value)
+            return
+        if key == OPEN_DESTINATION:
+            # An Action, not a write: the button asks to leave for the level
+            # the held exit names, and the document is not touched.
+            self._open_selected_destination()
             return
         found = self._selected_fields()
         if self._doc is None or found is None:
@@ -7999,13 +8744,14 @@ class MainWindow(
             )
 
     def edit_level_graphics(self) -> None:
-        """Edit the loaded level's own graphics row.
+        """Edit the loaded level's own graphics row, and the tiles of any
+        area of it -- the two pages of the Level Graphics dialog.
 
-        **An edit like any other**, the way the header is: the row is part of
-        the document, so an accept is one undo step, the same save, and the
-        picture a round trip later -- which the row needs, since which file a
-        slot loads is decided by the loader and not by anything the canvas
-        could recolour in place.
+        **The row is an edit like any other**, the way the header is: it is
+        part of the document, so an accept is one undo step, the same save,
+        and the picture a round trip later -- which the row needs, since
+        which file a slot loads is decided by the loader and not by anything
+        the canvas could recolour in place.
 
         Two things make it a dialog of its own rather than the header's
         second page. It is not the game's level record: a stock cartridge has
@@ -8022,7 +8768,20 @@ class MainWindow(
         cartridge, which drops the document, so the accept waits for the
         reload and commits onto what it brings -- see
         :attr:`_pending_graphics_edit`.
+
+        **The tiles page's Layer 1 area is picked on the canvas.** Its button
+        closes the dialog as an :class:`AreaPick` carrying the row as it
+        stood, this window sweeps a rectangle of blocks
+        (:meth:`_area_pick_ended`), and the dialog is opened again on that
+        page with the area and the row -- see :meth:`_open_level_graphics`.
+        Layer 2 is shown whole, and needs no pick (:meth:`_layer2_area`).
         """
+        self._open_level_graphics(None, None)
+
+    def _open_level_graphics(self, carried: bytes | None, area: Area | None) -> None:
+        """Open the dialog -- over ``carried`` rather than the document's row
+        where a pick brought one back, and on the tiles page over ``area``
+        where one was swept -- and commit whatever it hands back."""
         if self._doc is None or self._snapshot is None:
             return
         level = self._snapshot.level
@@ -8030,22 +8789,42 @@ class MainWindow(
         if not choices:
             self._status_message(NO_GRAPHICS_ROW, 8000)
             return
+        host = self._level_tiles_host()
+        # While the tiles page is up, keep what a swap needs, exactly as the
+        # Graphics window's being open does: a save from that page then
+        # reaches the canvas without asking the game for the level again.
+        self._level_graphics_open = host is not None
+        if host is not None:
+            self._capture_slot_files()
+        result: bytes | AreaPick | None = None
         try:
-            graphics = LevelGraphicsDialog.edit(
+            result = LevelGraphicsDialog.edit(
                 self,
                 self._doc.header,
-                self._doc.graphics,
+                self._doc.graphics if carried is None else carried,
                 choices=choices,
                 animated=level_graphics.animated_choices(self._project),
                 tileset_rows=self._tileset_rows_for,
                 vram=self.graphics_vram,
                 preview=self.preview_graphics,
+                tiles=host,
+                area=area,
             )
         finally:
+            self._level_graphics_open = False
+            if host is not None:
+                self._capture_slot_files()
             # The picture goes back to the document's row whichever way the
             # dialog closed: an accept commits below and lands on the same
-            # picture, and a cancel is the level exactly as it was.
-            self.preview_graphics(None)
+            # picture, and a cancel is the level exactly as it was. A pick
+            # keeps showing the row it carries, since the dialog is coming
+            # back over it.
+            if not isinstance(result, AreaPick):
+                self.preview_graphics(None)
+        if isinstance(result, AreaPick):
+            self._begin_area_pick(result.graphics)
+            return
+        graphics = result
         if graphics is None or graphics == self._doc.graphics:
             return
         if not level_graphics.is_inherit(graphics) and not self._want_feature(
@@ -8069,6 +8848,270 @@ class MainWindow(
                 f"{format_bytes(graphics) if graphics else TILESETS_OWN}",
                 5000,
             )
+
+    # -- the tiles page: picking an area, and the files behind it ------------
+
+    def _level_tiles_host(self) -> TilesHost | None:
+        """The window's side of the Level Graphics dialog's tiles page, or
+        ``None`` -- no page -- without a project to save files into or a
+        capture to read the level's blocks from."""
+        if self._project is None or self._snapshot is None:
+            return None
+        return TilesHost(
+            words=self._area_words,
+            backdrop=self._area_backdrop,
+            file=self._area_file,
+            save=self._save_area_files,
+            name=f"level {hexnum(self._snapshot.level, 3)}",
+            colour_offsets=self._area_colour_offsets,
+            save_colours=self._save_area_colours,
+            clone=self._clone_graphics_file,
+            layer2=self._layer2_area,
+        )
+
+    def _clone_graphics_file(self, number: int, parent: QWidget) -> int | None:
+        """The Level Graphics dialog's Clone: file ``number`` copied into a
+        number asked for over ``parent`` (:func:`graphics_dialog.clone_file`),
+        the project it handed back adopted where the copy grew it, and the
+        new number handed back -- ``None`` when the ask was declined. A
+        :class:`GraphicsError` is the refusal, the feature's absence one:
+        the Features dialog is where it is switched, and a rebuild under a
+        modal is not a thing to start from a button on it."""
+        project = self._project
+        if project is None:
+            raise GraphicsError("no project is open to clone the file into")
+        if not project.graphics_managed:
+            raise GraphicsError(
+                f"cloning a file needs the {MANAGED_GRAPHICS_MEMORY.name} feature, "
+                f"which Project > Features switches on"
+            )
+        saved = graphics_dialog.clone_file(project, number, parent)
+        if saved is None:
+            return None
+        if saved.grew:
+            self._graphics_project_replaced(saved.project, saved.note)
+        self._graphics_changed()
+        return saved.number
+
+    def _area_colour_offsets(self) -> list[int | None]:
+        """Where each colour on the canvas comes from, for the pixel
+        editor's palette: the same answer the palette panel's swatches
+        carry, ``None`` for a colour the file does not back."""
+        swatches, _backdrop = self._scene_swatches()
+        return [swatch.offset for swatch in swatches]
+
+    def _save_area_colours(self, edits: Mapping[int, int]) -> str:
+        """The pixel editor's recoloured entries, committed as the panel
+        commits a pick -- one step each on the palettes' own stack, and
+        the canvas recoloured with them. Nothing is written to disk here:
+        Save Palettes is still that, as it is for a pick."""
+        for offset, value in sorted(edits.items()):
+            self._commit_color(offset, value)
+        return "Save Palettes writes them."
+
+    def _layer2_area(self) -> Area | None:
+        """The whole of the level's Layer 2 as an area for the tiles page --
+        a background's 32x27 pattern, or a Layer 2 level's own shape
+        (:func:`~shiny_mushroom.level.layer2_shape`) -- or ``None`` with no
+        capture."""
+        snapshot = self._snapshot
+        if snapshot is None or (snapshot.layer2_background and not snapshot.layer2_low):
+            return None
+        return Area.of_layer2(layer2_shape(snapshot))
+
+    def _area_words(self, area: Area) -> tuple[int, ...] | None:
+        """The four tilemap words of every block of ``area``, block after
+        block across each row, as the level draws them -- the pipe table a
+        column chose included (:meth:`~shiny_mushroom.level.Blocks.words`)
+        on Layer 1, and Layer 2's own tilemap and definitions on Layer 2;
+        ``None`` with no capture, or for an area the layer no longer has."""
+        snapshot = self._snapshot
+        if snapshot is None:
+            return None
+        words: list[int] = []
+        if area.layer == 2:
+            shape = layer2_shape(snapshot)
+            if area.clipped(shape) != area:
+                return None
+            blocks = Blocks(snapshot, layer2=True)
+            for row in range(area.row, area.row + area.rows):
+                for column in range(area.column, area.column + area.columns):
+                    index = layer2_index(snapshot, shape, column, row)
+                    words.extend(blocks.words(snapshot.layer2_tile(index)))
+            return tuple(words)
+        shape = geometry(snapshot)
+        if area.clipped(shape) != area:
+            return None
+        blocks = Blocks(snapshot, pipes=pipe_tables(snapshot))
+        for row in range(area.row, area.row + area.rows):
+            for column in range(area.column, area.column + area.columns):
+                number = snapshot.tile(shape.index(column, row))
+                words.extend(blocks.words(number, column))
+        return tuple(words)
+
+    def _area_backdrop(self) -> int:
+        return 0 if self._snapshot is None else self._snapshot.back_area_color
+
+    def _area_file(self, number: int) -> FileTiles | None:
+        """File ``number`` as an edit to the level's tiles needs it: the
+        project's copy, overlay first, and which of its tiles the uploader
+        masks under the level's FG/BG tileset -- or ``None`` where it cannot
+        be read."""
+        if self._project is None:
+            return None
+        try:
+            fmt = graphics.file_format(self._project, number)
+            tiles = graphics.tiles(self._project, number)
+        except (GraphicsError, packed.PackedError, ProjectError, OSError):
+            return None
+        tileset = (
+            0 if self._doc is None else field_value(self._doc.header, "fg_bg_tileset")
+        )
+        return FileTiles(number, fmt, tuple(tiles), codec.masked_tiles(number, tileset))
+
+    def _save_area_files(self, edits: Mapping[int, Sequence[bytes]]) -> str:
+        """Save every file an area edit touched, as one step on the graphics
+        undo stack: the files as they stood ride the step, so Ctrl+Z writes
+        them back (:meth:`_walk_graphics`). A :class:`GraphicsError` is the
+        refusal, worded for the page's message box, and costs no step."""
+        before = {n: self._file_tiles_now(n) for n in edits}
+        before = {n: tiles for n, tiles in before.items() if tiles is not None}
+        note = self._write_area_files(edits)
+        held = self._graphics_history.level
+        self._graphics_history.commit(
+            {**held, **{n: tuple(tiles) for n, tiles in edits.items()}}, before
+        )
+        self._entered_graphics()
+        return note
+
+    def _file_tiles_now(self, number: int) -> tuple[bytes, ...] | None:
+        """File ``number``'s tiles as the project holds them, or ``None``
+        where it cannot be read -- a step then has nothing to put back."""
+        if self._project is None:
+            return None
+        try:
+            return tuple(graphics.tiles(self._project, number))
+        except (GraphicsError, packed.PackedError, ProjectError, OSError):
+            return None
+
+    def _editing_graphics(self) -> bool:
+        """Whether the graphics files are what Ctrl+Z means: the surface
+        last worked in, as :meth:`_editing_palettes` is for the colours."""
+        return self._graphics_active
+
+    def _entered_graphics(self) -> None:
+        """A graphics file was written: the files are the document being
+        worked in, until a gesture on the canvas or a colour pick."""
+        self._graphics_active = True
+        self._palette_active = False
+        self.sync_edit_actions()
+
+    def _walk_graphics(self, back: bool) -> None:
+        """One step along the graphics stack: write the files as they stood
+        on the other side of the step, and record what they hold now for
+        the walk back."""
+        ahead = self._graphics_history.ahead(back)
+        if not isinstance(ahead, dict):
+            return
+        other = {n: self._file_tiles_now(n) for n in ahead}
+        other = {n: tiles for n, tiles in other.items() if tiles is not None}
+        if not (
+            self._graphics_history.undo(other)
+            if back
+            else self._graphics_history.redo(other)
+        ):
+            return
+        try:
+            self._write_area_files({n: list(tiles) for n, tiles in ahead.items()})
+        except GraphicsError as error:
+            self._status_message(f"The files could not be written back: {error}", 8000)
+            return
+        self.sync_edit_actions()
+        self.statusBar().showMessage("Undo" if back else "Redo", 2000)
+
+    def _write_area_files(self, edits: Mapping[int, Sequence[bytes]]) -> str:
+        """Write every file an area edit touched, whole, the way the Graphics
+        window saves one: priced first, so a refusal comes with the numbers
+        and nothing is written; then each through the project, a save that
+        took a bank adopted; then the canvas, where the swap carries the
+        repainted files (:meth:`_graphics_changed`)."""
+        project = self._project
+        if project is None:
+            raise GraphicsError("no project is open to save the files into")
+        encoded: list[tuple[int, bytes]] = []
+        for number, tiles in sorted(edits.items()):
+            name = f"GFX{number:02X}"
+            try:
+                fmt = graphics.file_format(project, number)
+                price = graphics.price(project, number, tiles)
+            except (packed.PackedError, ProjectError, OSError) as error:
+                raise GraphicsError(f"{name} could not be priced: {error}") from error
+            if not price.fits:
+                raise GraphicsError(over_budget(name, price, project.graphics_managed))
+            encoded.append((number, codec.encode_tiles(fmt, tiles)))
+        notes: list[str] = []
+        for number, raw in encoded:
+            name = f"GFX{number:02X}"
+            try:
+                saved = project.save_graphics(number, raw)
+            except packed.RegionFull as error:
+                raise GraphicsError(
+                    f"{name} was not saved: its run would need {error.used:,} bytes "
+                    f"and has {error.budget:,}"
+                ) from error
+            except (packed.PackedError, ProjectError, OSError) as error:
+                raise GraphicsError(f"{name} was not saved: {error}") from error
+            if saved.grew:
+                self._graphics_project_replaced(saved.project, saved.note)
+                project = saved.project
+            if saved.note:
+                notes.append(saved.note)
+        self._graphics_changed()
+        return " ".join(notes)
+
+    def _begin_area_pick(self, carried: bytes) -> None:
+        """Start sweeping an area of the level for the tiles page: the
+        canvas takes the next left drag (or click) as the rectangle of
+        blocks, Escape puts the pick down, and either way the dialog comes
+        back over ``carried``."""
+        self._area_pick = bytes(carried)
+        self._area_box = None
+        # The canvas keeps showing the row the dialog held, since the
+        # dialog is coming back over it.
+        self.preview_graphics(self._area_pick)
+        self.canvas.setCursor(Qt.CursorShape.CrossCursor)
+        self._status_message(PICK_PROMPT)
+
+    def _area_pick_ended(self, start: QPoint, end: QPoint) -> None:
+        """The sweep finished between two level pixels: the whole blocks
+        between them, held within the level, are the area."""
+        box = snapped_box(start, end, BLOCK)
+        area = Area.of_pixels(box.left(), box.top(), box.right(), box.bottom())
+        if self._snapshot is not None:
+            area = area.clipped(geometry(self._snapshot))
+        self._end_area_pick(area)
+
+    def _cancel_area_pick(self) -> None:
+        """Put the pick down: the dialog comes back over the row it carried,
+        with no area."""
+        self._end_area_pick(None)
+
+    def _end_area_pick(self, area: Area | None) -> None:
+        carried = self._area_pick
+        self._drop_area_pick()
+        if carried is not None:
+            self._open_level_graphics(carried, area)
+
+    def _drop_area_pick(self) -> None:
+        """Forget a pick without bringing the dialog back -- what a level
+        going away does, and the tail of every pick."""
+        if self._area_pick is None and self._area_box is None:
+            return
+        self._area_pick = None
+        self._area_box = None
+        self.canvas.unsetCursor()
+        self.statusBar().clearMessage()
+        self._draw_overlays()
 
     def _apply_pending_graphics_edit(self, graphics: bytes) -> None:
         """Commit a graphics-dialog accept that waited for a reopen -- see
@@ -8186,9 +9229,14 @@ class MainWindow(
             RepointMark(before, entry),
             None if carrying is None else carrying.graphics,
         )
-        pointer = self._repointed_layer2(entry)
+        self._repointed_layer2(entry)
+        # The whole gather rather than the pointer and the document alone: the
+        # reload draws a picture, and a picture is drawn over the project's
+        # saved graphics, the held Map16 tables and every other level's saved
+        # rows. The new entry is already written into the project, so the
+        # gather's own pointer arm reads it.
         try:
-            patches = pointer | self._level_document_patch(carrying)
+            patches = self._all_patches(doc=carrying)
         except ValueError as error:
             # A cartridge with nowhere to put a stream that has grown: the
             # reload shows what the project holds, and the held edits are on
@@ -8196,27 +9244,26 @@ class MainWindow(
             self.statusBar().showMessage(
                 f"The held edits could not ride the reload: {error}", 8000
             )
-            patches = self._project_patches() | pointer
+            patches = self._project_patches()
         self.load_level(self._level, patches)
 
-    def _repointed_layer2(self, entry: Layer2Entry) -> dict[int, bytes]:
+    def _repointed_layer2(self, entry: Layer2Entry) -> None:
         """Everything a rewritten Layer 2 pointer changes besides the level:
         the viewers reading the table, and the standing build-needed reading.
 
-        The gather is run for its ``note`` as much as for its bytes: the note
+        The gather is run for its ``note`` rather than for its bytes: the note
         is what says whether the entry now written can be made to show without
         a build -- and what clears the reading when a repoint is taken back,
         rather than leaving ``[build needed]`` standing over a stock table.
-        The bytes go back to the caller with a reload to feed them into.
+        The reload that follows gathers the bytes it boots on for itself.
         """
-        pointer = self._layer2_pointer_patch()
+        self._layer2_pointer_patch()
         self._refresh_level_data()
         self._refresh_memory_map()
         self.statusBar().showMessage(
             f"Level {hexnum(self._level, 3)}'s Layer 2 now reads {entry.describe()}",
             5000,
         )
-        return pointer
 
     def _shape_for(self, header: bytes) -> Geometry:
         """The shape a level with these header bytes would have.
@@ -8544,8 +9591,12 @@ class MainWindow(
         return replace(snapshot, vram=vram)
 
     def _graphics_window_open(self) -> bool:
-        """Whether somebody is working in the Graphics window right now."""
-        return self._graphics_files is not None and self._graphics_files.isVisible()
+        """Whether somebody is working in the Graphics window right now -- or
+        in the Level Graphics dialog's tiles page, whose saves want the same
+        swap (:meth:`_save_area_files`)."""
+        return self._level_graphics_open or (
+            self._graphics_files is not None and self._graphics_files.isVisible()
+        )
 
     def _capture_slot_files(self) -> None:
         """Work out each slot's file as the capture holds it, or drop it.
@@ -8636,7 +9687,7 @@ class MainWindow(
         regraphicsed = self._regraphicsed(self._snapshot)
         if regraphicsed is not self._snapshot:
             self._snapshot = regraphicsed
-            self._redraw_layers()
+            self._capture_changed()
         self._weigh_the_animated_tiles()
 
     def _weigh_the_animated_tiles(self) -> None:
@@ -8751,7 +9802,7 @@ class MainWindow(
         recoloured = self._recoloured(self._snapshot)
         if recoloured is not self._snapshot:
             self._snapshot = recoloured
-            self._redraw_layers()
+            self._capture_changed()
 
     def _recoloured_world(self, snapshot):  # noqa: ANN001, ANN202 - a snapshot
         """The world map's capture as the palette document has it.
@@ -8901,6 +9952,58 @@ class MainWindow(
     # than left to Qt's teardown -- as is the test window, in
     # :mod:`shiny_mushroom.ui.window.testing`.
 
+    def _cartridge_broke(self, reports: list) -> None:
+        """Put a ``BRK`` the emulator ran into in front of somebody.
+
+        The rendering half of the exception handler: a custom sprite whose code
+        raises one draws nothing, and without this the level simply comes back
+        with a sprite missing -- which is the same picture as a sprite the
+        editor cannot draw for any other reason and says none of what the
+        cartridge was trying to say.
+
+        **One window per exception, not per render.** The canvas re-renders on
+        every edit, so a sprite that BRKs would raise the same exception every
+        few seconds; a report already shown for an address is put on the status
+        line instead until the cartridge is rebuilt, which is the only thing
+        that can change the answer.
+        """
+        fresh = [
+            report
+            for report in reports
+            if (report.address, report.signature) not in self._brks_shown
+        ]
+        if not fresh:
+            if reports:
+                self._status_message(
+                    f"BRK {hexnum(reports[0].signature)} again at "
+                    f"{hexnum(reports[0].address, 6)}"
+                )
+            return
+        for report in fresh:
+            self._brks_shown.add((report.address, report.signature))
+        show_brk(self, self._named_brk(fresh[0]), others=len(fresh) - 1)
+
+    def _named_brk(self, report):
+        """``report`` with the label its address is inside, where the project's
+        build has one to give.
+
+        The one thing the editor knows that the worker cannot: the symbol file
+        is the project's own record of where this build put every routine, and
+        an address inside a hack's own code is a name to somebody who has the
+        source open.
+        """
+        symbols = self._build_symbols()
+        if symbols is None:
+            return report
+        found = None
+        for symbol in symbols.by_addr:
+            if symbol.addr > report.address:
+                break
+            found = symbol
+        if found is None or report.address - found.addr > BRK_LABEL_REACH:
+            return report
+        return report.named(found.name, report.address - found.addr)
+
     def _level_failed(self, message: str) -> None:
         # A world map capture reports failure on the same signal, and its
         # unwind is different: back out of the mode, whose canvas never got a
@@ -8909,7 +10012,7 @@ class MainWindow(
             self._awaiting_world = False
             self.statusBar().clearMessage()
             self._unlock_after_load()
-            self._leave_world(ask=False)
+            self._leave_world()
             self._alert("The world map could not be loaded.", detail=message)
             return
         self.statusBar().clearMessage()
@@ -8923,6 +10026,7 @@ class MainWindow(
         # does a header accept waiting on a reopen.
         self._pending_repoint = None
         self._pending_graphics_edit = None
+        self._drop_area_pick()
         # And the load that failed was not a refresh of anything any more --
         # including one waiting behind it, which would ask the same dead loader
         # the same question and raise a second dialog over this one.
@@ -9005,6 +10109,23 @@ class MainWindow(
             self._update_title()
         self._sync_rebuild_action()
 
+    def _note_build_only(self, subject: str) -> None:
+        """Record that ``subject`` was saved into work only a build can carry.
+
+        Every other reading comes from a patch gatherer saying what it could
+        not make the image hold, which means the mechanism can only ever
+        report subjects a gatherer speaks for. These have none -- nothing in
+        `cart_patches` touches the strings or the music tables, because what
+        they save is assembler text rather than bytes at a known offset -- so
+        without this they are the one kind of saved edit a test run is
+        silently missing rather than reported.
+
+        Accumulated under the one key, since two can be saved before one
+        build; :meth:`use_project` clears it when a build runs.
+        """
+        held = set(self._skipped.get(BUILD_ONLY, ()))
+        self._note_skipped(BUILD_ONLY, sorted(held | {subject}))
+
     def _skipped_parts(self) -> list[str]:
         """Every part the last gather could not carry, in a settled order."""
         return [
@@ -9024,6 +10145,8 @@ class MainWindow(
             return
         if self._mode is EditorMode.WORLD:
             what = "World Map - "
+        elif self._mode is EditorMode.MAP16:
+            what = "Tilemap - "
         else:
             what = f"{hexnum(self._level, 3)} - " if self._level is not None else ""
         project = f"{self._project.name} - " if self._project is not None else ""
@@ -9103,18 +10226,15 @@ class MainWindow(
         # Where the docks and the toolbar sit is stored separately from the
         # window's own frame, and is restored whether or not the frame was:
         # a first run on a new screen still gets the panel arrangement back.
-        # One arrangement per editing environment: `_apply_editing_chrome`
-        # puts up the one this window is opening in, and the other two wait
-        # for their environment to come round.
-        for chrome, key in CHROME_STATE_KEYS.items():
-            stored = load_bytes_setting(key)
-            if stored is not None:
-                self._layouts[chrome] = stored
-        # A remembered arrangement can resurrect either mode's dock or
-        # toolbars; what is visible follows the *mode*, not the last
-        # session's layout.
+        stored = load_bytes_setting(STATE_KEY)
+        if stored is not None:
+            self.restoreState(stored)
+        # A remembered arrangement can resurrect another mode's toolbars, and
+        # says nothing about which page the offer dock shows: both follow the
+        # *mode*, not the last session's layout.
         self._apply_editing_chrome()
         self.toolbars.reassert()
+        self.toolbars.order(self)
         stored = load_bytes_setting(GEOMETRY_KEY)
         if stored is None or not self.restoreGeometry(stored):
             self.resize(DEFAULT_WIDTH * DEFAULT_ZOOM + 80, 800)
@@ -9165,6 +10285,18 @@ class MainWindow(
         precisely what it is: the file is in the *next* cartridge, not the one
         on the canvas.
 
+        **Two readings, by what a run can do with the file.** A source file is
+        assembler text a run cannot carry, so it is filed under
+        :data:`SOURCE_FILES` and the test window says the run is showing the
+        build's copy. A raw graphics file is patched into every run
+        (:func:`~shiny_mushroom.source_files.carried_by_a_run`), so it arms
+        Rebuild and the title under :data:`RAW_FILES` and the run says nothing
+        -- it has nothing to confess. The editor's own graphics saves come
+        through here too (:meth:`_graphics_changed`), and the same answer is
+        right for them: a run shows the edit, the shipped cartridge will not
+        until a build. Both accumulate, since two files can move before one
+        build, and the build clears them (:meth:`use_project`).
+
         A walk of the overlay and a stat or two a file -- what
         :func:`~shiny_mushroom.source_files.stamps` costs, classifying each
         file and reading none -- which is why this can run on every activation
@@ -9181,7 +10313,7 @@ class MainWindow(
         if found == self._source_stamps:
             return
         moved = sorted(
-            str(relative)
+            relative
             for relative, stamp in found.items()
             if self._source_stamps.get(relative) != stamp
         )
@@ -9189,10 +10321,17 @@ class MainWindow(
         if not moved:
             # Only removals, which the dialog already accounted for.
             return
-        self._note_skipped(SOURCE_FILES, moved)
+        carried = [str(one) for one in moved if source_files.carried_by_a_run(one)]
+        sources = [str(one) for one in moved if not source_files.carried_by_a_run(one)]
+        for key, parts in ((SOURCE_FILES, sources), (RAW_FILES, carried)):
+            if parts:
+                held = set(self._skipped.get(key, ()))
+                self._note_skipped(key, sorted(held | set(parts)))
+        them = "them" if len(moved) > 1 else "it"
         self.statusBar().showMessage(
-            f"{'; '.join(moved)} changed on disk -- Project > Rebuild (F5) "
-            f"puts {'them' if len(moved) > 1 else 'it'} in the cartridge.",
+            f"{'; '.join(map(str, moved))} changed on disk -- Project > Rebuild "
+            f"(F5) puts {them} in the cartridge"
+            + ("." if sources else f"; a test run already carries {them}."),
             8000,
         )
 
@@ -9240,13 +10379,7 @@ class MainWindow(
         # window must not ask its own question on the way out.
         self.palette_dock.set_close_guard(None)
         save_bytes_setting(GEOMETRY_KEY, self.saveGeometry())
-        # The one on screen has not been kept since it was entered, so it is
-        # taken here; the other two were kept as they were left.
-        self._layouts[self._chrome] = self.saveState()
-        for chrome, key in CHROME_STATE_KEYS.items():
-            state = self._layouts.get(chrome)
-            if state is not None:
-                save_bytes_setting(key, state)
+        save_bytes_setting(STATE_KEY, self.saveState())
         # Before the window goes, not after: each of these owns a thread and a
         # child process, and neither is reachable once this object is gone.
         self._close_play()

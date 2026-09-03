@@ -87,7 +87,6 @@ def reset_source_cache() -> None:
     _file_newline.clear()
 
 
-
 @dataclass
 class Annotation:
     #: Address stated by a `; === $XXXXXX ===` banner, if present.

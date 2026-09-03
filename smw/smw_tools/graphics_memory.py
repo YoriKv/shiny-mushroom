@@ -49,9 +49,9 @@ COUNT_DEFINE = "Define_SMW_GraphicsBankCount"
 #: How many banks past a base's reservation bank the first graphics bank is
 #: -- the :attr:`~smw_tools.features.Feature.bank_offset` the feature
 #: declares, restated so this module can name the bank without importing it;
-#: a test holds the two equal. One past the level bank, which is one past the
-#: reserved run: ``$12`` on a plain build, ``$13`` on ``sa1``.
-BANK_OFFSET = 2
+#: a test holds the two equal. One past the sprite bank, which is one past
+#: the level bank: ``$13`` on a plain build, ``$14`` on ``sa1``.
+BANK_OFFSET = 3
 
 #: How many graphics banks a build takes when nobody has said.
 DEFAULT_BANK_COUNT = 1
@@ -220,8 +220,8 @@ def is_managed(base: RomBase) -> bool:
 
 
 def graphics_bank(base: RomBase) -> int:
-    """The first graphics bank on ``base``: two past its reservation bank,
-    ``$12`` on a plain build and ``$13`` on ``sa1``."""
+    """The first graphics bank on ``base``: three past its reservation bank,
+    ``$13`` on a plain build and ``$14`` on ``sa1``."""
     return base.reservation_bank + BANK_OFFSET
 
 

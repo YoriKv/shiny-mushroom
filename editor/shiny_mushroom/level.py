@@ -532,6 +532,25 @@ class Blocks:
             for n in range(0, len(definition), 2)
         )
 
+    def words(self, number: int, column: int | None = None) -> tuple[int, ...]:
+        """One Map16 block's four tilemap words in storage order -- upper-left,
+        lower-left, upper-right, lower-right -- as the level draws them: the
+        pipe table the column chose for a pipe tile, and never the ghost,
+        since what a block *is* does not change with how it is shown.
+
+        For a reader that wants the tiles a block stands on rather than its
+        pixels: the level tiles tab, which follows each word back through
+        VRAM to the file it came out of (:mod:`shiny_mushroom.level_tiles`).
+        """
+        key = self._key(number, column)
+        if isinstance(key, tuple):
+            return tuple(self._quarters(key, lambda word: word))
+        definition = self._definition(number)
+        return tuple(
+            definition[n] | (definition[n + 1] << 8)
+            for n in range(0, len(definition), 2)
+        )
+
     def rows(self, number: int, column: int | None = None) -> tuple[bytes, ...]:
         """One Map16 block as sixteen rows of RGB, cached by block number.
 
@@ -676,7 +695,19 @@ def render_level(snapshot: LevelSnapshot) -> Raster:
     return Raster(shape.columns * BLOCK, shape.rows * BLOCK, b"".join(lines))
 
 
-def _layer2_index(
+def layer2_shape(snapshot: LevelSnapshot) -> Geometry:
+    """How big ``snapshot``'s Layer 2 is, in blocks: the level's own shape
+    for a Layer 2 *level*, which shares it with Layer 1, and the one 32x27
+    pattern for a background, which repeats over the level however big that
+    is. Indexed through :func:`layer2_index`, so its every block is read
+    once.
+    """
+    if snapshot.layer2_background:
+        return Geometry(BACKGROUND_COLUMNS, BACKGROUND_ROWS, False)
+    return geometry(snapshot)
+
+
+def layer2_index(
     snapshot: LevelSnapshot, shape: Geometry, column: int, row: int
 ) -> int:
     """Which Layer 2 tilemap entry sits behind the block at ``(column, row)``.
@@ -876,7 +907,7 @@ def _paint_layer2(
             (
                 column,
                 row,
-                snapshot.layer2_tile(_layer2_index(snapshot, shape, column, row)),
+                snapshot.layer2_tile(layer2_index(snapshot, shape, column, row)),
                 None,
             )
             for row in range(shape.rows)
@@ -1209,7 +1240,7 @@ class _Composite:
             self._blend(rows, column, row)
 
         if self._layer2 is not None:
-            index = _layer2_index(self._snapshot, self._shape, column, row)
+            index = layer2_index(self._snapshot, self._shape, column, row)
             number = self._snapshot.layer2_tile(index)
             if not self._layer2.blank(number):
                 over_holes(rows, self._layer2.rows(number), self._layer2.holes(number))

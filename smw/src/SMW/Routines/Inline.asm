@@ -282,12 +282,21 @@ endmacro
 
 ;---------------------------------------------------------------------------
 
-macro CheckPlayerPositionRelativeToSpriteSub(PlayerPos, SpritePos, ScratchRAM)
+; SA1Remap names the SA-1 Pack routine that stands in for the subtraction
+; and the store on that base, or `none`: More Sprites keeps its slot
+; pointers current everywhere but at two of this macro's seven sites,
+; SubHorzPos and SubVertPos, which can be entered with a stale pointer,
+; so those two go through its X_LOW_REMAP2 and Y_LOW_REMAP8 instead.
+macro CheckPlayerPositionRelativeToSpriteSub(PlayerPos, SpritePos, ScratchRAM, SA1Remap)
 	LDY.b #$00
 	LDA.b !<PlayerPos>Lo
 	SEC
-	SBC.b !<SpritePos>Lo,x
+if defined("Define_SMW_SA1") && stringsequal("<SA1Remap>", "none") == 0
+	JSL.l <SA1Remap>
+else
+	SBC.b !<SpritePos>Lo_x
 	STA.b <ScratchRAM>
+endif
 	LDA.b !<PlayerPos>Hi
 	SBC.w !<SpritePos>Hi,x
 	BPL.b +

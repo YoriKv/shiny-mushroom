@@ -47,6 +47,7 @@ from smw_tools import asm_codec, asm_regions, asm_room, graphics_memory, packed
 from smw_tools.bases import RomBase
 from smw_tools.bases import base as rom_base
 from smw_tools.features import (
+    CUSTOM_SPRITES,
     FEATURES,
     LEVEL_BANK_HEAD,
     LEVEL_CUSTOM_PALETTES,
@@ -54,6 +55,7 @@ from smw_tools.features import (
     MANAGED_GRAPHICS_MEMORY,
     MANAGED_LEVEL_MEMORY,
     RESERVED_RUN,
+    UBERASM_SUPPORT,
     Feature,
     FeatureError,
     applied,
@@ -805,13 +807,72 @@ class _ManagedGraphicsMemoryLifecycle(FeatureLifecycle):
 #: :data:`smw_tools.features.FEATURES` is. The default is not a fallback for
 #: a feature nobody has got round to: it is the right answer for one that
 #: only moves tables, which the declaration already describes in full.
+class _CustomSpritesLifecycle(FeatureLifecycle):
+    """Custom sprites: the sprite files are what the feature assembles, so
+    the switch stays down while the project carries any -- the per-level
+    graphics' rule, for the same reason: the files are no asm region the
+    default fit check could read, and a build without the feature would
+    assemble none of them into anything a level could still spawn."""
+
+    def disable_limits(self, project: Project) -> tuple[Limit, ...]:
+        held = super().disable_limits(project)
+        if held:
+            return held
+        from shiny_mushroom import project_sprites
+
+        carried = project_sprites.carried(project)
+        if carried:
+            listed = ", ".join(found.name for found in carried[:4])
+            if len(carried) > 4:
+                listed += f" and {len(carried) - 4} more"
+            held += (
+                Limit(
+                    f"{len(carried)} custom sprite file(s) are in the "
+                    f"project's sprite folders, which this feature builds "
+                    f"in: {listed}.",
+                    "Remove them under Project > Source Files... first.",
+                ),
+            )
+        return held
+
+
+class _UberasmSupportLifecycle(FeatureLifecycle):
+    """UberASM Support: the code files are what the feature assembles, so
+    the switch stays down while the project carries any -- the custom
+    sprites' rule, for the same reason: the files are no asm region the
+    default fit check could read, and a build without the feature would
+    assemble none of them into anything that still runs."""
+
+    def disable_limits(self, project: Project) -> tuple[Limit, ...]:
+        held = super().disable_limits(project)
+        if held:
+            return held
+        from shiny_mushroom import project_code
+
+        carried = project_code.carried(project)
+        if carried:
+            listed = ", ".join(found.name for found in carried[:4])
+            if len(carried) > 4:
+                listed += f" and {len(carried) - 4} more"
+            held += (
+                Limit(
+                    f"{len(carried)} code file(s) are in the project's code "
+                    f"folders, which this feature assembles: {listed}.",
+                    "Remove them under Project > Source Files... first.",
+                ),
+            )
+        return held
+
+
 LIFECYCLES: dict[str, FeatureLifecycle] = {
+    CUSTOM_SPRITES.id: _CustomSpritesLifecycle(CUSTOM_SPRITES.id),
     LEVEL_CUSTOM_PALETTES.id: _LevelPalettesLifecycle(LEVEL_CUSTOM_PALETTES.id),
     LEVEL_GRAPHICS.id: _LevelGraphicsLifecycle(LEVEL_GRAPHICS.id),
     MANAGED_LEVEL_MEMORY.id: _ManagedLevelMemoryLifecycle(MANAGED_LEVEL_MEMORY.id),
     MANAGED_GRAPHICS_MEMORY.id: _ManagedGraphicsMemoryLifecycle(
         MANAGED_GRAPHICS_MEMORY.id
     ),
+    UBERASM_SUPPORT.id: _UberasmSupportLifecycle(UBERASM_SUPPORT.id),
 }
 
 

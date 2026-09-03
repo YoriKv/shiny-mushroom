@@ -1,4 +1,4 @@
-@includeonce
+includeonce
 
 ; INIDISP - Screen Display x---bbbb x = Force blank on when set. bbbb =
 ; Screen brightness, F=max, 0="off". Note that force blank CAN be disabled
@@ -1228,13 +1228,13 @@ else
 endif
 if !CurrentBank != $FF
 	if !InSuperFXHiROMMirror == !TRUE
-		warnpc ((($<Bank>/$02)<<16)|$400000)+$10000
+		assert pc() <= (((($<Bank>/$02)<<16)|$400000)+$10000), "Bank $<Bank> (SuperFX HiROM mirror) overflowed!"
 		!InSuperFXHiROMMirror = !FALSE
 	else
 		if !ROMBankSplitFlag == !TRUE
-			warnpc ((($<Bank><<16)+$10000)|!FastROMAddressOffset)^!HiROMAddressOffset
+			assert pc() <= (((($<Bank><<16)+$10000)|!FastROMAddressOffset)^!HiROMAddressOffset), "Bank $<Bank> (Upper) overflowed!"
 		else
-			warnpc (($<Bank><<16)+$10000)|!FastROMAddressOffset|!HiROMAddressOffset
+			assert pc() <= ((($<Bank><<16)+$10000)|!FastROMAddressOffset|!HiROMAddressOffset), "Bank $<Bank> overflowed!"
 		endif
 	endif
 endif
@@ -1251,11 +1251,11 @@ if !InLoROMBank == !FALSE
 	if !Define_Global_CustomChip&$7F == !Chip_SA1
 		if !Define_Global_ROMSize > !ROMSize_4MB
 		else
-			warnpc ((!CurrentBank<<16)+$8000)|!FastROMAddressOffset|!HiROMAddressOffset
+			assert pc() <= (((!CurrentBank<<16)+$8000)|!FastROMAddressOffset|!HiROMAddressOffset), "Bank !CurrentBank (Lower) overflowed!"
 			org (((!CurrentBank<<16)+$8000)|!FastROMAddressOffset)^!HiROMAddressOffset
 		endif
 	else
-		warnpc ((!CurrentBank<<16)+$8000)|!FastROMAddressOffset|!HiROMAddressOffset
+		assert pc() <= (((!CurrentBank<<16)+$8000)|!FastROMAddressOffset|!HiROMAddressOffset), "Bank !CurrentBank (Lower) overflowed!"
 		org (((!CurrentBank<<16)+$8000)|!FastROMAddressOffset)^!HiROMAddressOffset
 	endif
 	!ROMBankSplitFlag = !TRUE
@@ -1276,7 +1276,7 @@ if !Define_Global_IgnoreCodeAlignments|!Define_Global_DisableROMMirroring == !FA
 		if (!TEMP>>16)&$FE == $7E
 			error "This HandleROMMirroring() macro call points to a RAM bank!"
 		else
-			warnpc <Address>
+			assert pc() <= (<Address>), "The code before the mirror block at <Address> runs past it!"
 			!InROMMirror = !TRUE
 			base !TEMP
 		endif

@@ -208,6 +208,26 @@ class Level:
     #: them apart only as bytes.
     graphics: bytes = b""
 
+    #: Whether the cartridge these records are for reads the second extra bit
+    #: as the custom-sprite flag -- see :attr:`shiny_mushroom.sprites.Sprite.custom`.
+    #: A property of the document because every reparse has to answer the
+    #: same way the first read did: an edit rebuilds the records from the
+    #: re-encoded stream, and a rebuild that forgot the flag would strip
+    #: every custom sprite's name and picture on the first move.
+    custom_sprites: bool = False
+
+    #: How many extra bytes each custom number's records carry -- the
+    #: loader's stride, from the built cartridge's own count table, and a
+    #: property of the document for the reason the flag is: a reparse under
+    #: different counts is a different reading of the same bytes.
+    extra_counts: Mapping[int, int] = field(default_factory=dict)
+
+    #: What the project calls each custom number -- carried beside the
+    #: counts for the same reason: an edit rebuilds the records from the
+    #: re-encoded stream, and a rebuild that forgot the names would strip
+    #: them from every custom sprite on the first move.
+    custom_names: Mapping[int, str] = field(default_factory=dict)
+
     #: The next unused identity, handed out by :meth:`added` to a record that
     #: was not in the level when it was read. It lives here rather than in the
     #: window because it is a property of *this level's* pool of ids, and
@@ -233,6 +253,9 @@ class Level:
         layer2_header: bytes = b"",
         secondary: bytes = b"",
         graphics: bytes = b"",
+        custom_sprites: bool = False,
+        extra_counts: Mapping[int, int] = {},
+        custom_names: Mapping[int, str] = {},
     ) -> Level:
         """Read both of a level's streams, stamping every record with an id.
 
@@ -257,7 +280,9 @@ class Level:
         empty otherwise; a length other than 0 or 8 is refused.
         """
         parsed_objects = parse_objects(objects, shape)
-        parsed_sprites = parse_sprites(sprites, shape)
+        parsed_sprites = parse_sprites(
+            sprites, shape, custom_sprites, extra_counts, custom_names
+        )
         uid = 1
         stamped_objects = []
         for obj in parsed_objects:
@@ -284,6 +309,9 @@ class Level:
             layer2_header=bytes(layer2_header),
             secondary=bytes(secondary),
             graphics=_checked_graphics(graphics),
+            custom_sprites=custom_sprites,
+            extra_counts=dict(extra_counts),
+            custom_names=dict(custom_names),
             next_uid=uid,
         )
 
@@ -819,7 +847,15 @@ class Level:
         rebuilt_sprites = [
             replace(parsed, uid=sprite.uid)
             for parsed, sprite in zip(
-                parse_sprites(stream, self.shape), sprites, strict=True
+                parse_sprites(
+                    stream,
+                    self.shape,
+                    self.custom_sprites,
+                    self.extra_counts,
+                    self.custom_names,
+                ),
+                sprites,
+                strict=True,
             )
         ]
         layer2_stream, layer2_uids = encode_objects(layer2_objects, self.shape)
@@ -1013,6 +1049,20 @@ class History[T]:
         self._future.clear()
         self._level = level
         return True
+
+    def note(self, mark: object) -> None:
+        """A step that moves the document not at all and carries only a mark.
+
+        What a floating selection dragged somewhere else is: nothing is written
+        while the pixels are in the air, and yet the drag is an interaction an
+        undo has to take back, and a redo has to put the pixels up again. The
+        step's document is the one already held, so :attr:`edited` does not
+        move; only the mark does. Discards the redo branch, as any new step
+        does, since what came after was made from somewhere else.
+        """
+        self._past.append((self._level, mark))
+        del self._past[:-HISTORY_DEPTH]
+        self._future.clear()
 
     def saved(self) -> None:
         """Take the level as it stands to be the saved one.

@@ -80,6 +80,8 @@ class Colours:
     def _entered_palettes(self, offset: object) -> None:
         """A colour was picked: the palettes are the document being worked in."""
         self._palette_active = offset is not None
+        if self._palette_active:
+            self._graphics_active = False
         self.sync_edit_actions()
 
     def _palette_shown(self, on: bool) -> None:
@@ -87,10 +89,12 @@ class Colours:
             self._left_palettes()
 
     def _left_palettes(self, *_: object) -> None:
-        """A gesture on the canvas: the level or the map is again."""
-        if not self._palette_active:
+        """A gesture on the canvas: the level or the map is again -- and not
+        the graphics files either."""
+        if not (self._palette_active or self._graphics_active):
             return
         self._palette_active = False
+        self._graphics_active = False
         self.sync_edit_actions()
 
     def _read_palette(self) -> None:
@@ -494,10 +498,13 @@ class Colours:
         """The document moved: recolour what is on screen, and say so.
 
         ``previewing`` is a frame of a picker drag rather than a finished pick.
-        The picture follows either way; what it holds back is the world map's
-        *offers* -- a thumbnail per tile, the sprite artwork, the 8x8 sheet --
-        which cost more than the map itself and which nobody is looking at
-        while a colour is being dragged. See `OverworldMode.recolour`.
+        **The picture follows either way; the offers wait for the release.**
+        Each of the three modes draws a library of small pictures beside its
+        canvas -- the level's background tiles, the map's tiles and sprites
+        and 8x8 sheet, the Map16 sheet's 1024 chars -- and every one of them
+        costs more than the picture does while nobody is looking at it. They
+        are all held back under the same flag, and every one of them catches
+        up on the finished pick.
         """
         # Provenance first: a step that ticked a level into its own palette,
         # or out of one, changes where every colour on screen comes from.
@@ -507,26 +514,36 @@ class Colours:
             recoloured = self._recoloured(self._snapshot)
             if recoloured is not self._snapshot:
                 self._snapshot = recoloured
-                self._redraw_layers()
+                self._capture_changed(offers=not previewing)
         if self._world.ready and self._world.snapshot is not None:
             self._world.recolour(
                 self._recoloured_submaps(self._world.snapshot), offers=not previewing
             )
+        if self._mode is EditorMode.MAP16 and self._map16.ready:
+            # The sheet is drawn from the level's capture, which the block
+            # above just recoloured: the mode re-reads it through the same
+            # per-tileset door it always draws through. Held back to the
+            # sheet alone while a picker drag previews, like the map's
+            # offers: the 1024-char picker is the expensive half.
+            self._map16.recolour(offers=not previewing)
         self._show_palette()
         self.sync_edit_actions()
         self._update_title()
 
     def _show_palette(self) -> None:
         """Offer the panel the colours on screen and the colours in the file."""
-        world = self._mode is EditorMode.WORLD
+        world = self._world_colours_on_canvas()
         swatches, backdrop = self._scene_swatches()
         self._world_palette_shown = self._world.palette_index
         # The first tab is named for what it is showing, since it shows a
         # level's colours over a level and a world map's over a map.
         self.palette_dock.set_scene_title(MAP_TITLE if world else LEVEL_TITLE)
         if self._graphics_files is not None:
-            self._graphics_files.set_cgram(
-                self._snapshot.cgram if self._snapshot is not None else None
+            # The colours of whatever is **on the canvas**, not of the last
+            # level: over the world map the sheet should be drawn in the
+            # framed submap's, which is the same rule the panel above follows.
+            self._graphics_files.show_colours(
+                self._canvas_cgram(), self._held_palette_blob()
             )
         self.palette_dock.set_scene(swatches, backdrop)
         self.palette_dock.set_sets(self._set_swatches())
@@ -550,11 +567,60 @@ class Colours:
             if world and len(swatches) >= rows * palette_map.ROW
             else []
         )
+        # The Map16 dock's strip shows the arming palette row's colours as
+        # the level draws them: the first eight CGRAM rows, one per row a
+        # layer 2 word can name.
+        self.map16_panel.set_palette_rows(
+            tuple(
+                tuple(swatches[n * palette_map.ROW : (n + 1) * palette_map.ROW])
+                for n in range(rows)
+            )
+            if self._mode is EditorMode.MAP16
+            and len(swatches) >= rows * palette_map.ROW
+            else ()
+        )
+
+    def _world_colours_on_canvas(self) -> bool:
+        """Whether the picture on the canvas is drawn in the world map's
+        colours: the map itself, or one of its stamp sheets in the Map16
+        environment."""
+        return self._mode is EditorMode.WORLD or (
+            self._mode is EditorMode.MAP16 and self._map16.on_stamps
+        )
+
+    def _canvas_cgram(self) -> bytes | None:
+        """The CGRAM the picture on the canvas is drawn from, or ``None``
+        where nothing is on it.
+
+        The world map's framed submap where the map holds the canvas, and the
+        level's otherwise -- the Map16 sheet included, since it is drawn in
+        the open level's own colours.
+        """
+        if self._world_colours_on_canvas():
+            snapshot = self._world.snapshot
+            if snapshot is None:
+                return None
+            cgrams = self._world.palette_cgrams
+            index = min(max(self._world.palette_index, 0), len(cgrams) - 1)
+            return cgrams[index] if cgrams else snapshot.cgram
+        return self._snapshot.cgram if self._snapshot is not None else None
+
+    def _held_palette_blob(self) -> bytes | None:
+        """The palette file as the editor **holds** it, or ``None`` where
+        there is no document to image. What every other view of the colours
+        reads, so a window that reads the saved file instead would be the
+        one place an unsaved edit does not show."""
+        if self._palette_base is None:
+            return None
+        try:
+            return self._palette.image(self._palette_base)
+        except PaletteError:
+            return None
 
     def _scene_swatches(self):  # noqa: ANN202 - swatches and a backdrop
         """CGRAM as the console holds it for what is on the canvas, with the
         backdrop beside it."""
-        if self._mode is EditorMode.WORLD:
+        if self._world_colours_on_canvas():
             return self._world_swatches()
         if self._snapshot is None or self._captured_cgram is None:
             return [], None

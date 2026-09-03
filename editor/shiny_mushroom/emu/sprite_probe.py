@@ -38,14 +38,20 @@ from shiny_mushroom.addresses import (
     SPRITE_RECORD_SIZE,
     RamView,
 )
-from shiny_mushroom.emu.core import CPU_TYPE_SA1, CPU_TYPE_SNES, EmulatorUnavailable
+from shiny_mushroom.emu.core import (
+    CPU_TYPE_SA1,
+    CPU_TYPE_SNES,
+    CoreBroke,
+    EmulatorUnavailable,
+)
 from shiny_mushroom.emu.oam_writes import COLUMNS as OAM_COLUMNS
 from shiny_mushroom.emu.oam_writes import condition as oam_condition
 from shiny_mushroom.emu.oam_writes import parse as parse_oam_writes
 from shiny_mushroom.hexnum import hexnum
-from shiny_mushroom.memtype import MemoryType
+from shiny_mushroom.memtype import SPACES, MemoryType
 from shiny_mushroom.metadata import SPRITES
-from shiny_mushroom.sprite_art import PlayerArt, SpriteTile
+from shiny_mushroom.sprite_art import CUSTOM_ART_BASE, PlayerArt, SpriteTile
+from smw_tools.features import CUSTOM_SPRITES
 
 #: Where a capture reports what it did -- see
 #: :data:`shiny_mushroom.emu.smw._log`, which this follows.
@@ -377,33 +383,85 @@ def can_draw(number: int) -> bool:
     is not the generator's appearance in any case. They keep the block-sized
     marker every sprite with no captured art gets.
     """
+    if number >= CUSTOM_ART_BASE:
+        # A custom key is a normal-range number by construction -- the
+        # stream reading only mints one below the spawner ranges -- and
+        # what it draws is the project's own code, which is exactly what
+        # the probe exists to run.
+        return True
     return number <= LAST_DRAWING_SPRITE and not FIRST_SPAWNER <= number <= LAST_SPAWNER
 
 
-def _sprite_records(stream: bytes) -> Iterator[tuple[int, int, int]]:
+#: The custom sprites' per-slot state the probe writes, as the vanilla
+#: work-RAM offsets that name it on every base. The feature keeps it at
+#: PIXI's own addresses, which the pack's remap rules know nothing of --
+#: :meth:`~shiny_mushroom.addresses.Addresses.of` lays the feature's own map
+#: over the base's for exactly that reason
+#: (:func:`smw_tools.ram_map.custom_sprites_ram`), so these resolve the way
+#: any other RAM offset does.
+CUSTOM_EXTRA_BITS = 0x1AB10
+CUSTOM_TRUE_ID = 0x1AB9E
+
+#: What the spawn seam stores for a custom slot: the record's extra bits as
+#: the loader masks them into the Y high byte, bit 3 the custom flag.
+CUSTOM_FLAG = 0x08
+
+#: The one number the custom bit cannot mark: Lunar Magic spends both of the
+#: goal tape's extra bits on secret exits, and the spawn stub says the same.
+_GOAL_TAPE = 0x7B
+
+
+def _stream_key(first: int, number: int, custom: bool) -> int:
+    """One record's capture key: its number, or the custom space's copy.
+
+    The same reading the spawn stub makes: the second extra bit, on a
+    normal-range number that is not the goal tape, means the project's own
+    sprite -- whose picture is its own code's, so it is keyed apart
+    (:data:`~shiny_mushroom.sprite_art.CUSTOM_ART_BASE`).
+    """
+    if custom and first & 0x08 and number < FIRST_SPAWNER and number != _GOAL_TAPE:
+        return number | CUSTOM_ART_BASE
+    return number
+
+
+def _sprite_records(
+    stream: bytes, counts: Mapping[int, int] = {}
+) -> Iterator[tuple[int, int, int]]:
     """Each ``(first, second, number)`` record of a sprite stream, in order.
 
     The one walk everything that reads a stream makes, so a number and the
     position it was read at can never come from two different readings of the
-    same bytes.
+    same bytes. ``counts`` is the custom sprites' extra-byte stride.
     """
     cursor = 1  # past the stream's header byte
     while cursor + SPRITE_RECORD_SIZE <= len(stream) and stream[cursor] != 0xFF:
         first, second, number = stream[cursor : cursor + SPRITE_RECORD_SIZE]
         yield first, second, number
         cursor += SPRITE_RECORD_SIZE
+        if counts and first & 0x08 and number < FIRST_SPAWNER and number != _GOAL_TAPE:
+            # A custom record's extra bytes, stepped over exactly as the
+            # loader's stride does.
+            cursor += counts.get(number, 0)
 
 
-def _sprite_numbers(stream: bytes) -> list[int]:
-    """The distinct sprite numbers a stream carries, in ascending order.
+def _sprite_numbers(
+    stream: bytes, custom: bool = False, counts: Mapping[int, int] = {}
+) -> list[int]:
+    """The distinct capture keys a stream carries, in ascending order.
 
     A reading of the stream and nothing else: which of them is worth driving is
     :func:`can_draw`'s, and which of them drags a second number along with it is
     :func:`with_revealed_forms`'. Both are asked once, of every number a capture
     is asked for, wherever it came from -- see
-    :meth:`SmwLevelLoader._artwork`.
+    :meth:`SmwLevelLoader._artwork`. ``custom`` says whether the cartridge
+    reads the second extra bit as the custom flag -- :func:`_stream_key`.
     """
-    return sorted({number for _first, _second, number in _sprite_records(stream)})
+    return sorted(
+        {
+            _stream_key(first, number, custom)
+            for first, _second, number in _sprite_records(stream, counts)
+        }
+    )
 
 
 def with_revealed_forms(numbers: Iterable[int]) -> list[int]:
@@ -434,7 +492,10 @@ def with_revealed_forms(numbers: Iterable[int]) -> list[int]:
 
 
 def _drawing_sprite_positions(
-    stream: bytes, vertical: bool = False
+    stream: bytes,
+    vertical: bool = False,
+    custom: bool = False,
+    counts: Mapping[int, int] = {},
 ) -> dict[int, tuple[int, int]]:
     """Where in the level each drawable number first appears, in pixels.
 
@@ -451,14 +512,15 @@ def _drawing_sprite_positions(
     probe per number is what makes a load affordable.
     """
     positions: dict[int, tuple[int, int]] = {}
-    for first, second, number in _sprite_records(stream):
-        if number in positions:
+    for first, second, number in _sprite_records(stream, counts):
+        key = _stream_key(first, number, custom)
+        if key in positions:
             continue
         # The loader's own decoding, and the same axis swap parse_sprites makes.
         screen = (second & 0x0F) | ((first << 3) & 0x10)
         along = (screen * SCREEN_BLOCKS + (second >> 4)) * BLOCK_PIXELS
         across = ((first >> 4) | ((first & 0x01) << 4)) * BLOCK_PIXELS
-        positions[number] = (across, along) if vertical else (along, across)
+        positions[key] = (across, along) if vertical else (along, across)
     # A revealed form is probed at the hidden sprite's own position, since it is
     # where it would appear and the level may hold no record of it to place it
     # from. Its own record wins where there is one.
@@ -528,6 +590,13 @@ class SpriteProbe:
         with self.over_scratch_state("pre-player-art.mst"):
             try:
                 return self._probe_player()
+            except CoreBroke as broke:
+                # The player's own drawing routine raised an exception. One
+                # marker is never worth a level here either -- the difference
+                # is that this one has something to say, so it is kept and
+                # reported with the load rather than logged and dropped.
+                self.note_brk(broke.evidence, "drawing the player")
+                return PlayerArt((), b"", b"")
             except EmulatorUnavailable as unavailable:
                 # One marker is never worth a level. The caller gets "nothing
                 # was found" and draws no player rather than failing the load.
@@ -706,8 +775,31 @@ class SpriteProbe:
 
     # -- what each sprite in this level looks like -------------------------
 
+    @property
+    def _custom_on(self) -> bool:
+        """Whether this cartridge reads the second extra bit as the custom
+        flag -- the custom-sprites feature, read off the features the
+        addresses were built with, which is the build the capture runs."""
+        return CUSTOM_SPRITES.id in self.addresses.base.features
+
+    def _custom_slot0(self, table: int) -> tuple[MemoryType, int]:
+        """Slot 0 of one custom per-slot table, as a core read or write.
+
+        The feature's RAM rather than the game's -- the pack's remap rules
+        never moved it, the feature placed it twice -- which is exactly what
+        the map these addresses carry answers for: the base's own, with the
+        feature's laid over it.
+        """
+        found = self.addresses.ram.slot(table, 0)
+        return SPACES[found.space], found.offset
+
     def _sprite_art(
-        self, level: int, header: bytes, stream: bytes, vertical: bool
+        self,
+        level: int,
+        header: bytes,
+        stream: bytes,
+        vertical: bool,
+        counts: Mapping[int, int] = {},
     ) -> dict[int, tuple[SpriteTile, ...]]:
         """This level's sprite artwork: :meth:`_artwork` for what its stream
         holds, each number where its first record stands.
@@ -718,10 +810,10 @@ class SpriteProbe:
         edit almost never changes, which is what the cache is for.
         """
         return self._artwork(
-            _sprite_numbers(stream),
+            _sprite_numbers(stream, self._custom_on, counts),
             level,
             header,
-            _drawing_sprite_positions(stream, vertical),
+            _drawing_sprite_positions(stream, vertical, self._custom_on, counts),
         )
 
     def artwork_for(
@@ -1018,7 +1110,8 @@ class SpriteProbe:
         )
         for offset, value in ((0, camera_x), (2, camera_y)):
             self._write_word(CAMERA_X + offset, value)
-        driven = slot_sprite_number(number)
+        custom = number >= CUSTOM_ART_BASE
+        driven = number & 0xFF if custom else slot_sprite_number(number)
         write(*where.slot(SPRITE_ID, 0), driven)
         self._stand_probe(level_x, level_y)
         write(*where.slot(SPRITE_STATUS, 0), SPRITE_STATUS_INIT)
@@ -1058,6 +1151,13 @@ class SpriteProbe:
                     budget=SPRITE_CALL_BUDGET,
                     direct_page=where.direct_page,
                 )
+                if custom:
+                    # After the initialize, whose choke clears the slot's
+                    # custom state on every spawn: the flag and the true
+                    # number are what the init dispatch reads on the first
+                    # pass, exactly as the spawn seam would have left them.
+                    write(*self._custom_slot0(CUSTOM_EXTRA_BITS), CUSTOM_FLAG)
+                    write(*self._custom_slot0(CUSTOM_TRUE_ID), driven)
                 for _ in range(SPRITE_MAIN_PASSES):
                     core.halt()
                     # **A pass the sprite would begin as a different number is
@@ -1068,7 +1168,16 @@ class SpriteProbe:
                     # the honest picture is the last pass that started out as
                     # the number asked for -- without this, $4C captures as the
                     # Koopa inside it rather than as the block a level shows.
-                    if core.read(*where.slot(SPRITE_ID, 0)) != driven:
+                    # A custom slot cannot be judged by its `SpriteID`: the
+                    # init dispatch writes the acts-like number over it on
+                    # the first pass, which is the substitution working. Its
+                    # identity is the true number the feature keeps.
+                    held = (
+                        core.read(*self._custom_slot0(CUSTOM_TRUE_ID))
+                        if custom
+                        else core.read(*where.slot(SPRITE_ID, 0))
+                    )
+                    if held != driven:
                         break
                     # **Sprite and player stood back where they belong at the
                     # top of every pass**, so that what the extra pass buys is
@@ -1095,6 +1204,13 @@ class SpriteProbe:
                         budget=SPRITE_CALL_BUDGET,
                         direct_page=where.direct_page,
                     )
+        except CoreBroke as broke:
+            # A custom sprite's own code, raising its own exception. Exactly
+            # what the BRK Exception Handler patch exists for, and exactly the
+            # case where an editor that said only "nothing was found" would be
+            # hiding the one thing worth knowing.
+            self.note_brk(broke.evidence, f"sprite {hexnum(number)}")
+            return ()
         except EmulatorUnavailable as unavailable:
             _log.debug("sprite $%02X did not return: %s", number, unavailable)
             # A sprite driven without whatever it expects can fail to return --

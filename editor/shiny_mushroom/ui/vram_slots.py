@@ -7,6 +7,10 @@ shape the Graphics window draws a file in, so a file looks the same in both
 windows. A column rather than a grid because the sheets are wide and the
 window they sit in is not: what scrolls is the list of slots.
 
+The VRAM between the slots is written into the column as a line of text
+apiece (:class:`Region`), so the jump from FG3's ``$1800`` to SP1's ``$6000``
+reads as the tilemaps it is rather than as a gap in the panel.
+
 Handed images and captions and paints them, exactly as
 :mod:`shiny_mushroom.ui.tile_sheet` is
 ([`architecture`](../../../docs/editor/architecture.md)): what a slot is,
@@ -52,6 +56,19 @@ TILE = 8
 
 
 @dataclass(frozen=True)
+class Region:
+    """A stretch of VRAM that is not one of the slots: a line of text under
+    the band it follows, rather than a picture. What the tilemaps and the
+    2bpp Layer 3 tiles are (:data:`shiny_mushroom.level_graphics.OTHER_VRAM`)
+    -- none of them 128 4bpp tiles, and a tilemap not a picture at all."""
+
+    #: ``Layer 1 tilemap, 64x64`` -- what is there, in words.
+    name: str
+    #: Its VRAM word address, ``$2000``, written at the end of the line.
+    address: str
+
+
+@dataclass(frozen=True)
 class Slot:
     """One slot's band of the picture: what to call it, what is in it, and
     where in VRAM it is."""
@@ -69,6 +86,9 @@ class Slot:
     #: way an uneditable swatch is (:mod:`shiny_mushroom.ui.hatching`). Empty
     #: for a slot whose whole run is its file's.
     spoken_for: frozenset[int] = frozenset()
+    #: The VRAM between this slot and the next, written a line apiece under
+    #: the band. Empty where the next slot follows this one straight on.
+    regions: tuple[Region, ...] = ()
 
 
 class VramSlots(ZoomedPicture):
@@ -107,12 +127,22 @@ class VramSlots(ZoomedPicture):
 
     def band_height(self, zoom: int | None = None) -> int:
         """How tall one band is at ``zoom``, or at this widget's -- its
-        caption, the gap and the sheet. For a caller sizing the window onto
-        this one, which is a window onto a column that scrolls."""
+        caption, the gap and the sheet, and not whatever regions follow it.
+        For a caller sizing the window onto this one, which is a window onto
+        a column that scrolls."""
         if not self._slots:
             return 0
         held = self._zoom if zoom is None else zoom
         return self.caption_height + CAPTION_GAP + self._slots[0].sheet.height() * held
+
+    def _regions_height(self, slot: Slot) -> int:
+        """What ``slot``'s regions add under its sheet: a line apiece, and
+        :data:`ROW_GAP` above the first of them -- the gap one band already
+        keeps from the next, so the lines are as far off the sheet above them
+        as they are off the caption below. Nothing for a slot with none."""
+        if not slot.regions:
+            return 0
+        return ROW_GAP + len(slot.regions) * self.caption_height
 
     def tile_rect(self, index: int, tile: int) -> QRect:
         """Where one tile of band ``index`` is, in widget pixels. The band's
@@ -130,24 +160,27 @@ class VramSlots(ZoomedPicture):
 
     def rect_of(self, index: int) -> QRect:
         """Where a band's *sheet* is, in widget pixels; its caption sits in
-        the :attr:`caption_height` above, and its outline in the
-        :data:`EDGE` around it."""
+        the :attr:`caption_height` above, its regions in the lines below, and
+        its outline in the :data:`EDGE` around it. Walked band by band rather
+        than multiplied out, since a band carrying regions is taller than
+        one that does not."""
         sheet = self._sheet_size()
         top = self.caption_height + CAPTION_GAP
-        return QRect(
-            EDGE,
-            index * (top + sheet.height() + ROW_GAP) + top,
-            sheet.width(),
-            sheet.height(),
-        )
+        at = top
+        for above in self._slots[:index]:
+            at += sheet.height() + self._regions_height(above) + ROW_GAP + top
+        return QRect(EDGE, at, sheet.width(), sheet.height())
 
     def sizeHint(self) -> QSize:  # noqa: N802 - Qt override
         if not self._slots:
             return QSize(0, 0)
-        band = self.band_height()
+        last = len(self._slots) - 1
         return QSize(
             self._sheet_size().width() + 2 * EDGE,
-            len(self._slots) * (band + ROW_GAP) - ROW_GAP + EDGE,
+            self.rect_of(last).bottom()
+            + 1
+            + self._regions_height(self._slots[last])
+            + EDGE,
         )
 
     # -- painting -------------------------------------------------------------
@@ -176,6 +209,7 @@ class VramSlots(ZoomedPicture):
             painter.setPen(QPen(edge, EDGE))
             painter.drawRect(where.adjusted(-EDGE, -EDGE, 0, 0))
             self._caption(painter, where, slot, ink, note)
+            self._regions(painter, where, slot, note)
         if not spoken_for.isEmpty():
             # Over the picture rather than into it: the sheet is the level's
             # own VRAM and stays readable under the mark, and the mark stays
@@ -201,5 +235,25 @@ class VramSlots(ZoomedPicture):
         painter.setPen(QPen(note, 1))
         painter.drawText(line, Qt.AlignmentFlag.AlignRight, slot.address)
 
+    def _regions(
+        self, painter: QPainter, where: QRect, slot: Slot, note: QColor
+    ) -> None:
+        """The VRAM between this band and the next, a line apiece under the
+        sheet, laid out as a caption is -- what is there at the left, its
+        word address at the right -- and all of it in the note ink, so a run
+        of text reads as the column's own scale rather than as a band with a
+        missing picture."""
+        line = QRect(
+            where.left(),
+            where.bottom() + 1 + ROW_GAP,
+            where.width(),
+            self.caption_height,
+        )
+        painter.setPen(QPen(note, 1))
+        for region in slot.regions:
+            painter.drawText(line, Qt.AlignmentFlag.AlignLeft, region.name)
+            painter.drawText(line, Qt.AlignmentFlag.AlignRight, region.address)
+            line.translate(0, self.caption_height)
 
-__all__ = ["EDGE", "Slot", "VramSlots"]
+
+__all__ = ["EDGE", "Region", "Slot", "VramSlots"]

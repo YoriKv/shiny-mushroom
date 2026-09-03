@@ -133,6 +133,12 @@ class LevelSnapshot:
     #: tileset belongs to the level.
     sprite_art: Mapping[int, tuple[SpriteTile, ...]] = field(default_factory=dict)
 
+    #: How many extra bytes each custom number's records carry -- the built
+    #: cartridge's own count table, read at load so every reader of this
+    #: snapshot's sprite stream walks it with the stride the cartridge does.
+    #: Empty on a build without the feature.
+    extra_counts: Mapping[int, int] = field(default_factory=dict)
+
     #: Which blocks each object drew, as Map16 tilemap offsets, indexed the same
     #: way :attr:`objects` parses -- entry *n* belongs to the *n*th record.
     #:

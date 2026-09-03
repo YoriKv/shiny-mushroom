@@ -1,10 +1,9 @@
 """One look for every table in the editor.
 
-Two dialogs show the game's records as rows -- the fixed-table editor over the
-world map's tables (:mod:`shiny_mushroom.ui.table_editor`) and the Level Data
-window (:mod:`shiny_mushroom.ui.level_data_dialog`) -- and this is what makes
-them the same table. A view is handed to :func:`style_table` and comes back
-looking like the others; nothing about *what* a table holds lives here.
+Every window that shows the game's records as rows -- the world map's
+fixed-table editor, Level Data, Audio, Strings and the rest -- hands its view
+to :func:`style_table` and gets back the same table as the others; nothing
+about *what* a table holds lives here.
 
 Palette-only, like :mod:`shiny_mushroom.ui.theme`, and for the same reason: a
 stylesheet on an item view takes over the drawing the platform style was doing

@@ -203,7 +203,7 @@ def scanning_once() -> Iterator[None]:
 
     Opened by the two gathers that ask a project what it has saved --
     ``MainWindow.test_patches`` and
-    :func:`shiny_mushroom.cart_patches.project_patches` -- which is where the
+    :func:`shiny_mushroom.cart_patches.all_patches` -- which is where the
     repetition is: what is edited, what is packed and which files the project
     adds are each asked for several times while one patch set is built, and
     the answer cannot change while it is being built.

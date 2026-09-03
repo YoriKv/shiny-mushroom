@@ -224,14 +224,21 @@ def _space_for_memory_entry(base: RomBase, name: str, file: str, addr: int) -> s
 #: with asar's `#=`, which evaluates at the point of definition -- a plain `=`
 #: would be substituted as text and flip the sign of a relative entry's offset
 #: inside a subtraction. A handful of entries that cannot be evaluated there
-#: still use `=`, so both spellings have to parse.
-_RAM_ENTRY = re.compile(r"^\s*!([A-Za-z0-9_]+)\s*#?=\s*([^;]+)")
+#: still use `=`, so both spellings have to parse. A quoted right-hand side is
+#: an *access spelling* (`!RAM_SMW_NorSpr_XPosLo_x = "!RAM_SMW_NorSpr_XPosLo,x"`),
+#: which names a table and a mode rather than an address, and is not an entry.
+#: A trailing comment is part of the line and not of the expression: an entry
+#: with one is still an entry, or `smw symbol` answers for its neighbour.
+_RAM_ENTRY = re.compile(r"^\s*!([A-Za-z0-9_]+)\s*#?=\s*([^;\"]+?)\s*(?:;.*)?$")
 
 #: ``if defined("Define_SMW_LowRAMLocation") == 0``: the map's own guard around
 #: every default a base is allowed to override. Forty of them, and they are why
 #: a base sets where work RAM lives with a ``--define`` rather than a second copy
 #: of the file.
 _GUARD = re.compile(r'^\s*if\s+defined\("([A-Za-z0-9_]+)"\)\s*==\s*0\s*$')
+#: ``if defined("Define_SMW_SA1")``: a block a base *opts into* -- the SA-1
+#: sprite-table layout is one -- read only on a base that set the name.
+_OPT_IN = re.compile(r'^\s*if\s+defined\("([A-Za-z0-9_]+)"\)\s*$')
 _IF = re.compile(r"^\s*if\b")
 _ENDIF = re.compile(r"^\s*endif\b")
 
@@ -330,9 +337,11 @@ def _memory_label_locations(
     **The base's source defines are seeded in first**, then the game's defines
     file, and the map's own ``if defined(...) == 0`` guards are honoured so the
     seeded value survives the default beneath it -- which is exactly what asar
-    does with them. That is the whole of how a base relocates work RAM: ``sa1``
-    passes a direct page of ``$3000`` and a low RAM of ``$6000``, and the
-    entries written against those two follow, along with the thousand more
+    does with them -- while a block a base opts into, ``if defined(...)``
+    with no comparison, is read only on a base that set the name. That is
+    the whole of how a base relocates work RAM: ``sa1`` passes a direct page
+    of ``$3000`` and a low RAM of ``$6000``, and the entries written against
+    those two follow, along with the thousand more
     written against *them*.
 
     An entry whose right-hand side names something no file read here defines is
@@ -387,11 +396,19 @@ def _memory_label_locations(
                         overridden = ""
                     continue
             elif guard := _GUARD.match(raw):
-                # Only a guard over something the base itself set is overridden.
-                # Every other one is the default taking effect, which is what
-                # happens on a base that said nothing.
-                if guard.group(1) in given:
+                # Only a guard over something already defined is overridden --
+                # by the base on its command line, or by a block above that
+                # the base opted into. Every other one is the default taking
+                # effect, which is what happens on a base that said nothing.
+                if guard.group(1) in sym:
                     depth, overridden = 1, guard.group(1)
+                continue
+            elif opt_in := _OPT_IN.match(raw):
+                # A block for a base that set the name: read as plain lines on
+                # that base, its own `endif` then falling through harmlessly;
+                # skipped whole on any other.
+                if opt_in.group(1) not in given and opt_in.group(1) not in sym:
+                    depth, overridden = 1, ""
                 continue
             m = _RAM_ENTRY.match(raw)
             if not m:
@@ -401,7 +418,7 @@ def _memory_label_locations(
                 # The default is where the entry is *written*, so the line is
                 # still recorded -- with the value that actually took, not the
                 # one asar skipped past.
-                addr = given[name]
+                addr = sym[name]
             elif depth:
                 # Some other entry inside an overridden guard. Nothing in this
                 # tree has one, and guessing at it would put a wrong address in

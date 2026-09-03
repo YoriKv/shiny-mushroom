@@ -1,7 +1,8 @@
 """The world map's tile palette: what can be placed, one of which is in hand.
 
-The create panel's little sibling, under the same contract: it emits
-:attr:`TilePaletteDock.armed` with what was picked, and that is all it does.
+The create panel's little sibling and the offer dock's second page
+(:mod:`shiny_mushroom.ui.offer_dock`), under the same contract: it emits
+:attr:`TilePalette.armed` with what was picked, and that is all it does.
 It does not place anything, does not hold a document, and does not know a
 canvas exists -- what a click on the map *means* belongs to whoever owns the
 world map document.
@@ -14,14 +15,12 @@ step, its warp box, its level badge -- in the map's own key
 marks back off when it is the artwork being picked from. **Layer 2** is the
 8x8 chars the tilemap entry can name,
 with the entry's other bits -- palette row, the two flips, priority -- as
-controls under the list; the dock assembles the full 16-bit word and nobody
+controls under the list; the panel assembles the full 16-bit word and nobody
 downstream learns the bit layout. **2x2** and **6x6** are the event stamp
 sheets, one block per row, drawn from the document's own bytes; a pick is
-bound for the focused event as a new placement. Either stamp tab also offers
-to **draw on that sheet**: the button under the list asks for the whole sheet
-as the picture on the canvas, and while it is up the tab offers the 8x8 chars
-a block is made of instead of the blocks -- one tab, one material, whichever
-end of it is being edited. **Sprites** is the
+bound for the focused event as a new placement; the sheets' own contents are
+drawn in the Tilemap editor, which a button under either tab opens on that
+sheet. **Sprites** is the
 overworld's sprite numbers, each bound for the first empty slot. What is
 armed is a typed payload -- :class:`Layer1Tile`, :class:`Layer2Word`,
 :class:`StampBlock` or :class:`SpritePick` -- so the mode dispatches on what
@@ -32,7 +31,7 @@ tables that carry the player off a cell -- the star and pipe warps, and the
 path exits -- and how many of either a cartridge has is baked into its search
 code, so there is no such thing as placing one: the tab is the two tables
 themselves, one row per entry, and a pick **selects** that entry on the map
-through :attr:`TilePaletteDock.transfer_picked` rather than putting anything
+through :attr:`TilePalette.transfer_picked` rather than putting anything
 in hand. It is how an entry parked under an event stamp, or a page away on
 the shared submap half, is found at all. Which table a row belongs to is what
 :class:`TransferRow` carries, and the row's own glyph is drawn in that
@@ -52,13 +51,10 @@ from PySide6.QtCore import QModelIndex, Qt, Signal
 from PySide6.QtGui import QImage, QPainter, QPen
 from PySide6.QtWidgets import (
     QCheckBox,
-    QDockWidget,
-    QHBoxLayout,
     QLabel,
     QListView,
     QListWidgetItem,
     QPushButton,
-    QSpinBox,
     QStyle,
     QStyledItemDelegate,
     QStyleOptionViewItem,
@@ -69,18 +65,11 @@ from PySide6.QtWidgets import (
 
 from shiny_mushroom.hexnum import hexnum
 from shiny_mushroom.overworld import SHEET_6X6_SIZE, SPRITE_NAMES
+from shiny_mushroom.tile_clipboard import GridStamp
+from shiny_mushroom.ui.layer2_attributes import Layer2Attributes
 from shiny_mushroom.ui.lists import TileGrid, add_tile
-from shiny_mushroom.ui.palette_grid import Swatch, SwatchGrid
-from shiny_mushroom.ui.tips import wrap_tip
+from shiny_mushroom.ui.palette_grid import Swatch
 from shiny_mushroom.ui.world_marks import marked_tile, tile_note
-
-OBJECT_NAME = "tile-palette"
-
-#: Colours in one background palette row, and how big each is drawn under the
-#: attribute controls -- small, because they are there to be recognised beside
-#: the row number rather than picked from at leisure.
-COLORS_PER_ROW = 16
-SWATCH_CELL = 12
 
 #: What the strip is for. A palette row is a number in the control above it and
 #: a set of colours on the map; the panel that changes one is elsewhere.
@@ -101,6 +90,10 @@ NOTHING_ARMED_SPRITES = (
 NOTHING_ARMED_STAMPS = (
     "Pick a stamp block, then click the map to add it to the focused event."
 )
+#: The stamp tabs' way into the sheet's own artwork: the offer shows what a
+#: block looks like, and the Tilemap editor is where its cells are drawn.
+EDIT_SHEET = "Edit Sheet in Tilemap Editor"
+EDIT_SHEET_TIP = "Open this stamp sheet in the Tilemap editor"
 #: The Warps/Exits tab's line: it offers no hand, so it says what the mode's
 #: gestures are instead.
 TRANSFERS_HINT = (
@@ -108,24 +101,27 @@ TRANSFERS_HINT = (
     "destination... moves where it lands."
 )
 NO_TRANSFERS = "Open the world map to edit its warp and exit triggers."
-ARMED = (
-    "Placing tile {what}. Click places it; Shift keeps it; "
-    "Esc or right-click puts it down."
-)
+ARMED = "Placing tile {what}. Click places it; Shift keeps it; Esc puts it down."
 ARMED_SPRITE = (
-    "Placing {what}. Click fills an empty slot; Shift keeps it; "
-    "Esc or right-click puts it down."
+    "Placing {what}. Click fills an empty slot; Shift keeps it; Esc puts it down."
 )
 ARMED_STAMP = (
     "Placing stamp {what}. Click adds it to the focused event; Shift keeps "
-    "it; Esc or right-click puts it down."
+    "it; Esc puts it down."
+)
+ARMED_SILENT = (
+    "Silent slot in hand ({what}). Click the map to add one there; Esc puts it down."
+)
+ARMED_REGION = (
+    "Placing a {w}x{h} grabbed region. Click stamps it; a drag paints with "
+    "it; Esc puts it down."
 )
 
 #: Thumbnails at twice the console's pixels, like the create panel's previews.
 ICON = 32
 
 #: The 6x6 stamp blocks at the console's own pixels -- 48 wide already, so
-#: doubling them would crowd the dock for no added legibility.
+#: doubling them would crowd the panel for no added legibility.
 STAMP_ICON = 48
 
 #: How many 8x8 chars the Layer 2 tab offers: every one a tilemap entry can
@@ -169,7 +165,7 @@ class OutlinedSelection(QStyledItemDelegate):
 
 
 class PaletteTab(Enum):
-    """Which of the map's parts the dock is offering."""
+    """Which of the map's parts the panel is offering."""
 
     LAYER1 = "Layer 1"
     LAYER2 = "Layer 2"
@@ -198,7 +194,7 @@ class TransferRow:
     Not a payload in hand -- there is no placing a trigger -- but the same
     kind of typed answer, so what a pick *means* is read off the row rather
     than off which half of the list it came from. ``exits`` rather than a
-    table descriptor, because the dock draws the rows and holds no reader of
+    table descriptor, because the panel draws the rows and holds no reader of
     the document.
     """
 
@@ -238,6 +234,33 @@ class StampBlock:
 
 
 @dataclass(frozen=True)
+class SilentPick:
+    """A silent slot in hand, copied off one on the map by the eyedropper:
+    its layer byte, its tile -- a Map16 number, or a sheet block's start --
+    and the event it came from. A click adds a slot like it where the
+    pointer is, for the focused event, or for its own event without one.
+    The palette offers no row for it; it is only ever picked up."""
+
+    layer: int
+    tile: int
+    event: int
+
+    @property
+    def stamped(self) -> bool:
+        """Whether the slot writes a Layer 2 sheet block rather than one
+        Layer 1 cell."""
+        return bool(self.layer & 1)
+
+    @property
+    def side(self) -> int:
+        """The footprint's side in the layer's own grain: 8x8 tiles for a
+        stamp, one cell for a Layer 1 write."""
+        if not self.stamped:
+            return 1
+        return 2 if self.tile >= SHEET_6X6_SIZE else 6
+
+
+@dataclass(frozen=True)
 class Layer2Word:
     """A Layer 2 placement in hand: one full 16-bit tilemap entry --
     ``YXPCCCTT TTTTTTTT``, attributes included."""
@@ -272,20 +295,7 @@ def sprite_name(number: int) -> str:
     return SPRITE_NAMES[number] if number < len(SPRITE_NAMES) else hexnum(number)
 
 
-def layer2_word_of(
-    char: int, palette_row: int, x_flip: bool, y_flip: bool, priority: bool
-) -> int:
-    """The 16-bit entry these attribute choices spell."""
-    return (
-        (char & 0x3FF)
-        | ((palette_row & 0x07) << 10)
-        | (0x2000 if priority else 0)
-        | (0x4000 if x_flip else 0)
-        | (0x8000 if y_flip else 0)
-    )
-
-
-class TilePaletteDock(QDockWidget):
+class TilePalette(QWidget):
     """The map's placeable offers, one of which can be in hand."""
 
     #: Something was picked: put it in hand. Carries a :class:`Layer1Tile`,
@@ -303,31 +313,37 @@ class TilePaletteDock(QDockWidget):
     #: a row is a way of *finding* an entry, the way a table's row click is.
     transfer_picked = Signal(object)
 
-    #: The user asked for this sheet's own picture on the canvas, or asked
-    #: for it back off. Carries whether it should be up; which sheet is the
-    #: open tab's, since the button only shows on the two stamp tabs.
-    sheet_edit_asked = Signal(bool)
-
     #: A colour of the row being placed under was asked to be changed: its byte
     #: offset in the palette file. The panel does not edit it -- what a colour
     #: change means belongs to the window, which owns the palette document.
     colour_activated = Signal(int)
 
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__("Tiles", parent)
-        self.setObjectName(OBJECT_NAME)
-        self.setAllowedAreas(
-            Qt.DockWidgetArea.RightDockWidgetArea | Qt.DockWidgetArea.LeftDockWidgetArea
-        )
+    #: The open stamp sheet was asked to be edited: ``True`` for the 2x2
+    #: sheet, ``False`` for the 6x6. Nothing is placed and nothing changes
+    #: here -- the window opens the sheet in the Tilemap editor.
+    edit_sheet_asked = Signal(bool)
 
-        self._held: Layer1Tile | Layer2Word | StampBlock | SpritePick | None = None
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        # The offer dock takes its title from the page it turns to.
+        self.setWindowTitle("Tiles")
+
+        self._held: (
+            Layer1Tile
+            | Layer2Word
+            | StampBlock
+            | SpritePick
+            | SilentPick
+            | GridStamp
+            | None
+        ) = None
         self._layer1: list[QImage] = []
         #: The sprite offer: ``(number, image)`` pairs, in the order shown.
         self._sprites: list[tuple[int, QImage]] = []
         #: The transfer offer: ``(row, label, image)``, the warps in table
         #: order then the path exits in theirs. The label is the mode's --
         #: where the entry triggers and lands -- so a move rewrites it and the
-        #: dock stays free of the document.
+        #: panel stays free of the document.
         self._transfers: list[tuple[TransferRow, str, QImage]] = []
         #: How the Layer 2 thumbnails are drawn: handed the composed words,
         #: answers their pictures. Handed in rather than imported, because
@@ -337,12 +353,6 @@ class TilePaletteDock(QDockWidget):
         #: picture per block of that sheet -- the same contract, over the
         #: document's own stamp bytes.
         self._draw_stamps: Callable[[bool], list[QImage]] | None = None
-        #: Whether the stamp tabs are offering the 8x8 chars a sheet is drawn
-        #: from rather than the blocks it makes. Set by whoever put the
-        #: sheet on the canvas -- the two are one gesture, so the dock never
-        #: flips it on its own.
-        self._sheet_editing = False
-
         self._tabs = QTabBar()
         for tab in PaletteTab:
             self._tabs.addTab(tab.value)
@@ -366,74 +376,37 @@ class TilePaletteDock(QDockWidget):
         # Enter means "this one" as well, and arming is idempotent, so the two
         # paths cannot fight over a single row.
         self._list.itemActivated.connect(self._picked)
+        # The right button works on the offer as it does on the canvas: a
+        # right click picks exactly as a left one, and a right drag grabs a
+        # rectangle of the grid as a stamp.
+        self._list.right_picked.connect(self._picked)
+        self._list.region_grabbed.connect(self._region_grabbed)
 
-        # The Layer 2 entry's other bits, as tool settings. Checkboxes rather
-        # than the properties panel's yes/no combos: these set what the next
-        # placement will be, they do not edit a record.
-        self._palette_row = QSpinBox()
-        self._palette_row.setRange(0, 7)
-        self._palette_row.setPrefix("palette ")
-        self._x_flip = QCheckBox("X flip")
-        self._y_flip = QCheckBox("Y flip")
-        self._priority = QCheckBox("Priority")
-        for control in (self._palette_row, self._x_flip, self._y_flip, self._priority):
-            control.setEnabled(False)
-        self._palette_row.valueChanged.connect(self._attributes_changed)
-        self._x_flip.toggled.connect(self._attributes_changed)
-        self._y_flip.toggled.connect(self._attributes_changed)
-        self._priority.toggled.connect(self._attributes_changed)
+        # The Layer 2 entry's other bits, as tool settings, and the sixteen
+        # colours the row being placed under is drawn from -- the same widget
+        # the Map16 VRAM dock places its words with.
+        self._attributes = Layer2Attributes(ROW_COLOURS_TIP)
+        self._attributes.changed.connect(self._attributes_changed)
+        self._attributes.colour_activated.connect(self.colour_activated)
 
-        # The sixteen colours the row being placed under is drawn from. A
-        # palette row is a *number* in the control above and a set of colours
-        # on the map, and picking one by number is the same round trip through
-        # a redraw that the level header's sets used to be. Double-clicking one
-        # opens the Palettes panel on it, which is where a colour is changed.
-        self._row_colors = SwatchGrid(COLORS_PER_ROW, cell=SWATCH_CELL)
-        self._row_colors.setToolTip(wrap_tip(ROW_COLOURS_TIP))
-        self._row_colors.activated.connect(self._colour_activated)
-        self._palette_rows: tuple[tuple[Swatch, ...], ...] = ()
-
-        attributes = QWidget()
-        beside = QVBoxLayout(attributes)
-        beside.setContentsMargins(0, 0, 0, 0)
-        beside.setSpacing(2)
-        row = QHBoxLayout()
-        row.setContentsMargins(0, 0, 0, 0)
-        row.addWidget(self._palette_row)
-        row.addWidget(self._x_flip)
-        row.addWidget(self._y_flip)
-        row.addWidget(self._priority)
-        beside.addLayout(row)
-        beside.addWidget(self._row_colors, 0, Qt.AlignmentFlag.AlignLeft)
-        self._attributes = attributes
-
-        # `clicked`, not `toggled`, for the world bar's reason:
-        # `set_sheet_editing` must show the stance in effect without asking
-        # for it back.
-        self._sheet_edit = QPushButton("Edit this sheet")
-        self._sheet_edit.setCheckable(True)
-        self._sheet_edit.setToolTip(
-            wrap_tip("Draw the sheet's 8x8 tiles instead of placing blocks on the map")
-        )
-        # Read back off the button rather than taken from the signal: Qt's
-        # `clicked` carries the checked state on one overload and nothing on
-        # the other, and which one connects here is not worth depending on.
-        self._sheet_edit.clicked.connect(
-            lambda: self.sheet_edit_asked.emit(self._sheet_edit.isChecked())
-        )
+        # The stamp tabs' one button: the blocks are drawn in the Tilemap
+        # editor, and this is the way there from the sheet being picked out
+        # of. Like the colour strip's double-click, the panel only asks --
+        # what opening an environment means belongs to the window.
+        self._edit_sheet = QPushButton(EDIT_SHEET)
+        self._edit_sheet.setToolTip(EDIT_SHEET_TIP)
+        self._edit_sheet.clicked.connect(self._edit_sheet_clicked)
 
         self._hint = QLabel()
         self._hint.setWordWrap(True)
 
-        body = QWidget()
-        layout = QVBoxLayout(body)
+        layout = QVBoxLayout(self)
         layout.addWidget(self._tabs)
         layout.addWidget(self._marks)
         layout.addWidget(self._list, 1)
-        layout.addWidget(attributes)
-        layout.addWidget(self._sheet_edit)
+        layout.addWidget(self._attributes)
+        layout.addWidget(self._edit_sheet)
         layout.addWidget(self._hint)
-        self.setWidget(body)
 
         self._refill()
 
@@ -443,30 +416,6 @@ class TilePaletteDock(QDockWidget):
     def tab(self) -> PaletteTab:
         """Which layer's tiles are being offered."""
         return list(PaletteTab)[max(0, self._tabs.currentIndex())]
-
-    @property
-    def sheet_editing(self) -> bool:
-        """Whether the stamp tabs are offering chars for a sheet's picture
-        rather than blocks for the map."""
-        return self._sheet_editing
-
-    def set_sheet_editing(self, on: bool) -> None:
-        """Show ``on`` as the stance in effect, without asking for it.
-
-        Whoever owns the canvas decides when the sheet is up -- the button
-        only asks -- so this is how the answer comes back, and how the
-        stance goes down with a tab switch or a map that carries no sheets.
-        """
-        # The button is set first and unconditionally: it only *asks*, so a
-        # refusal -- a map with no sheets -- has to leave it unpressed.
-        self._sheet_edit.setChecked(on)
-        if on == self._sheet_editing:
-            return
-        self._sheet_editing = on
-        # A block in hand means nothing over a picture of chars, and the
-        # other way round.
-        self.disarm()
-        self._refill()
 
     def set_tab(self, tab: PaletteTab) -> None:
         """Switch to ``tab``, exactly as clicking it would -- the toolbar's
@@ -490,14 +439,9 @@ class TilePaletteDock(QDockWidget):
 
     def set_stamps(self, draw: Callable[[bool], list[QImage]] | None) -> None:
         """Turn the stamp tabs on, with ``draw`` answering one thumbnail per
-        block of the asked-for sheet. ``None`` turns them back off, and takes
-        the sheet-drawing stance down with them: a map with no sheets has no
-        picture to draw on."""
+        block of the asked-for sheet. ``None`` turns them back off."""
         self._draw_stamps = draw
         self._held = None
-        if draw is None:
-            self._sheet_editing = False
-            self._sheet_edit.setChecked(False)
         self._refill()
 
     def refresh_stamps(self) -> None:
@@ -507,9 +451,7 @@ class TilePaletteDock(QDockWidget):
         if self.tab not in STAMP_TABS:
             return
         self._refill()
-        held = self._held
-        if isinstance(held, StampBlock) and 0 <= held.block < self._list.count():
-            self._list.setCurrentRow(held.block)
+        self._select_held_row()
 
     def set_sprites(self, offers: Sequence[tuple[int, QImage]]) -> None:
         """Offer one sprite per ``(number, image)`` pair; empty is "no
@@ -556,7 +498,17 @@ class TilePaletteDock(QDockWidget):
     # -- what is in hand -----------------------------------------------------
 
     @property
-    def held(self) -> Layer1Tile | Layer2Word | StampBlock | SpritePick | None:
+    def held(
+        self,
+    ) -> (
+        Layer1Tile
+        | Layer2Word
+        | StampBlock
+        | SpritePick
+        | SilentPick
+        | GridStamp
+        | None
+    ):
         """What is in hand, exactly as :attr:`armed` said it."""
         return self._held
 
@@ -566,7 +518,15 @@ class TilePaletteDock(QDockWidget):
         return self._held.number if isinstance(self._held, Layer1Tile) else None
 
     def arm(
-        self, payload: Layer1Tile | Layer2Word | StampBlock | SpritePick | int | None
+        self,
+        payload: Layer1Tile
+        | Layer2Word
+        | StampBlock
+        | SpritePick
+        | SilentPick
+        | GridStamp
+        | int
+        | None,
     ) -> None:
         """Put ``payload`` in hand, or ``None`` to put down what is there.
 
@@ -592,21 +552,35 @@ class TilePaletteDock(QDockWidget):
         self._list.setCurrentItem(None)
         self._show_state()
 
+    def hold(self, payload: object) -> None:
+        """Put ``payload`` back in hand **without saying so**, and put the
+        selection back on its row.
+
+        :meth:`disarm`'s opposite, and for the same kind of caller: one that
+        already knows, so announcing would be telling it what it just said.
+        What a **redraw** of the offers uses -- the same tiles, sprites and
+        words in new colours -- because :meth:`set_tiles` and its siblings
+        drop the hand, which is right when the offer itself changed and
+        wrong when only its pixels did.
+        """
+        self._held = payload
+        self._select_held_row()
+        self._show_state()
+
     def pickup(
-        self, payload: Layer1Tile | Layer2Word | StampBlock | SpritePick
+        self, payload: Layer1Tile | Layer2Word | StampBlock | SpritePick | SilentPick
     ) -> None:
         """The eyedropper's entry: select ``payload``'s row, set the controls
-        to its attributes, and arm it -- whatever tab was open."""
+        to its attributes, and arm it -- whatever tab was open. A silent slot
+        has no row; it stays on the stamp tab it was picked from."""
         if isinstance(payload, Layer1Tile):
             wanted = PaletteTab.LAYER1
         elif isinstance(payload, SpritePick):
             wanted = PaletteTab.SPRITES
         elif isinstance(payload, StampBlock):
             wanted = PaletteTab.STAMPS_2X2 if payload.small else PaletteTab.STAMPS_6X6
-        elif self._offering_words:
-            # A word picked off the sheet being drawn on belongs to the tab
-            # already open: moving to Layer 2 would take the picture away.
-            wanted = self.tab
+        elif isinstance(payload, SilentPick):
+            wanted = self.tab if self.tab in STAMP_TABS else PaletteTab.STAMPS_2X2
         else:
             wanted = PaletteTab.LAYER2
         if self.tab is not wanted:
@@ -614,22 +588,9 @@ class TilePaletteDock(QDockWidget):
         if isinstance(payload, Layer2Word):
             self._set_attributes(payload)
             self._refill()
-        if isinstance(payload, Layer1Tile):
-            row = payload.number
-        elif isinstance(payload, SpritePick):
-            row = next(
-                (
-                    index
-                    for index, (number, _) in enumerate(self._sprites)
-                    if number == payload.sprite_id
-                ),
-                -1,
-            )
-        elif isinstance(payload, StampBlock):
-            row = payload.block
-        else:
-            row = payload.char
-        if 0 <= row < self._list.count():
+        # Asked after the tab switch above, since a row belongs to a tab.
+        row = self._row_of(payload)
+        if row is not None and 0 <= row < self._list.count():
             self._list.setCurrentRow(row)
             # Centered, not merely scrolled into view: the eyedropper's pick
             # should be findable at a glance, not sitting at the list's edge.
@@ -640,15 +601,55 @@ class TilePaletteDock(QDockWidget):
 
     # -- internals -----------------------------------------------------------
 
+    def _row_of(self, payload: object) -> int | None:
+        """Which row of the **open tab** offers ``payload``, if one does.
+
+        A payload belonging to another tab has no row here, and a grabbed
+        region is not a row at all -- it is a rectangle of them.
+        """
+        if isinstance(payload, Layer1Tile):
+            return payload.number if self.tab is PaletteTab.LAYER1 else None
+        if isinstance(payload, SpritePick):
+            if self.tab is not PaletteTab.SPRITES:
+                return None
+            return next(
+                (
+                    index
+                    for index, (number, _) in enumerate(self._sprites)
+                    if number == payload.sprite_id
+                ),
+                None,
+            )
+        if isinstance(payload, StampBlock):
+            return payload.block if self.tab in STAMP_TABS else None
+        if isinstance(payload, Layer2Word):
+            return payload.char if self._offering_words else None
+        return None
+
+    def _select_held_row(self) -> None:
+        """Put the selection back on the row of whatever is in hand.
+
+        What every redraw of the offer needs: the list was cleared and
+        refilled, and a hand that survived that should still be pointing at
+        the row it holds.
+        """
+        row = self._row_of(self._held)
+        if row is not None and 0 <= row < self._list.count():
+            self._list.setCurrentRow(row)
+
+    def _edit_sheet_clicked(self) -> None:
+        """The Edit Sheet button: ask for the open stamp sheet, by which one
+        it is. Guarded, because the button is only ever up on those tabs."""
+        if self.tab in STAMP_TABS:
+            self.edit_sheet_asked.emit(self.tab is PaletteTab.STAMPS_2X2)
+
     def _marks_toggled(self, _on: bool) -> None:
         """The marks went on or off: redraw the offer, keeping the row in
         hand selected -- the picture changed, not the pick."""
         if self.tab is not PaletteTab.LAYER1:
             return
         self._refill()
-        held = self._held
-        if isinstance(held, Layer1Tile) and 0 <= held.number < self._list.count():
-            self._list.setCurrentRow(held.number)
+        self._select_held_row()
 
     def _switched(self, _index: int) -> None:
         # A tool in hand belongs to the tab it came from.
@@ -658,12 +659,9 @@ class TilePaletteDock(QDockWidget):
 
     @property
     def _offering_words(self) -> bool:
-        """Whether the open tab is offering 16-bit tilemap words: the Layer 2
-        tab always, a stamp tab while its sheet is the picture being drawn
-        on -- the chars a block is *made of*, rather than the block."""
-        return self.tab is PaletteTab.LAYER2 or (
-            self.tab in STAMP_TABS and self._sheet_editing
-        )
+        """Whether the open tab is offering 16-bit tilemap words -- the
+        Layer 2 tab."""
+        return self.tab is PaletteTab.LAYER2
 
     def _picked(self, item: QListWidgetItem) -> None:
         number = item.data(Qt.ItemDataRole.UserRole)
@@ -686,19 +684,35 @@ class TilePaletteDock(QDockWidget):
             # The rows carry their block's sheet start offset directly.
             self.arm(StampBlock(number))
 
+    def _region_grabbed(
+        self, entries: list[tuple[int, int, int]], width: int, height: int
+    ) -> None:
+        """A right drag swept a rectangle of the offer: arm it whole, as the
+        stamp the same drag would grab off the map.
+
+        Only the tabs whose rows are placeable tile material answer -- the
+        Layer 1 tiles, and the chars wherever words are on offer. A sprite,
+        a stamp block or a transfer row is a record-shaped thing, and a
+        rectangle of those means nothing. A one-cell drag never reaches
+        here -- the grid degrades it to a pick.
+        """
+        if self.tab is PaletteTab.LAYER1:
+            leaves = tuple((dx, dy, Layer1Tile(number)) for dx, dy, number in entries)
+        elif self._offering_words:
+            leaves = tuple(
+                (dx, dy, Layer2Word(self._composed(number)))
+                for dx, dy, number in entries
+            )
+        else:
+            return
+        self.arm(GridStamp(leaves, width, height))
+
     def _composed(self, char: int) -> int:
-        return layer2_word_of(
-            char,
-            self._palette_row.value(),
-            self._x_flip.isChecked(),
-            self._y_flip.isChecked(),
-            self._priority.isChecked(),
-        )
+        return self._attributes.composed(char)
 
     def _attributes_changed(self) -> None:
         """The tool settings moved: redraw the offer and re-arm what is held
         under the new attributes."""
-        self._show_row_colours()
         if not self._offering_words:
             return
         self._refill()
@@ -710,42 +724,11 @@ class TilePaletteDock(QDockWidget):
                 self._list.setCurrentRow(held.char)
 
     def _set_attributes(self, word: Layer2Word) -> None:
-        for control, value in (
-            (self._palette_row, word.palette_row),
-            (self._x_flip, word.x_flip),
-            (self._y_flip, word.y_flip),
-            (self._priority, word.priority),
-        ):
-            control.blockSignals(True)
-            if isinstance(control, QSpinBox):
-                control.setValue(value)
-            else:
-                control.setChecked(bool(value))
-            control.blockSignals(False)
-        # The controls were set with their signals blocked, so the strip is
-        # moved by hand: a pick has to bring its own row's colours with it.
-        self._show_row_colours()
+        self._attributes.show_word(word)
 
     def set_palette_rows(self, rows: Sequence[Sequence[Swatch]]) -> None:
-        """Offer the colours of each of the eight background rows.
-
-        All eight rather than the one on show, because the control moves
-        between them and asking the window again per keystroke would be a
-        round trip for a slice.
-        """
-        self._palette_rows = tuple(tuple(row) for row in rows)
-        self._show_row_colours()
-
-    def _show_row_colours(self) -> None:
-        which = self._palette_row.value()
-        held = self._palette_rows[which] if which < len(self._palette_rows) else ()
-        self._row_colors.set_swatches(held)
-        self._row_colors.setVisible(bool(held))
-
-    def _colour_activated(self, index: int) -> None:
-        offset = self._row_colors.swatches[index].offset
-        if offset is not None:
-            self.colour_activated.emit(offset)
+        """Offer the colours of each of the eight background rows."""
+        self._attributes.set_palette_rows(rows)
 
     def _refill(self) -> None:
         self._list.clear()
@@ -756,18 +739,15 @@ class TilePaletteDock(QDockWidget):
         on_words = self._offering_words
         self._attributes.setVisible(on_words)
         self._marks.setVisible(on_layer1)
-        self._sheet_edit.setVisible(on_stamps)
-        self._sheet_edit.setEnabled(self._draw_stamps is not None)
-        for control in (self._palette_row, self._x_flip, self._y_flip, self._priority):
-            control.setEnabled(on_words and self._draw_layer2 is not None)
+        self._edit_sheet.setVisible(on_stamps)
+        self._edit_sheet.setEnabled(self._draw_stamps is not None)
+        self._attributes.set_controls_enabled(
+            on_words and self._draw_layer2 is not None
+        )
         # The tile and stamp tabs are a tight grid of pictures; the sprites
         # read as rows, because a sprite's name is half of what tells them
         # apart. The 6x6 blocks get the one larger cell.
-        size = (
-            STAMP_ICON
-            if self.tab is PaletteTab.STAMPS_6X6 and not self._sheet_editing
-            else ICON
-        )
+        size = STAMP_ICON if self.tab is PaletteTab.STAMPS_6X6 else ICON
         # The transfer rows read as rows for the sprites' reason and one
         # more: what tells two entries apart is where they go, which is words.
         rows = on_sprites or on_transfers
@@ -856,6 +836,17 @@ class TilePaletteDock(QDockWidget):
         elif isinstance(self._held, SpritePick):
             self._hint.setText(
                 ARMED_SPRITE.format(what=sprite_name(self._held.sprite_id))
+            )
+        elif isinstance(self._held, SilentPick):
+            what = (
+                f"stamp {hexnum(self._held.tile, 3)}"
+                if self._held.stamped
+                else f"tile {hexnum(self._held.tile)}"
+            )
+            self._hint.setText(ARMED_SILENT.format(what=what))
+        elif isinstance(self._held, GridStamp):
+            self._hint.setText(
+                ARMED_REGION.format(w=self._held.width, h=self._held.height)
             )
         else:
             self._hint.setText(ARMED.format(what=hexnum(self._held.char, 3)))

@@ -4,6 +4,7 @@ includefrom sa1.asm
 
 pushpc
 
+if !sa1_hijacks_external == 0
 org $0CAB8A
 	JSL window_stuff
 	BRA +
@@ -14,52 +15,10 @@ org $03C575	; Make the light windowing gets updated every frame
 	db $00
 
 org $03CA39
-	STZ $2250
-	STA $2251
-	STZ $2252
-	LDA $06                   
-	STA $2253
-	STZ $2254
-	CMP ($00)
-	LDA $2307
-	LDY $00
-	BPL +
-	EOR #$FF
-	INC
-+	STA $02                   
-	LDA $01                   
-	BPL +
-	EOR #$FF                
-	INC
-+	JML fireworks_fix
-fireworks_fix_back:
-	NOP
-	LDA $2307
-assert pc() <= $03CA64+3
+incsrc "../inline/03CA39.asm"
 
 org $03CB08
-	STZ $2250
-	STA $2251
-	STZ $2252
-	LDA $06                   
-	STA $2253
-	STZ $2254
-	CMP ($00)
-	LDA $2307
-	LDY $00
-	BPL +
-	EOR #$FF
-	INC
-+	STA $02                   
-	LDA $01                   
-	BPL +
-	EOR #$FF                
-	INC
-+	JML fireworks_fix2
-fireworks_fix2_back:
-	NOP
-	LDA $2307
-assert pc() <= $03CB33+3
+incsrc "../inline/03CB08.asm"
 
 ORG $03D7AB
 	JML ReznorFix
@@ -74,88 +33,10 @@ ORG $01808C
 	NOP #2
 
 ORG $01CC28
-	STZ $2250
-	REP #$20
-	LDA $00
-	AND #$00FF
-	STA $2251
-	LDA $02
-	AND #$00FF
-	STA $2253
-	NOP
-	BRA $00
-	LDA $2306
-	STA $04
-	LDA $03
-	AND #$00FF
-	STA $2253
-	CLC
-	BRA $00
-	LDA $05
-	AND #$00FF
-	ADC $2306
-	STA $05
-	LDA $01
-	AND #$00FF
-	STA $2251
-	LDA $02
-	AND #$00FF
-	STA $2253
-	CLC
-	BRA $00
-	LDA $2306
-	ADC $05
-	STA $05
-	LDA $03
-	AND #$00FF
-	STA $2253
-	CLC
-	BRA $00
-	LDA $06
-	AND #$00FF
-	ADC $2306
-	STA $06
-	SEP #$20
-	RTS
-		
-	fillbyte $00
-	fill $08
-	assert pc() <= $01CC94
+incsrc "../inline/01CC28.asm"
 
 ORG $01C804
-	PHA
-	LDA #$01
-	STA $2250
-	PLA
-	STA $2252
-	STZ $2251
-	LDA #$05
-	STA $2253
-	STZ $2254
-	NOP
-	BRA $00
-	LDA $2306
-	STA $02
-	STA $06
-	LDA $2307
-	STA $03
-	STA $07
-	LDY #$00
-	LDA $74B8
-	SEC
-	SBC $74B0
-	BPL +
-	EOR #$FF
-	INC A
-	INY
-+	STY $01
-	STA $2252
-	STZ $2251
-	LDA #$05
-	STA $2253
-	STZ $2254
-	JSL Continue_01C804
-	assert pc() <= $01C84D
+incsrc "../inline/01C804.asm"
 	
 ORG $03DEDF
 	JML Mode7Stuff
@@ -170,67 +51,10 @@ ORG $03DDE3
 	NOP
 	
 ORG $03995E
-	STZ $2250
-	LDA $04
-	STA $2251
-	STZ $2252
-	LDA #$38
-	LDY $05
-	BNE +
-	STA $2253
-	STZ $2254
-	ASL $2306
-	LDA $2307
-	ADC #$00
-+	LSR $01
-	BCC +
-	EOR #$FF
-	INC A
-+	STA $04
-	LDA $06
-	STA $2251
-	LDA #$38
-	LDY $07
-	BNE +
-	JML Continue_03995E
-	NOP
-Return_03995E:
-	LDA $2307
-	ADC #$00
-+	LSR $03
-	BCC +
-	EOR #$FF
-	INC A
-+	STA $06
-	assert pc() <= $0399A4
+incsrc "../inline/03995E.asm"
 	
 ORG $02D870
-	PHP
-	BPL CODE_02D876
-	EOR #$FF
-	INC A
-CODE_02D876:
-	STA $2252
-	LDA #$01
-	STA $2250
-	STZ $2251
-	LDA $3410,X
-	LSR
-	STA $2253
-	STZ $2254
-	NOP
-	BRA $00
-	LDA $2306
-	STA $0E
-	LDA $2307
-	JML MoreMultiplyFix
-Tralalal:
-	PLP
-	BPL +
-	EOR #$FF
-	INC A
-+	RTS
-	assert pc() <= $02D8A1
+incsrc "../inline/02D870.asm"
 
 ORG $02F015
 	LDA.B #!Wiggers
@@ -242,89 +66,18 @@ ORG $02F0F0
 	MVP !Wiggers/65536,!Wiggers/65536
 	
 ORG $02D689
-	LDA $04
-	STZ $2250
-	STA $2251
-	STZ $2252
-	LDA $3410,X
-	LDY $05
-	BNE CODE_02D6A3
-	STA $2253
-	STZ $2254
-	NOP
-	BRA $00
-	ASL $2306
-	LDA $2307
-	ADC #$00
-CODE_02D6A3:
-	LSR $01
-	BCC CODE_02D6AA
-	EOR #$FF
-	INC A
-CODE_02D6AA:
-	STA $04
-	LDA $06
-	STA $2251
-	LDA $3410,X
-	LDY $07
-	BNE CODE_02D6C6
-	JML MultiplyFix
-	db $00
-CODE_02D6C6:
-	assert pc() <= $02D6C6
+incsrc "../inline/02D689.asm"
 	
 ORG $02FB33
-	STZ $2250
-	LDA $04
-	STA $2251
-	STZ $2252
-	LDA #$50
-	LDY $05
-	BNE +
-	STA $2253
-	STZ $2254
-	NOP
-	BRA $00
-	ASL $2306
-	LDA $2307
-	ADC #$00
-+	LSR $01
-	BCC +
-	EOR #$FF
-	INC A
-+	STA $04
-	LDA $06
-	STA $2251
-	LDA #$50
-	LDY $07
-	BNE +
-	STA $2253
-	JML MultiplyFix3
-Return_MultiplyFix3:
-+	LSR $03
-	BCC +
-	EOR #$FF
-	INC A
-+	STA $06
-
-assert pc() <= $02FB77+2
+incsrc "../inline/02FB33.asm"
 
 ORG $01F43E
-	LDA #$01
-	STA $2250
-	LDA $3284,x
-	STA $2252
-	STZ $2251
-	LDA #$04
-	STA $2253
-	STZ $2254
-	;NOP
-	;BRA $00
-	LDA $3334,x
-	STA $07
-	LSR
-	LDA $2307
-assert pc() <= $01F45A+3
+incsrc "../inline/01F43E.asm"
+else
+ReznorFix_Return = $03D7AF
+Mode7Continue = $03DEE5
+Mode7MoreContinue = $03DD81
+endif
 	
 ;=======================================;
 ; Macros				;

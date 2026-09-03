@@ -38,11 +38,12 @@ plain LoROM stops. ``sa1`` starts at 1 MB -- SA-1 Pack needs freespace, so a
 512 KB cartridge is not a thing it can produce -- and reaches 6 and 8 MB, which
 the chip's MMC maps in 1 MB super-banks. See :attr:`~smw_tools.bases.RomBase.sizes`.
 
-A size whose :attr:`RomSize.define` is ``None`` is one the *assembler* cannot
-reach, because the memory map the source assembles under cannot address it. It
-exists for a base that gets there another way -- for ``sa1``, by the patch's own
-``asm/6mb.asm``, which rewrites the MMC bank switch and mirrors the cartridge
-header where a >4 MB SA-1 ROM needs a second copy of it.
+A size whose :attr:`RomSize.define` is ``None`` would be one the *assembler*
+cannot reach, because the memory map the source assembles under cannot address
+it; no size lacks one today. Past 4 MB only the SA-1 layout reaches, under the
+framework's own codes, and ``Config/SA1Pack.asm`` does what a >4 MB SA-1 ROM
+needs besides -- the MMC bank-switch values and the cartridge header's second
+copy.
 """
 
 from __future__ import annotations
@@ -102,9 +103,9 @@ class RomSize:
 #: ``$0F``, so anything smaller is an assembly that cannot succeed rather than a
 #: choice anyone could want.
 #:
-#: 5 MB and 7 MB are absent for the opposite reason: nothing can reach them.
-#: Past 4 MB the source's LoROM map runs out, and what gets further is SA-1
-#: Pack's own pair of patches -- which are 6 MB and 8 MB and nothing between.
+#: 5 MB and 7 MB are absent because nothing offers them: past 4 MB only the
+#: SA-1 layout reaches, and the framework declares 6 MB and 8 MB for it and
+#: nothing between.
 ROM_SIZES: dict[str, RomSize] = {
     size.id: size
     for size in (
@@ -116,10 +117,11 @@ ROM_SIZES: dict[str, RomSize] = {
         RomSize("3mb", "3 MB", "$0E", 3072 * 1024),
         RomSize("3.5mb", "3.5 MB", "$0F", 3584 * 1024),
         RomSize("4mb", "4 MB", "$10", 4096 * 1024),
-        # Beyond what the source's memory map can address -- reached by a
-        # patch, not by the assembler. See the module docstring.
-        RomSize("6mb", "6 MB", None, 6144 * 1024),
-        RomSize("8mb", "8 MB", None, 8192 * 1024),
+        # The framework's own codes for the two SA-1 sizes past 4 MB: the
+        # header byte written is $0D for both, and the image is padded to
+        # the size named. Only a coprocessor base offers them.
+        RomSize("6mb", "6 MB", "$12", 6144 * 1024),
+        RomSize("8mb", "8 MB", "$13", 8192 * 1024),
     )
 }
 

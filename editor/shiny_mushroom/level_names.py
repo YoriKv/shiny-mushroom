@@ -47,8 +47,8 @@ PART_COUNTS = (31, 15, 13)
 #: The name box's width in characters; shorter names are padded with spaces.
 BOX_WIDTH = 19
 
-#: The character tiles, off ``tables/fonts/standard.txt`` -- the asar table
-#: file the strings are assembled through, restated here so a session with no
+#: The character tiles, off ``tables/fonts/standard.asm`` -- the asar character
+#: assignments the strings are assembled through, restated here so a session with no
 #: disassembly tree in reach can still read a name off its cartridge.
 _FONT = {
     **{0x00 + i: chr(ord("A") + i) for i in range(26)},

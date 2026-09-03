@@ -76,12 +76,28 @@ macro update_pointers_immediate(index)
     STA !sprite_num_cache
 endmacro
 
+; LOCAL MODIFICATION (shiny-mushroom): the pointer-indirect table is
+; switchable. A build whose source already spells those 1,006 accesses for
+; both cartridges sets more_sprites_dp_nontrivial=0; the other two tables
+; and the clean-ROM guard are as upstream has them.
+if defined("more_sprites_dp_nontrivial") == 0
+	!more_sprites_dp_nontrivial = 1
+endif
+if defined("more_sprites_moves") == 0
+	!more_sprites_moves = 1
+endif
 if read1($0180A9) != $22
+if !more_sprites_moves
 incsrc non_dp_remap.asm
 incsrc dp_trivial_remap.asm
+endif
+if !more_sprites_dp_nontrivial
 incsrc dp_nontrivial_remap.asm
 endif
+endif
+if !more_sprites_moves
 incsrc inc_max_sprites.asm
+endif
 
 ; The main task of this patch is to remap three sprite tables that were previously on the direct page off of the direct page, namely the sprite number table, the
 ; X position low byte table and the Y position low byte table. The main idea for doing this is to store three pointers on the direct page that point to the appropriate
@@ -93,6 +109,7 @@ incsrc inc_max_sprites.asm
 ; These hijacks have the suffix _RESTORE.
 
 ; This is a special hijack used to reset the values in all IRAM sprite tables to 0. It gets called on level load.
+if !sa1_hijacks_external == 0
 org $00A1A8
 autoclean JSL SPRITE_IRAM_RESET
 NOP
@@ -357,6 +374,7 @@ org $01A5DA
 ;yoshi spit fire (~Vitor Vilela)
 org $01F27D
 	autoclean JML YOSHI_SPIT
+endif
 	
 freecode
 

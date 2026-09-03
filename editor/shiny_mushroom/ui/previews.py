@@ -25,12 +25,14 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import NamedTuple
 
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QImage
 
 from shiny_mushroom.addresses import Addresses
+from shiny_mushroom.cart_patches import claimed
 from shiny_mushroom.catalog import (
     CatalogKey,
     Entry,
@@ -47,11 +49,11 @@ from shiny_mushroom.edit import Level
 from shiny_mushroom.index import LevelIndex
 from shiny_mushroom.level import geometry, level_shape
 from shiny_mushroom.level_snapshot import LevelSnapshot
-from shiny_mushroom.objects import crashes_the_loader, parse_objects
+from shiny_mushroom.objects import LevelObject, crashes_the_loader, parse_objects
 from shiny_mushroom.preview import Thumbnail, previews_from, sprite_preview
 from shiny_mushroom.rom_patches import gfx_list_rows, level_patch
-from shiny_mushroom.sprite_art import SpriteTile
-from shiny_mushroom.ui.create import CreateDock
+from shiny_mushroom.sprite_art import CUSTOM_ART_BASE, SpriteTile
+from shiny_mushroom.ui.create import CreatePanel
 from shiny_mushroom.ui.render import pixels_to_image
 from smw_tools.level_graphics import LAYER_SLOTS
 
@@ -76,6 +78,19 @@ PROBE_SCREENS = 0x20
 PROBE_BATCH = 48
 
 
+#: What a reshaped hand's picture is keyed by: the row, and the settings
+#: byte the keys left it with. Two objects of one row at one size are one
+#: picture, whichever record either was picked up from.
+type ShapeKey = tuple[CatalogKey, int]
+
+
+def shape_key(entry: Entry) -> ShapeKey:
+    """``entry``'s :data:`ShapeKey` -- for a reshaped entry only."""
+    template = entry.template
+    assert isinstance(template, LevelObject)
+    return entry.key, template.settings
+
+
 class Thumb(NamedTuple):
     """A catalogue entry's picture, and where it sits against its own block.
 
@@ -93,6 +108,11 @@ class Thumb(NamedTuple):
     image: QImage
     dx: int
     dy: int
+
+
+def _no_assets() -> Mapping[int, bytes]:
+    """What a level with no project behind it lays over the image: nothing."""
+    return MappingProxyType({})
 
 
 @dataclass(frozen=True)
@@ -118,6 +138,19 @@ class Held:
     drawn: Mapping[int, frozenset[tuple[int, int]]]
     rom: bytes | None
     addresses: Addresses
+    #: **Asked for, not carried**: a zero-argument callable answering with the
+    #: project's saved graphics and its held Map16 tables, over the image --
+    #: what `cart_patches.saved_assets_patch` gathers. That gather reads,
+    #: decompresses and repacks every edited graphics file, and this value is
+    #: built afresh on every edit commit, load, capture and hover, while only a
+    #: probe batch ever looks at it -- so it is paid where it is read, once per
+    #: :meth:`Previews.send_batch`, and nowhere else.
+    #:
+    #: A preview is drawn by running the loader over a cartridge, so it has to
+    #: be the same cartridge the canvas is drawn from: without these the
+    #: pictures come back in the built ROM's stock tiles while the level beside
+    #: them shows the edit. Empty where there is nothing saved and nothing held.
+    assets: Callable[[], Mapping[int, bytes]] = _no_assets
 
 
 def sprite_tilesets_of(where: Held) -> frozenset[int]:
@@ -206,9 +239,14 @@ class Previews(QObject):
     #: time, driven by the pointer resting on a row.
     sprite_art_requested = Signal(object, int, object)
 
+    #: A batch carrying reshaped hands came back -- see :meth:`thumb_for`.
+    #: The window repaints the ghost on it, whether the shape drew a picture
+    #: or nothing at all; the panel has no row for either.
+    shaped_ready = Signal()
+
     def __init__(
         self,
-        panel: CreateDock,
+        panel: CreatePanel,
         held: Callable[[], Held | None],
         parent: QObject | None = None,
     ) -> None:
@@ -219,6 +257,15 @@ class Previews(QObject):
         #: in the panel because it is filled from three places at different
         #: times and each of those adds to it.
         self.thumbs: dict[CatalogKey, Thumb] = {}
+        #: Pictures of what is in hand once the keys have reshaped it -- a
+        #: coins row three wide, a shooter on its fourth variant -- by row and
+        #: settings byte. Apart from :attr:`thumbs` because the panel has no
+        #: row for them: they are the ghost's alone, asked for on demand and
+        #: dropped with the memories they were drawn from.
+        self.shaped: dict[ShapeKey, Thumb] = {}
+        #: Which of those have been asked for, answered or not: a shape that
+        #: drew nothing must not be re-asked on every repaint of the ghost.
+        self.asked_shapes: set[ShapeKey] = set()
         #: Which tileset the object list on offer was built for. The same number
         #: is a different object in a different one, and this is what stops the
         #: list being rebuilt -- and the panel scrolled back to the top -- on
@@ -233,21 +280,35 @@ class Previews(QObject):
         #: without it -- see `catalog.CatalogKey` -- so the pictures and the
         #: asked-about numbers go together when it changes, see :meth:`offer`.
         self.sprite_tileset: int | None = None
+        #: The project's rows the sprite catalogue was last built over -- the
+        #: names and the strides. The object list follows the tileset; this
+        #: is the sprite list's own reason to rebuild, so a renamed or
+        #: newly added sprite reaches the panel without waiting on a
+        #: tileset change, and an ordinary edit rebuilds nothing.
+        self.offered_custom: tuple[dict[int, str], dict[int, int]] | None = None
         #: Which sprite numbers have been asked about, whether or not the answer
         #: was anything. A probe is ~30 ms, and a number that drew nothing must
         #: not be re-asked every time the pointer passes over its row.
         self.asked_sprites: set[int] = set()
         #: What the batch in flight laid out where, and what is still queued
         #: behind it.
-        self.layout: dict[int, CatalogKey] = {}
+        self.layout: dict[int, Entry] = {}
         self.queue: list[Entry] = []
-        #: Which tileset the batch in flight was laid out for. A load takes long
-        #: enough for the level under it to change, and an answer about another
-        #: tileset's objects is an answer about different objects.
+        #: Which tileset the batch in flight was laid out for, and ``None``
+        #: when nothing is out. A load takes long enough for the level under it
+        #: to change, and an answer about another tileset's objects is an
+        #: answer about different objects -- so this is what :meth:`probed`
+        #: judges an answer by, and what tells :meth:`probe` a chain is already
+        #: running. A chain is only ever extended while the tileset it was laid
+        #: out for is still the one in front, so it is the whole chain's.
         self.probing: int | None = None
         #: What the pictures on offer were last drawn from -- see
         #: :meth:`redraw`, which is a no-op while it has not moved.
         self._drawn_from: object | None = None
+        #: Set when the offer dropped its object pictures for a tileset it
+        #: had not seen: the window spends it by probing. Kept here rather
+        #: than decided there, because the drop is this object's own.
+        self.probe_owed = False
         # The pointer has rested on a row with no picture yet. Only the sprites
         # can be answered on demand -- an object's shape needs the whole
         # catalogue probe, which has already been asked for by then.
@@ -256,6 +317,55 @@ class Previews(QObject):
     def thumb(self, key: CatalogKey) -> Thumb | None:
         """The picture on offer for ``key``, if one has been rendered."""
         return self.thumbs.get(key)
+
+    def thumb_for(self, entry: Entry) -> Thumb | None:
+        """The picture of what placing ``entry`` produces -- the row's own,
+        or, for a hand the keys have reshaped, one of that shape.
+
+        A reshaped hand's picture is the game's own work like any other and
+        costs a load to learn, so the first ask for a shape **sends the
+        probe** and answers nothing; :attr:`shaped_ready` says when it has
+        landed. Every shape is asked for once.
+        """
+        if not entry.reshaped:
+            return self.thumbs.get(entry.key)
+        key = shape_key(entry)
+        found = self.shaped.get(key)
+        if found is None and key not in self.asked_shapes:
+            self.probe_shape(entry)
+        return found
+
+    def probe_shape(self, entry: Entry) -> None:
+        """Ask what ``entry``'s reshaped hand draws: one entry joining the
+        catalogue's own chain, since it needs the same scratch level and the
+        same single layout slot -- behind whatever batch is out, and sent at
+        once when nothing is."""
+        self.asked_shapes.add(shape_key(entry))
+        template = entry.template
+        assert isinstance(template, LevelObject)
+        if crashes_the_loader(template.number, template.settings):
+            return
+        self.queue.append(entry)
+        if self.probing is None:
+            self.send_batch()
+
+    def awaiting(self, entry: Entry) -> bool:
+        """Whether a picture of ``entry``'s reshaped hand is still out.
+
+        What lets the ghost keep the picture it is already showing while the
+        next shape is being drawn -- see
+        :meth:`~shiny_mushroom.ui.main_window.MainWindow._placed`. It goes
+        false as soon as the answer lands, and equally when the shape was
+        asked about and drew nothing, so a variant that really is empty is not
+        covered for ever by the last one that was not.
+        """
+        if not entry.reshaped:
+            return False
+        key = shape_key(entry)
+        if key in self.shaped:
+            return False
+        out = (*self.queue, *self.layout.values())
+        return any(other.reshaped and shape_key(other) == key for other in out)
 
     def forget(self) -> None:
         """Drop everything: the pictures, and every record of having asked.
@@ -267,13 +377,22 @@ class Previews(QObject):
         being asked for.
         """
         self.thumbs = {}
+        self._forget_shapes()
         self.asked.clear()
         self.asked_sprites.clear()
+        self.offered_custom = None
         self.layout = {}
         self.probing = None
         self.queue = []
         self._drawn_from = None
         self.offer()
+
+    def _forget_shapes(self) -> None:
+        """Drop the reshaped hands' pictures and the asks behind them:
+        they were drawn from memories, or for a tileset, no longer in
+        front of us, and the ghost asks again as it needs them."""
+        self.shaped = {}
+        self.asked_shapes.clear()
 
     # -- what the panel shows -----------------------------------------------
 
@@ -303,8 +422,22 @@ class Previews(QObject):
             self.redraw()
             return
         tileset = where.doc.fg_bg_tileset
+        # The project's own sprites, as the document carries them -- names
+        # stamped at the read, strides from the built cartridge's count
+        # table -- so the rows offered and the records placed agree.
+        custom = dict(where.doc.custom_names) if where.doc.custom_sprites else {}
+        counts = (
+            {number: where.doc.extra_counts.get(number, 0) for number in custom}
+            if custom
+            else {}
+        )
         if tileset != self.tileset:
             self.tileset = tileset
+            # ...and the new tileset's have to be asked for. A level *load*
+            # probes after the picture is up, but a header edit is a refresh
+            # and never reaches that line -- so without this the catalogue
+            # loses every object picture until the level is opened again.
+            self.probe_owed = True
             # The object pictures go with the old list. A catalogue key carries
             # no tileset -- see `catalog.CatalogKey` -- so the same number keyed
             # the same way is a different object here, and a picture kept across
@@ -316,11 +449,15 @@ class Previews(QObject):
                 for key, thumb in self.thumbs.items()
                 if key[0] is not Stream.OBJECT
             }
+            self._forget_shapes()
             self.asked.clear()
+            self.offered_custom = None
+        if (custom, counts) != self.offered_custom:
+            self.offered_custom = (custom, counts)
             self._panel.set_catalog(
                 {
                     Stream.OBJECT: object_entries(tileset),
-                    Stream.SPRITE: sprite_entries(),
+                    Stream.SPRITE: sprite_entries(custom, counts),
                 }
             )
         sprite_tileset = where.doc.sprite_tileset
@@ -439,6 +576,10 @@ class Previews(QObject):
         if drawn_from == self._drawn_from:
             return
         self._drawn_from = drawn_from
+        # The reshaped hands' pictures were drawn from the memories that
+        # just moved, as every object picture was; unlike those they are
+        # not rendered here, so they go, and the ghost asks again.
+        self._forget_shapes()
         made = as_images(previews_from(where.snapshot, footprints))
         # Sprites, from the artwork captured for this level's own numbers. Every
         # one of them answers -- a sprite with no artwork previews as the glyph
@@ -471,6 +612,16 @@ class Previews(QObject):
 
     # -- probing the object catalogue ---------------------------------------
 
+    def probe_if_owed(self) -> bool:
+        """Ask for the new tileset's object pictures, if the last offer
+        dropped the old ones. Reports whether there was a reading to spend --
+        which is not quite whether a batch went out, because :meth:`probe`
+        leaves it standing while a chain is still running."""
+        if not self.probe_owed:
+            return False
+        self.probe()
+        return True
+
     def probe(self) -> None:
         """Start finding out what every object in this tileset draws.
 
@@ -483,9 +634,24 @@ class Previews(QObject):
         thumbnail. Once per tileset, too, because the answer is the tileset's:
         switching between two levels that share one costs nothing.
 
+        **One chain at a time.** A second one started while a chain is running
+        would lay its batch over the single :attr:`layout` slot the answer still
+        out is going to be read against, and every answer from then on would be
+        paired with the batch sent after it -- pictures of objects nobody asked
+        about. So an ask that arrives mid-chain leaves the reading standing and
+        the chain spends it when it drains (:meth:`send_batch`), by which time
+        :meth:`probed` has abandoned it if the tileset moved.
+
         See :data:`PROBE_BATCH` for why this is batched at all and why the
         batches are chained rather than queued.
         """
+        if self.probing is not None or self.queue:
+            self.probe_owed = True
+            return
+        # Asking is what discharges the reading, however the ask was reached
+        # -- the load path calls this directly, and would otherwise leave the
+        # next refresh probing a second time for the same tileset.
+        self.probe_owed = False
         where = self._held()
         if where is None or where.rom is None:
             return
@@ -519,14 +685,28 @@ class Previews(QObject):
         header's screen count goes up with it -- a one-screen level has six
         cells and a batch needs forty-eight. Nothing on disk is touched, and the
         canvas never sees the result: it comes back on a signal of its own.
+
+        **The chain ends here, and spends whatever was owed while it ran.** A
+        tileset change during a chain leaves the reading standing rather than
+        starting a second one over it (:meth:`probe`), so the drained queue is
+        where that one is asked for -- and :meth:`probe` decides afresh, so a
+        tileset already answered for by then costs nothing.
         """
         where = self._held()
         if where is None or where.rom is None:
+            # Nothing to lay a batch over. The chain ends rather than leaving a
+            # request standing as in flight that nothing will ever answer --
+            # which would be a chain no later probe could get past. Anything
+            # owed stays owed, for a refresh with a level under it to spend.
+            self.queue = []
+            self.layout = {}
+            self.probing = None
             return
         batch, self.queue = self.queue[:PROBE_BATCH], self.queue[PROBE_BATCH:]
         if not batch:
             self.layout = {}
             self.probing = None
+            self.probe_if_owed()
             return
         self.probing = self.tileset
         # The widest shape the format can express, so the grid has room. The
@@ -545,13 +725,23 @@ class Previews(QObject):
             # rather than spending a load learning that they draw nothing.
             self.send_batch()
             return
+        # The one place the project's assets are gathered, and once per batch:
+        # asking the window for them reads and repacks every edited graphics
+        # file, so it is paid here rather than on every commit and hover that
+        # builds a :class:`Held`.
+        assets = where.assets()
         try:
-            patches = level_patch(
+            # The assets first and their claim handed on, exactly as every
+            # other door lays them down: both they and a scratch stream this
+            # long can want the same free space.
+            patches = dict(assets)
+            patches |= level_patch(
                 where.rom,
                 where.level,
                 header,
                 stream,
                 where.doc.streams()[1],
+                taken=claimed(assets),
                 where=where.addresses,
             )
         except (ValueError, IndexError) as error:
@@ -561,6 +751,7 @@ class Previews(QObject):
             _log.debug("no object catalogue previews: %s", error)
             self.queue = []
             self.layout = {}
+            self.probing = None
             return
         self.catalog_requested.emit(where.level, patches)
 
@@ -580,13 +771,35 @@ class Previews(QObject):
 
         So is a batch that was laid out for a **tileset no longer in front of
         us**: the level changed under a load that was already out, and the same
-        number is a different object here. Its pictures are dropped and the
-        queue -- which is this tileset's by then -- carries on.
+        number is a different object here. Its pictures are dropped -- and so is
+        the rest of the chain, whose queue is that other tileset's objects too.
+        The probe the change left owed is asked for as the chain drains, which
+        is what keeps one request in flight while the tileset moves under it.
         """
         layout, self.layout = self.layout, {}
-        stale = self.probing != self.tileset
-        if snapshot is not None and layout and self._held() is not None and not stale:
-            self._add(_from_probe(snapshot, layout))
+        if self.probing != self.tileset:
+            self.queue = []
+        elif snapshot is not None and layout and self._held() is not None:
+            made = _from_probe(snapshot, layout)
+            self._add(
+                {
+                    entry.key: thumb
+                    for entry, thumb in made.items()
+                    if not entry.reshaped
+                }
+            )
+            shaped = {
+                shape_key(entry): thumb
+                for entry, thumb in made.items()
+                if entry.reshaped
+            }
+            self.shaped.update(shaped)
+        if any(entry.reshaped for entry in layout.values()):
+            # A shape the ghost may be holding its last picture for -- so it
+            # repaints whether the answer was a picture or nothing at all. A
+            # shape that drew nothing ends the hold as surely as one that drew
+            # something, and only a repaint says so.
+            self.shaped_ready.emit()
         self.send_batch()
 
     # -- probing one sprite at a time ---------------------------------------
@@ -608,10 +821,14 @@ class Previews(QObject):
         where = self._held()
         if where is None:
             return
-        if entry.stream is not Stream.SPRITE or entry.number in self.asked_sprites:
+        # A project sprite is probed -- and remembered -- under the custom
+        # space's copy of its number, which is how the probe knows to stand
+        # the custom bit up and how the capture will come back keyed.
+        number = entry.number | CUSTOM_ART_BASE if entry.custom else entry.number
+        if entry.stream is not Stream.SPRITE or number in self.asked_sprites:
             return
-        self.asked_sprites.add(entry.number)
-        self.sprite_art_requested.emit([entry.number], where.level, where.doc.header)
+        self.asked_sprites.add(number)
+        self.sprite_art_requested.emit([number], where.level, where.doc.header)
 
     def sprite_art(self, art: Mapping[int, tuple[SpriteTile, ...]]) -> None:
         """Artwork for hovered sprites came back: draw it and put it in the
@@ -635,12 +852,13 @@ class Previews(QObject):
 
 
 def _from_probe(
-    snapshot: LevelSnapshot, layout: dict[int, CatalogKey]
-) -> dict[CatalogKey, Thumb]:
-    """Every picture one probe load produced, keyed as the catalogue keys it."""
+    snapshot: LevelSnapshot, layout: dict[int, Entry]
+) -> dict[Entry, Thumb]:
+    """Every picture one probe load produced, by the entry it was laid out
+    for."""
     shape = geometry(snapshot)
     footprints: dict[
-        CatalogKey,
+        Entry,
         tuple[tuple[int, int], frozenset[tuple[int, int]]],
     ] = {}
     for parsed, cells in zip(

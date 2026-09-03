@@ -1,4 +1,4 @@
-@includeonce
+includeonce
 ;Note: Do not modify the defines in this file! All but the framework function defines can be used for custom use.
 
 ; General defines.

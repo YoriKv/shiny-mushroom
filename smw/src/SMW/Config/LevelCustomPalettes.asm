@@ -61,21 +61,17 @@ endif
 
 ;#############################################################################################################
 ;# Where they go: the pointer table at the level bank's head -- or directly
-;# behind the level graphics' fixed-size block when that feature is on --
-;# then the stubs, then the blobs, growing towards whatever the bank's last
-;# occupant has left. Placed from the top of each ROM map, before any bank
-;# emits, so the fixed-size occupants are the ones the packed streams
-;# behind them are measured from -- the packer opens its fourth run at the
-;# cursor this leaves.
+;# behind the fixed-size blocks the level graphics and the per-level code
+;# put there when those are on -- then the stubs, then the blobs, growing
+;# towards whatever the bank's last occupant has left. The packed head's
+;# last occupant in the level bank's sequence (Config/LevelBank.asm): the
+;# project's code and the packed streams open behind the blobs.
 ;#############################################################################################################
 
-; Place the pointer table, the stubs and the blobs. Called from the head of
-; each ROM map, after the level graphics' placement, and bracketed with
-; pushpc/pullpc like every placement there.
+; Place the pointer table, the stubs and the blobs. Called from
+; %SMW_PlaceLevelBank behind the per-level code's block.
 macro SMW_PlaceLevelCustomPalettes()
 if !Define_SMW_LevelCustomPalettes == !TRUE
-	pushpc
-	org !SMW_LevelBankNext
 	assert pc() == !Loc_SMW_LevelBank_Palettes, "The custom level palettes must follow the level graphics, or lead the level bank: their pointer table has to sit at one address per cartridge."
 
 ; The pointer table: one long pointer per level, $200 rows, at the run's
@@ -133,7 +129,5 @@ namespace SMW_LevelCustomPalettes
 	incsrc "palettes/levels/level-palette-data.asm"
 namespace off
 	assert pc() <= !Loc_SMW_LevelBank_RunEnd, "The custom level palettes have outgrown the level bank: fewer levels can wear one than the editor was told. Check palettes/levels/."
-	!SMW_LevelBankNext #= pc()
-	pullpc
 endif
 endmacro

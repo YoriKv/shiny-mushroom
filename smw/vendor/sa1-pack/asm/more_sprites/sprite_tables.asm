@@ -1,6 +1,9 @@
 includefrom sa1.asm
 !sa1 = 2        ; Set to 0 if you are not using SA-1, 1 if you are using normal (old) SA-1 Pack and 2 if you are using SA-1 with more sprites enabled (1.10+)
 
+; A build that already carries a define_sprite_table macro of its own
+; (sa1_sprite_table_macro_external) keeps it; asar allows one per name.
+if defined("sa1_sprite_table_macro_external") == 0
 macro define_sprite_table(name, addr, addr_sa1, addr_more_sprites)
 if !sa1 == 0
     !<name> = <addr>
@@ -10,6 +13,7 @@ else
     !<name> = <addr_more_sprites>
 endif
 endmacro
+endif
 
 %define_sprite_table(sprite_num, $9E, $9E, $3200)
 %define_sprite_table(sprite_speed_y, $AA, $AA, $9E)

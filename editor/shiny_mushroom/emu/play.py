@@ -63,6 +63,7 @@ from shiny_mushroom.addresses import (
     MODE_IN_LEVEL,
     MOSAIC_MIRROR,
 )
+from shiny_mushroom.brk import BrkReport
 from shiny_mushroom.emu.core import MASTER_VOLUME, ControllerState, MemoryType
 from shiny_mushroom.emu.loading import retry_load
 from shiny_mushroom.emu.smw import CartSession
@@ -204,6 +205,18 @@ class OverworldEntry:
     game_mode: int
 
 
+@dataclass(frozen=True)
+class CartridgeEntry:
+    """What a request to run the cartridge itself cost, and where it left it.
+
+    :class:`OverworldEntry` without the reuse, because there is nothing to
+    reuse: the run is the title anchor the boot already took, restored.
+    """
+
+    duration: float
+    game_mode: int
+
+
 @dataclass
 class PlaySession(CartSession):
     """A cart booted, put into a level, and left running for someone to play.
@@ -236,6 +249,12 @@ class PlaySession(CartSession):
     _buttons: Buttons = field(default=Buttons.NONE, init=False)
     _paused: bool = field(default=False, init=False)
 
+    #: The ``BRK`` this run is stopped at, once it has been read off the
+    #: machine. Held rather than reported and forgotten: the machine is still
+    #: stopped at it, and what happens next is the player's to say -- see
+    #: :meth:`brk`.
+    _brk: BrkReport | None = field(default=None, init=False)
+
     # -- lifecycle ---------------------------------------------------------
 
     def open(self) -> None:
@@ -260,6 +279,42 @@ class PlaySession(CartSession):
         finally:
             self.core.set_volume(MASTER_VOLUME)
         self.core.capture_video(self._receive)
+
+    # -- the exception handler ---------------------------------------------
+
+    def brk(self) -> BrkReport | None:
+        """The ``BRK`` this run is stopped at, or ``None`` while it is running.
+
+        Read off the machine the first time it is asked for and then held, so
+        the pump can go on answering -- with no frames, because none are being
+        drawn -- while the window puts the report in front of somebody.
+        """
+        if self._brk is None and self.core.broke_on_brk:
+            report = self.core.peek_break()
+            assert isinstance(report, BrkReport)
+            self._brk = report
+        return self._brk
+
+    def carry_on_past_brk(self) -> None:
+        """Execute the ``BRK`` and let the run continue, which is what the
+        player asked for when they read the report and chose to go on.
+
+        Where that lands is the cartridge's business: a hack carrying the BRK
+        Exception Handler patch shows its own screen, and one carrying nothing
+        goes wherever an unset vector points. Both are the run they kept.
+        """
+        self._brk = None
+        self.core.resume_break()
+
+    def drop_brk(self) -> None:
+        """Let the machine go and stop it dead, forgetting the report.
+
+        What every new run does first: a session stopped at a ``BRK`` has its
+        emulation thread blocked inside the break, and nothing -- not a
+        restore, not a patch -- reaches a machine in that state.
+        """
+        self._brk = None
+        self.core.let_break_go()
 
     # -- entering a level --------------------------------------------------
 
@@ -313,6 +368,10 @@ class PlaySession(CartSession):
         second-press cost.
         """
         started = time.monotonic()
+        # A machine stopped at a BRK is one no restore reaches, and the run
+        # being asked for now is the answer to the report the last one ended
+        # with.
+        self.drop_brk()
         self.prepare()
         ready = self._ready.get(key)
 
@@ -573,6 +632,40 @@ class PlaySession(CartSession):
         # holding -- so put them back to a one-player game as Mario.
         write(*where.at(TWO_PLAYER_GAME), 0)
         write(*where.at(CURRENT_CHARACTER), 0)
+
+    # -- running the cartridge ---------------------------------------------
+
+    def enter_cartridge(self) -> CartridgeEntry:
+        """Put the game back to its title screen and leave it running.
+
+        The cartridge itself rather than a document off the canvas: nothing is
+        patched and nothing is warped to, so what is played is the image the
+        worker booted, from the screen the game boots to. That is what makes
+        it the internal half of File > Test ROM, whose external half hands the
+        same file to somebody else's emulator.
+
+        The withdrawal is the whole of the work. The title anchor is where
+        every cold request already starts from
+        (:meth:`~shiny_mushroom.emu.smw.CartSession.prepare`) and was taken
+        over the unpatched image, so its RAM is the cartridge's own -- but the
+        ROM is not part of a savestate, and the last run's edits sit in the
+        core's copy until :meth:`~shiny_mushroom.emu.smw.CartSession.preview`
+        puts the original bytes back.
+        """
+        started = time.monotonic()
+        self.drop_brk()
+        self.prepare()
+        with self.core.at_maximum_speed():
+            # Before the image changes under it, for :meth:`_enter`'s reason:
+            # a running game can read a half-withdrawn edit.
+            self.core.halt()
+            self.preview(None)
+            self.restore(self.title_state)
+        mode = self.core.read(*self.addresses.at(GAME_MODE))
+        self._paused = False
+        # Started rather than resumed -- :meth:`_enter` says why.
+        self.core.start()
+        return CartridgeEntry(duration=time.monotonic() - started, game_mode=mode)
 
     def complete_level(self, secret: bool = False) -> dict[str, object]:
         """Beat the level the player stands on, so its map event plays.

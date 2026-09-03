@@ -251,19 +251,19 @@ print ""
 
 !Temp2 = "on an unknown submap"
 !Temp #= readfile1("!hackname", snestopc(!VarOffset1)+!header)
-if !Temp = $00
+if !Temp == $00
 	!Temp2 = "on the Main Map"
-elseif !Temp = $01
+elseif !Temp == $01
 	!Temp2 = "on Yoshi's Island"
-elseif !Temp = $02
+elseif !Temp == $02
 	!Temp2 = "in Vanilla Dome"
-elseif !Temp = $03
+elseif !Temp == $03
 	!Temp2 = "in the Forest of Illusion"
-elseif !Temp = $04
+elseif !Temp == $04
 	!Temp2 = "in the Valley of Bowser"
-elseif !Temp = $05
+elseif !Temp == $05
 	!Temp2 = "in the Special World"
-elseif !Temp = $06
+elseif !Temp == $06
 	!Temp2 = "on the Star Road"
 else
 	!Temp2 = "on an unknown submap"
@@ -276,19 +276,19 @@ endif
 
 !Temp2 = "on an unknown submap"
 !Temp #= readfile1("!hackname", snestopc(!VarOffset1)+!header)
-if !Temp = $00
+if !Temp == $00
 	!Temp2 = "on the Main Map"
-elseif !Temp = $01
+elseif !Temp == $01
 	!Temp2 = "on Yoshi's Island"
-elseif !Temp = $02
+elseif !Temp == $02
 	!Temp2 = "in Vanilla Dome"
-elseif !Temp = $03
+elseif !Temp == $03
 	!Temp2 = "in the Forest of Illusion"
-elseif !Temp = $04
+elseif !Temp == $04
 	!Temp2 = "in the Valley of Bowser"
-elseif !Temp = $05
+elseif !Temp == $05
 	!Temp2 = "in the Special World"
-elseif !Temp = $06
+elseif !Temp == $06
 	!Temp2 = "on the Star Road"
 else
 	!Temp2 = "on an unknown submap"
@@ -783,7 +783,7 @@ org $008000
 db "LMR."
 db !Region
 db !CompressionSetting
-db "..@.......!MWOProgram!LMVer1.!LMVer2!LMVer3..©"
+db "..@.......!MWOProgram!LMVer1.!LMVer2!LMVer3..",$A9
 dd !MWOYear
 db ".Yoshifanatic..ASM.Master"
 dd MusicList				: dd MusicListEnd-MusicList					; $0040-$0047

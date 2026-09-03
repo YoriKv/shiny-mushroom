@@ -235,16 +235,16 @@ Main:
 	LDY.b #$06
 CODE_0C957D:
 	LDA.w PARAMS_0C9559,y
-	STA.w DMA[$01].Parameters,y
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].Parameters,y
 	DEY
 	BPL.b CODE_0C957D
 	LDA.w !RAM_SMW_Pointer_CreditsBackgroundIndex
 	ASL
 	ASL
 	ASL
-	ORA.w DMA[$01].SourceHi		; A Address (High Byte)
-	STA.w DMA[$01].SourceHi		; A Address (High Byte)
-	LDA.b #$02
+	ORA.w DMA[!Define_SMW_TilemapUploadDMAChannel].SourceHi		; A Address (High Byte)
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].SourceHi		; A Address (High Byte)
+	LDA.b #($01<<!Define_SMW_TilemapUploadDMAChannel)
 	STA.w !REGISTER_DMAEnable	; Regular DMA Channel Enable
 	LDA.b #$80
 	STA.w !REGISTER_VRAMAddressIncrementValue
@@ -255,16 +255,16 @@ CODE_0C957D:
 	LDY.b #$06
 CODE_0C95A8:
 	LDA.w PARAMS_0C9560,y
-	STA.w DMA[$01].Parameters,y
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].Parameters,y
 	DEY
 	BPL.b CODE_0C95A8
 	LDA.w !RAM_SMW_Pointer_CreditsBackgroundIndex
 	ASL
 	ASL
 	ASL
-	ORA.w DMA[$01].SourceHi		; A Address (High Byte)
-	STA.w DMA[$01].SourceHi		; A Address (High Byte)
-	LDA.b #$02
+	ORA.w DMA[!Define_SMW_TilemapUploadDMAChannel].SourceHi		; A Address (High Byte)
+	STA.w DMA[!Define_SMW_TilemapUploadDMAChannel].SourceHi		; A Address (High Byte)
+	LDA.b #($01<<!Define_SMW_TilemapUploadDMAChannel)
 	STA.w !REGISTER_DMAEnable	; Regular DMA Channel Enable
 	STZ.w !RAM_SMW_Flag_UpdateCreditsBackground
 	PLB
@@ -1481,10 +1481,10 @@ CODE_0C9FEA:
 	STA.w !RAM_SMW_Player_XSpeed
 	JSR.w SMW_HandlePlayerPoseAndAnimationTimersDuringEnding_Main
 	LDA.b #$52
-	STA.b !RAM_SMW_NorSpr035_Yoshi_EndingXPosLo
+	STA.b !RAM_SMW_NorSpr035_Yoshi_EndingXPosLo_Slot0
 	STZ.w !RAM_SMW_NorSpr035_Yoshi_EndingXPosHi
 	LDA.b #$8F
-	STA.b !RAM_SMW_NorSpr035_Yoshi_EndingYPosLo
+	STA.b !RAM_SMW_NorSpr035_Yoshi_EndingYPosLo_Slot0
 	STZ.w !RAM_SMW_NorSpr035_Yoshi_EndingYPosHi
 	LDA.b #$A0
 	STA.w !RAM_SMW_NorSpr035_Yoshi_EndingOAMIndex
@@ -2039,7 +2039,7 @@ Main:
 	LDX.b #$00
 	STX.w !RAM_SMW_NorSpr_CurrentSlotID
 	LDA.b #!Define_SMW_SpriteID_NorSpr035_Yoshi
-	STA.b !RAM_SMW_NorSpr_SpriteID
+	STA.b !RAM_SMW_NorSpr_SpriteID_Slot0
 	LDA.w !RAM_SMW_NorSpr_AnimationFrame
 	PHA
 	JSL.l SMW_InitializeNormalSpriteRAMTables_Main
@@ -2184,12 +2184,19 @@ CODE_0CAB7C:
 	BNE.b CODE_0CAB74		;!
 	SEP.b #$20			;! A->8
 endif
+if defined("Define_SMW_SA1")
+	JSL.l window_stuff
+	BRA.b +
+	NOP #2
++
+else
 	LDA.b #$13
 	STA.w !REGISTER_MainScreenWindowMask	; Window Mask Designation for Main Screen
 	STA.w !REGISTER_SubScreenWindowMask	; Window Mask Designation for Sub Screen
+endif
 	LDA.b #$22
 	STA.b !RAM_SMW_Mirror_ColorMathInitialSettings
-	LDA.b #$80
+	LDA.b #($01<<!Define_SMW_WindowHDMAChannel)
 	STA.w !RAM_SMW_Mirror_HDMAEnable
 	RTS
 
@@ -2556,7 +2563,7 @@ CODE_0CA1F6:
 	JSR.w SMW_SpawnEndingYoshiSpriteAndDrawPlayer_CODE_0CA7B4
 	LDA.w !RAM_SMW_Pointer_CurrentYoshiHouseSceneProcess
 	BNE.b CODE_0CA22D
-	LDA.b !RAM_SMW_NorSpr035_Yoshi_EndingXPosLo
+	LDA.b !RAM_SMW_NorSpr035_Yoshi_EndingXPosLo_Slot0
 	STA.b !RAM_SMW_Misc_ScratchRAM00
 	LDA.b #$9F
 	STA.b !RAM_SMW_Misc_ScratchRAM02
@@ -2600,12 +2607,12 @@ CODE_0CA24F:
 	LDA.w !RAM_SMW_Sprites_EndingPlayerXPosLo
 	CLC
 	ADC.b #$30
-	STA.b !RAM_SMW_NorSpr035_Yoshi_EndingXPosLo
+	STA.b !RAM_SMW_NorSpr035_Yoshi_EndingXPosLo_Slot0
 	LDA.w !RAM_SMW_Sprites_EndingPlayerXPosHi
 	ADC.b #$00
 	STA.w !RAM_SMW_NorSpr035_Yoshi_EndingXPosHi
 	LDA.b #$60
-	STA.b !RAM_SMW_NorSpr035_Yoshi_EndingYPosLo
+	STA.b !RAM_SMW_NorSpr035_Yoshi_EndingYPosLo_Slot0
 	LDA.b #$01
 	STA.w !RAM_SMW_NorSpr035_Yoshi_EndingYPosHi
 	LDA.b #$30
@@ -2898,7 +2905,7 @@ CODE_0CA4E9:
 	ASL
 	TAY
 CODE_0CA510:
-	LDA.b !RAM_SMW_NorSpr035_Yoshi_EndingXPosLo
+	LDA.b !RAM_SMW_NorSpr035_Yoshi_EndingXPosLo_Slot0
 	STA.b !RAM_SMW_Misc_ScratchRAM00
 	LDA.b #$9F
 	STA.b !RAM_SMW_Misc_ScratchRAM02
@@ -3149,7 +3156,7 @@ Main:
 	LDA.w SMW_ProcessCheeringYoshis_DATA_0CA311,y
 	ASL
 	TAY
-	LDA.b !RAM_SMW_NorSpr035_Yoshi_EndingXPosLo
+	LDA.b !RAM_SMW_NorSpr035_Yoshi_EndingXPosLo_Slot0
 	STA.b !RAM_SMW_Misc_ScratchRAM00
 	LDA.w !RAM_SMW_Sprites_EndingYoshisYPosLo
 	STA.b !RAM_SMW_Misc_ScratchRAM02

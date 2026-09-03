@@ -23,14 +23,14 @@ from pathlib import Path
 
 from smw_tools.paths import logs_dir
 
-#: Warnings this project deliberately silences.
+#: Warnings this project deliberately silences, by name.
 #:
-#: ``feature_deprecated`` fires ~50 times per build: the disassembly uses
-#: ``rep N : db $FF``, ``check bankcross on`` and ``math pri on``, all of which
-#: asar 1.91 has deprecated but still honours. Rewriting them is a source change
-#: that must not alter a single ROM byte, so it is deliberately kept separate;
-#: until then the noise would bury real diagnostics.
-SILENCED_WARNINGS = ["feature_deprecated"]
+#: None. The tree assembles under asar 1.91 with no ``feature_deprecated``
+#: warning on any target of any base, and the diagnostics the assembler does
+#: raise are meant to be read, so nothing is hidden here. A construct asar
+#: deprecates is rewritten to its byte-identical replacement rather than
+#: silenced -- docs/smw/building.md names the spellings the tree uses.
+SILENCED_WARNINGS: list[str] = []
 
 #: Keep the assembler off the screen on Windows.
 #:

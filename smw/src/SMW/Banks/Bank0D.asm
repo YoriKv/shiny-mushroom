@@ -1317,7 +1317,7 @@ namespace SMW_CreditsEnemyNames
 %InsertMacroAtXPosition(<Address>)
 
 cleartable
-table "tables/fonts/AllUppercase.txt"
+incsrc "tables/fonts/AllUppercase.asm"
 
 Main:
 Screen01:

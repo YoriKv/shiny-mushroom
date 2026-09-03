@@ -57,6 +57,23 @@ EMULATOR_FILTER = (
     "Emulators (*.exe *.app *.AppImage);;Applications (*.app);;All files (*)"
 )
 
+#: Where the person's own AddmusicK is. Empty until somebody sets one, for the
+#: emulator's reason and one more: this editor does not ship AddmusicK and does
+#: not look for it, so there is nowhere a default could honestly point.
+ADDMUSICK_KEY = "music/addmusick"
+
+ADDMUSICK_NOTE = (
+    "Audio > Songs compiles a project's music with AddmusicK, which is not "
+    "part of this editor. Point at the folder the tool was unpacked into, or "
+    "at the executable inside it. Songs already imported keep working without "
+    "it -- it is needed to add one, not to have one."
+)
+
+#: What a file chooser offers. The tool is a folder as much as a program --
+#: it reads its own asm, samples and lists from beside itself -- so either end
+#: is accepted and the filter only saves a person some scrolling.
+ADDMUSICK_FILTER = "AddmusicK (AddmusicK* addmusick*);;All files (*)"
+
 
 def external_emulator() -> Path | None:
     """The emulator a test run outside the editor uses, if one is set.
@@ -66,6 +83,17 @@ def external_emulator() -> Path | None:
     than a fallback to reach for.
     """
     stored = load_str_setting(EMULATOR_KEY).strip()
+    return Path(stored) if stored else None
+
+
+def addmusick_tool() -> Path | None:
+    """The AddmusicK installation an import compiles with, if one is set.
+
+    ``None`` for an empty preference, which is the ordinary state and the one a
+    fresh install is in: nothing here is bundled, so a project can only compile
+    music once somebody has said where their own copy is.
+    """
+    stored = load_str_setting(ADDMUSICK_KEY).strip()
     return Path(stored) if stored else None
 
 
@@ -102,6 +130,25 @@ class SettingsDialog(QDialog):
         style_note(note)
         layout.addWidget(note)
 
+        self._addmusick = QLineEdit(load_str_setting(ADDMUSICK_KEY))
+        self._addmusick.setPlaceholderText("No AddmusicK set")
+        self._addmusick.setMinimumWidth(360)
+        find = QPushButton("B&rowse...")
+        find.setAutoDefault(False)
+        find.clicked.connect(self._choose_addmusick)
+        music_row = QHBoxLayout()
+        music_row.setContentsMargins(0, 0, 0, 0)
+        music_row.addWidget(self._addmusick)
+        music_row.addWidget(find)
+        music_holder = QWidget()
+        music_holder.setLayout(music_row)
+        form.addRow("&AddmusicK:", music_holder)
+
+        music_note = QLabel(ADDMUSICK_NOTE)
+        music_note.setWordWrap(True)
+        style_note(music_note)
+        layout.addWidget(music_note)
+
         # Says what is wrong with the path in the box without refusing it:
         # OK stays armed, because a path may well be right on the machine the
         # preference is being set for and wrong on the one setting it.
@@ -117,7 +164,17 @@ class SettingsDialog(QDialog):
         layout.addWidget(buttons)
 
         self._emulator.textChanged.connect(self._sync)
+        self._addmusick.textChanged.connect(self._sync)
         self._sync()
+
+    @property
+    def addmusick_path(self) -> str:
+        """What is in the AddmusicK box, as it would be stored."""
+        return self._addmusick.text().strip()
+
+    def set_addmusick_path(self, path: str | Path) -> None:
+        """Put ``path`` in the AddmusicK box."""
+        self._addmusick.setText(str(path))
 
     @property
     def emulator_path(self) -> str:
@@ -135,6 +192,7 @@ class SettingsDialog(QDialog):
     def accept(self) -> None:
         """Write the form to the store, then close."""
         save_str_setting(EMULATOR_KEY, self.emulator_path)
+        save_str_setting(ADDMUSICK_KEY, self.addmusick_path)
         super().accept()
 
     def _choose_emulator(self) -> None:
@@ -147,8 +205,31 @@ class SettingsDialog(QDialog):
         if chosen:
             self.set_emulator_path(chosen)
 
+    def _choose_addmusick(self) -> None:
+        chosen, _filter = QFileDialog.getOpenFileName(
+            self,
+            f"{APP_NAME} - AddmusicK",
+            self.addmusick_path,
+            ADDMUSICK_FILTER,
+        )
+        if chosen:
+            self.set_addmusick_path(chosen)
+
     def _sync(self) -> None:
-        """Say whether what is typed is there, and nothing more than that."""
-        typed = self.emulator_path
-        missing = bool(typed) and not Path(typed).exists()
-        self._warning.setText("There is nothing at that path." if missing else "")
+        """Say what is not there, and nothing more than that.
+
+        Both rows warn rather than refuse, for the same reason: a path may be
+        right on the machine the preference is being set for and wrong on the
+        one setting it.
+        """
+        gone = [
+            what
+            for what, typed in (
+                ("emulator", self.emulator_path),
+                ("AddmusicK", self.addmusick_path),
+            )
+            if typed and not Path(typed).exists()
+        ]
+        self._warning.setText(
+            "" if not gone else f"There is nothing at the {' or the '.join(gone)} path."
+        )

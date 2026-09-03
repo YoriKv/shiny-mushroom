@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING
 from shiny_mushroom import glyphs
 from shiny_mushroom.fields import (
     Field,
+    Flags,
     Number,
     choices,
     pairs,
@@ -56,6 +57,7 @@ from shiny_mushroom.level import (
 )
 from shiny_mushroom.metadata import SPRITES
 from shiny_mushroom.rom_patches import PlayerPosition
+from shiny_mushroom.sprite_art import CUSTOM_ART_BASE
 
 if TYPE_CHECKING:
     # An annotation only: this module reads the sprite stream and never
@@ -371,9 +373,54 @@ class Sprite:
     #: :attr:`offset`.
     uid: int = 0
 
+    #: Whether this record was read off a cartridge whose extra bits can mean
+    #: anything at all -- the custom sprites feature. Carried on the record
+    #: rather than asked per call because everything derived from it -- the
+    #: name, the artwork key, the properties row -- has to answer the same
+    #: way for one record, and on a stock cartridge the bit is position that
+    #: deletes the sprite, not a meaning.
+    custom_capable: bool = False
+
+    #: The extra bytes a custom record carries behind its three, as many as
+    #: the sprite's metadata declares -- the loader's own stride, consumed
+    #: by the spawn seam into the slot's tables. Empty for every vanilla
+    #: record and for a custom sprite that declares none.
+    extra_bytes: bytes = b""
+
+    #: What the project calls this number where the custom bit hands the
+    #: record to its own code -- stamped at the parse, like
+    #: :attr:`custom_capable`, so every reparse names the record the way
+    #: the first read did. Empty for a vanilla record, and for a custom
+    #: sprite the project never named.
+    custom_name: str = ""
+
     @property
     def kind(self) -> SpriteKind:
         return SpriteKind.of(self.number)
+
+    @property
+    def custom(self) -> bool:
+        """Whether this record spawns the project's own sprite.
+
+        The second extra bit, PIXI's convention, read only where the
+        cartridge reads it: a normal-range number on a custom-sprites build.
+        The goal tape is the one number that cannot carry it -- Lunar Magic
+        spends both of its extra bits on secret exits -- and the spawn stub
+        leaves its flag unset, so this says the same.
+        """
+        return (
+            self.custom_capable
+            and self.kind is SpriteKind.SPRITE
+            and self.number != GOAL_TAPE
+            and bool(self.extra_bits & 0b10)
+        )
+
+    @property
+    def art_key(self) -> int:
+        """Which capture draws this record: the number, or the custom space's
+        copy of it -- a custom sprite's picture is its own code's, not the
+        vanilla sprite's that shares its byte."""
+        return self.number | CUSTOM_ART_BASE if self.custom else self.number
 
     @property
     def category(self) -> SpriteCategory:
@@ -410,7 +457,10 @@ class Sprite:
 
     @property
     def name(self) -> str:
-        """What this sprite is, in the disassembly's own vocabulary."""
+        """What this sprite is, in the disassembly's own vocabulary -- or the
+        project's, for a record the custom bit hands to its own code."""
+        if self.custom:
+            return self.custom_name or f"Custom sprite {hexnum(self.number)}"
         return name_of(self.number)
 
     def describe(self) -> str:
@@ -478,6 +528,30 @@ class Sprite:
             # the goal tape gets a row -- under the name of what it does with
             # them. Shooters mask them off ($01) and a scroll command spends
             # them on its type, below.
+            #
+            # A custom-sprites cartridge is the exception the feature exists
+            # to make: its spawn stub reads the second bit as *this number is
+            # the project's own*, so the row appears exactly where the bit
+            # means something -- and nowhere else, because on a stock
+            # cartridge setting it deletes the sprite on the frame it spawns.
+            if (
+                self.custom_capable
+                and self.kind is SpriteKind.SPRITE
+                and self.number != GOAL_TAPE
+            ):
+                rows.append(
+                    Field(
+                        key="custom",
+                        label="Custom",
+                        kind=Flags(((0b10, "Custom sprite"),)),
+                        read=lambda spr: spr.extra_bits,
+                        write=lambda spr, value: replace(spr, extra_bits=value),
+                        hint="Set, this record spawns the project's own "
+                        "sprite of this number -- its code and properties "
+                        "under Project > Source Files -- instead of the "
+                        "game's.",
+                    )
+                )
             if self.number == GOAL_TAPE:
                 rows.append(
                     Field(
@@ -548,13 +622,28 @@ def _write_scroll_type(sprite: Sprite, value: int, shape: Geometry) -> Sprite:
     return replace(moved, extra_bits=value & 0x03)
 
 
-def parse_sprites(stream: bytes, shape: Geometry) -> list[Sprite]:
+def parse_sprites(
+    stream: bytes,
+    shape: Geometry,
+    custom_sprites: bool = False,
+    extra_counts: Mapping[int, int] = {},
+    custom_names: Mapping[int, str] = {},
+) -> list[Sprite]:
     """Read a sprite stream into placed sprites.
 
     ``stream`` is the one-byte header followed by three-byte records; a
     terminator or a short tail ends it. ``shape`` decides the axis swap, so the
     same stream reads differently in a vertical level -- which is not a quirk of
-    this code but of the loader it follows.
+    this code but of the loader it follows. ``custom_sprites`` says whether the
+    cartridge these records are for reads the second extra bit as the custom
+    flag -- see :attr:`Sprite.custom` -- and ``extra_counts`` how many extra
+    bytes each custom number's records carry behind their three, which is the
+    loader's own stride: a stream read under the wrong counts misparses from
+    the first custom record on, exactly as the cartridge would.
+    ``custom_names`` is what the project calls each custom number, stamped
+    onto the records the bit marks so everything derived from one -- the
+    status bar, the properties heading, the create panel's key -- says the
+    project's own word for it.
     """
     sprites = []
     cursor = 1  # past the header byte: memory setting and buoyancy, not a record
@@ -565,6 +654,18 @@ def parse_sprites(stream: bytes, shape: Geometry) -> list[Sprite]:
             break
         offset = cursor
         cursor += RECORD_SIZE
+        extra = b""
+        named = ""
+        if (
+            custom_sprites
+            and first & 0x08
+            and number < FIRST_SHOOTER
+            and number != GOAL_TAPE
+        ):
+            held = extra_counts.get(number, 0)
+            extra = stream[cursor : cursor + held]
+            cursor += held
+            named = custom_names.get(number, "")
 
         screen = (second & 0x0F) | ((first << 3) & 0x10)
         along = screen * SCREEN_COLUMNS + (second >> 4)
@@ -581,6 +682,9 @@ def parse_sprites(stream: bytes, shape: Geometry) -> list[Sprite]:
                 index=len(sprites),
                 offset=offset,
                 data=record,
+                custom_capable=custom_sprites,
+                extra_bytes=extra,
+                custom_name=named,
             )
         )
     return sprites
@@ -607,6 +711,11 @@ def encode_sprites(sprites: Iterable[Sprite], shape: Geometry, header: int) -> b
     stream = bytearray((header,))
     for sprite in sprites:
         stream += _sprite_bytes(sprite, shape)
+        # The record's own extra bytes, behind its three -- the loader's
+        # stride for a custom number that declares any. What the record
+        # holds is what goes back out; keeping them to the declared count is
+        # the document's business, at the moment the count is a question.
+        stream += sprite.extra_bytes
     stream.append(TERMINATOR)
     return bytes(stream)
 
@@ -673,7 +782,7 @@ def bounds(sprite: Sprite, art: Mapping[int, tuple[SpriteTile, ...]]) -> Bounds:
     is the floor the marker has always been: the record is in the level and it
     does something, whether or not anything is drawn for it.
     """
-    tiles, _ = artwork(sprite.number, art)
+    tiles, _ = artwork(sprite.art_key, art)
     return _extent(tiles).at(sprite.column * BLOCK, sprite.row * BLOCK)
 
 
@@ -859,7 +968,7 @@ def plane(
     for sprite in sprites:
         origin_x = sprite.column * BLOCK
         origin_y = sprite.row * BLOCK
-        tiles, hidden = artwork(sprite.number, art)
+        tiles, hidden = artwork(sprite.art_key, art)
         if not tiles:
             glyphs.draw(
                 markers,

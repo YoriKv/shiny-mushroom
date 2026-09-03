@@ -102,6 +102,18 @@ OUTPUT_DIR = "build"
 #: what the *project* is read through afterwards, and the folder is its own.
 BUILD_STATE = ".build-state.json"
 
+#: Feature ids an update merged into another, read as what they became so
+#: a project saved before the merge keeps its switch: the three code
+#: features and the UberASM dialect are one ``uberasm`` feature
+#: (UberASM Support) now, and the PIXI dialect rode into
+#: ``custom-sprites`` (Custom sprites (PIXI)) the same way.
+MERGED_FEATURES = {
+    "level-code": "uberasm",
+    "gamemode-code": "uberasm",
+    "global-code": "uberasm",
+    "pixi": "custom-sprites",
+}
+
 #: Where the custom level palettes live inside the game tree's namespace --
 #: overlay files that shadow nothing, like the added containers, one
 #: ``<level>.pal`` of :data:`shiny_mushroom.level_palettes.SIZE` bytes per
@@ -373,7 +385,11 @@ class Project(GraphicsFiles, LevelFiles, MusicFiles, WorldMapFiles):
             held = None
         if not isinstance(held, dict) or not isinstance(held.get("features"), list):
             return rom_base(self.base_id).features if self.buildable else ()
-        return tuple(dict.fromkeys(_string_list(held["features"])))
+        return tuple(
+            dict.fromkeys(
+                MERGED_FEATURES.get(one, one) for one in _string_list(held["features"])
+            )
+        )
 
     @property
     def rom_size_built(self) -> str:
@@ -457,6 +473,11 @@ class Project(GraphicsFiles, LevelFiles, MusicFiles, WorldMapFiles):
         written there too and *can*, through :meth:`set_rom_size`; ``None``
         means the base's own stock size, which is 512 KB for ``vanilla`` and
         1 MB for ``sa1``.
+
+        The folder this makes asks its build for nothing: a project *the
+        editor* starts carries the features
+        :data:`shiny_mushroom.setup.NEW_PROJECT_FEATURES` names, which is
+        that path's decision and not this one's.
         """
         if not valid_name(name):
             raise ProjectError(
@@ -1209,7 +1230,12 @@ class Project(GraphicsFiles, LevelFiles, MusicFiles, WorldMapFiles):
         held = self.metadata.get("features", {})
         if not isinstance(held, dict):
             return ()
-        return tuple(dict.fromkeys(_string_list(held.get("enabled"))))
+        return tuple(
+            dict.fromkeys(
+                MERGED_FEATURES.get(one, one)
+                for one in _string_list(held.get("enabled"))
+            )
+        )
 
     def set_feature_state(self, ids: Iterable[str]) -> None:
         """Record which features this project asks its build for."""
@@ -1226,7 +1252,7 @@ class Project(GraphicsFiles, LevelFiles, MusicFiles, WorldMapFiles):
         fill -- names for a status line, empty when everything previews.
 
         A saved part always *builds* correctly -- asar re-places what grew,
-        and the ROM map's ``warnpc`` refuses a collision loudly -- but a test
+        and the ROM map's placement guard refuses a collision loudly -- but a test
         run patches the open cartridge in place, so a part past its slot
         shows the cartridge's own bytes until the project is rebuilt and the
         built image reopened. Recomputed by whoever gathers the patches, and

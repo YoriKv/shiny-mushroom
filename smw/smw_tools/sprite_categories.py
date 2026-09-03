@@ -108,6 +108,7 @@ UNUSED_NAME = "Unused"
 #: claim about it. Once. See :func:`read_sprite_categories`.
 NEVER = 0
 
+
 def check_categories(
     categories: dict[int, str],
     normal: dict[int, str],

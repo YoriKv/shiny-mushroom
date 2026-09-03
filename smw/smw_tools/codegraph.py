@@ -146,6 +146,13 @@ MODE_IMMEDIATE = re.compile(r"^#\$([0-9A-Fa-f]{1,2})\s*$")
 #: ``Table,x`` / ``Table,y`` / ``$01,s``: the destination is the symbol plus a
 #: register this analysis does not track.
 INDEXED_OPERAND = re.compile(r",\s*[XYS]\s*$", re.IGNORECASE)
+#: A memory-map define whose value is quoted text -- an access spelling, such
+#: as ``!RAM_SMW_NorSpr_XPosLo_x = "!RAM_SMW_NorSpr_XPosLo,x"`` -- names a
+#: table and an addressing mode rather than an address of its own. The map
+#: gives one for the shipped cartridge first and a base's own after it (the
+#: SA-1 base reads the same table through a pointer), and the graph records
+#: the first, which is the one every base's code means.
+TEXT_DEFINE = re.compile(r'^\s*(![A-Za-z_][A-Za-z0-9_]*)\s*=\s*"([^"]*)"')
 
 
 class _ModeTracker:
@@ -258,6 +265,10 @@ class CodeGraph:
     memory: dict[str, str] = field(default_factory=dict)
     #: `!Name` defines (Constants/, Memory/, Config/), name -> defining file.
     defines: dict[str, str] = field(default_factory=dict)
+    #: Access spellings from the memory map, name -> (the table they name, the
+    #: addressing mode the spelling carries). A reference through one is
+    #: recorded against the table, in that mode.
+    aliases: dict[str, tuple[str, str]] = field(default_factory=dict)
     #: routine -> routines it calls (JSR/JSL/JMP/JML).
     calls: dict[str, set[str]] = field(default_factory=dict)
     #: routine -> routines that call it.
@@ -340,7 +351,16 @@ def build_graph(base: RomBase | None = None) -> CodeGraph:
     for f in memory_files:
         rel = f.relative_to(root).as_posix()
         for raw in _read_lines(f):
-            d = DEFINE_DEF.match(strip_comment(raw))
+            line = strip_comment(raw)
+            t = TEXT_DEFINE.match(line)
+            if t:
+                text = t.group(2).strip()
+                target = IDENT.search(text)
+                if target and not text.startswith(("(", "[")):
+                    mode = "indexed" if INDEXED_OPERAND.search(text) else "direct"
+                    g.aliases.setdefault(t.group(1), (target.group(0), mode))
+                continue
+            d = DEFINE_DEF.match(line)
             if d:
                 g.memory.setdefault(d.group(1), rel)
     for f in [
@@ -537,6 +557,9 @@ def build_graph(base: RomBase | None = None) -> CodeGraph:
 
             for m in IDENT.finditer(clean):
                 n = m.group(0)
+                mode_here = addressing
+                if n in g.aliases:
+                    n, mode_here = g.aliases[n]
                 if op in CALL_OPS:
                     target = resolve_call(n)
                     if target and target != name:
@@ -549,10 +572,10 @@ def build_graph(base: RomBase | None = None) -> CodeGraph:
                     continue
                 elif op in READ_OPS and is_data(n):
                     reads.add(n)
-                    accesses.append(Access(n, "read", width, addressing))
+                    accesses.append(Access(n, "read", width, mode_here))
                 elif op in WRITE_OPS and is_data(n):
-                    accesses.append(Access(n, "write", width, addressing))
-                    if addressing == "indirect":
+                    accesses.append(Access(n, "write", width, mode_here))
+                    if mode_here == "indirect":
                         # The pointer is read to form the address; what gets
                         # written is somewhere else entirely.
                         reads.add(n)
@@ -568,6 +591,7 @@ def build_graph(base: RomBase | None = None) -> CodeGraph:
         for c in calls:
             g.callers.setdefault(c, set()).add(name)
         for r in refs:
+            r = g.aliases.get(r, (r, ""))[0]
             if r not in g.routines and resolve_call(r) is None and not is_data(r):
                 continue
             g.referenced_by.setdefault(r, set()).add(name)

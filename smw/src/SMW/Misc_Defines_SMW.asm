@@ -13,7 +13,7 @@ incsrc "Config/OverworldTableRelocation.asm"
 incsrc "Config/TranslevelRemap.asm"
 incsrc "Config/StringTableRelocation.asm"
 incsrc "Config/ReservedBank.asm"
-; The four features that share the level bank, then the level number stash
+; The features that share the level bank, then the level number stash
 ; three of them read -- it asks which are on, so it is read after all of
 ; them -- and then the bank itself, which asks the same and is read last.
 incsrc "Config/LevelGraphics.asm"
@@ -22,6 +22,10 @@ incsrc "Config/LevelCode.asm"
 ; own but declares no block: its stubs are variable-size and behind the
 ; packed head, and its only cost in the game's own banks is one jump.
 incsrc "Config/GameModeCode.asm"
+; The custom music, read before the global code because the frame hook the two
+; share asks whether it is on. Where its data goes is the music banks', read
+; last of all.
+incsrc "Config/CustomMusic.asm"
 ; Code that belongs to no level and no game mode, and the fragment naming
 ; which of its entry points a project wrote -- read with the defines,
 ; because each hook in Banks/ asks whether its own is there at all.
@@ -30,19 +34,59 @@ incsrc "Config/GlobalCode.asm"
 ; of it runs: read after all three kinds, since it refuses a cartridge with
 ; none of them to use it.
 incsrc "Config/UberASM.asm"
+; A sprite number that carries code of its own, then how such a sprite is
+; spelled -- one feature throws both defines, and the dialect still
+; refuses a build with no custom sprites to use it.
+incsrc "Config/CustomSprites.asm"
+incsrc "Config/Pixi.asm"
 incsrc "Config/LevelCustomPalettes.asm"
 incsrc "Config/LevelNumberStash.asm"
 incsrc "Config/ManagedLevelMemory.asm"
+; The sprite memory index a base sets every level to, on the finalize pass
+; and off the pointer tables -- read after the managed level banks, whose
+; sprite-bank table it follows when that feature is on.
+incsrc "Config/SpriteMemoryIndex.asm"
+; SA-1 Pack itself, assembled from the end of the ROM map on a coprocessor
+; base: its code, its hijacks, and the one table it still applies in place.
+incsrc "Config/SA1Pack.asm"
 incsrc "Config/LevelBank.asm"
+; The custom sprites' own bank, whose default sits one past the level
+; bank's; read after it so the collision checks have both numbers.
+incsrc "Config/SpriteBank.asm"
 ; The managed graphics, then the graphics banks they pack into: the banks
 ; ask whether the feature is on and lie above both reservations above, so
 ; they are read last.
 incsrc "Config/ManagedGraphicsMemory.asm"
 incsrc "Config/GraphicsBank.asm"
+; The banks the custom music packs into: they lie above the graphics and take
+; their default from where the graphics end, so they are read after them and
+; last of all. The feature itself is read much earlier -- the frame hook asks
+; whether it is on.
+incsrc "Config/MusicBank.asm"
 
 ; Note: This file contains all the defines that aren't for the different kinds of RAM.
 
+; The last normal sprite slot: $0B on every shipped cartridge, and what a
+; base that widens the sprite tables sets on the command line -- SA-1 Pack's
+; More Sprites runs 22 slots, so the sa1 base sets $15. Every loop bound
+; and every chained table follows.
+if defined("Define_SMW_MaxNormalSpriteSlot") == 0
 !Define_SMW_MaxNormalSpriteSlot = $0B
+endif
+; The shipped cartridge's last slot, which a widened base keeps where a
+; number is a *particular* slot rather than a bound: the slots the bosses
+; and their projectiles are placed in, the slot counts each sprite memory
+; setting allots, the slots a spawn search stops at. SA-1 Pack widens the
+; loop bounds and leaves every one of these, and so does this source.
+!Define_SMW_StockMaxNormalSpriteSlot = $0B
+; The last slot sprite memory setting $08 allots, in the three tables the
+; level sprite parser indexes by setting. $06 as shipped; a base that
+; widens the sprite tables makes $08 *the* widened setting, and SA-1 Pack's
+; More Sprites keys its 22 slots on it, with the top three kept back --
+; the sa1 base's layout block sets $13.
+if defined("Define_SMW_SpriteMemorySetting08_LastSlot") == 0
+!Define_SMW_SpriteMemorySetting08_LastSlot = !Define_SMW_StockMaxNormalSpriteSlot-$05
+endif
 !Define_SMW_MaxBounceSpriteSlot = $03
 !Define_SMW_MaxScoreSpriteSlot = $05
 !Define_SMW_MaxSpinningCoinSpriteSlot = $03
@@ -163,6 +207,16 @@ incsrc "Config/GraphicsBank.asm"
 !Define_SMW_CreditsMusic_TheYoshisAreHome = $0A
 !Define_SMW_CreditsMusic_CastList = $0B
 
+; With the custom music's driver resident the whole cartridge speaks
+; AddmusicK's numbering, so the fragment the editor writes redefines the
+; track defines above to it -- after them, so its definitions win exactly
+; where the driver is there to answer them. The shipped copy is empty:
+; a build with the feature on and nothing imported still runs the stock
+; engine, whose numbering is what the definitions above already say.
+if !Define_SMW_CustomMusic == !TRUE
+	incsrc "SPC700/Custom/custom-tracks.asm"
+endif
+
 !Define_SMW_Sound1DFC_Coin = $01
 !Define_SMW_Sound1DFC_HitItemBlock = $02
 !Define_SMW_Sound1DFC_HitVineBlock = $03
@@ -272,6 +326,24 @@ incsrc "Config/GraphicsBank.asm"
 !Define_SMW_Counter_StartingLives = 04						; How many lives the player starts with when loading a save file, minus 01.
 !Define_SMW_Counter_TotalExits = 96						; How many exits are needed for the file select screen to display your exit count differently
 !Define_SMW_Graphics_StartOfDynamicSpriteTiles = $0800				; Offset to the graphics for Yoshi, baby Yoshi, and the podoboo in the decompressed GFX33.
+
+; The DMA channels the game's V-blank uploads run on, and the HDMA channel
+; the windowing effect runs on. Every shipped cartridge uses 0 for the OAM
+; buffer, 1 for tilemaps and stripe images and 7 for the window (which the
+; enemy-rollcall parallax borrows as its third channel), and the graphics
+; and palette uploads on channel 2 are not switchable. A base whose
+; coprocessor claims channels of its own sets these on the command line:
+; SA-1 Pack keeps 0 for its own transfers and 1 for the window, so the sa1
+; base folds both uploads onto 2 and moves the window to 1.
+if defined("Define_SMW_OAMUploadDMAChannel") == 0
+!Define_SMW_OAMUploadDMAChannel #= $00
+endif
+if defined("Define_SMW_TilemapUploadDMAChannel") == 0
+!Define_SMW_TilemapUploadDMAChannel #= $01
+endif
+if defined("Define_SMW_WindowHDMAChannel") == 0
+!Define_SMW_WindowHDMAChannel #= $07
+endif
 
 !Define_SMW_Physics_PMeterMax = $70						; How long the player must run for before being able to sprint.
 !Define_SMW_Misc_SaveFileSize = $008F						; How many bytes make up a save file.

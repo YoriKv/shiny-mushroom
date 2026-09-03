@@ -18,6 +18,59 @@ endif
 if defined("Define_SMW_LowRAMLocation") == 0
 !Define_SMW_LowRAMLocation #= $0000
 endif
+; SA-1 Pack's More Sprites layout, selected by the base that carries the
+; pack: 22 slots, the tables that stay on the direct page shuffled to make
+; room, three taken off it into I-RAM and reached through pointers, and the
+; rest moved out of low RAM into I-RAM ($3242 and up, the hot ones) or the
+; BW-RAM window ($74C8 and up). The addresses are the pack's own, so code
+; written against an SA-1 Pack cartridge reads the same bytes here; the
+; four tables not anchored below follow the one before them at one
+; slot-width, in this layout as in the stock one.
+if defined("Define_SMW_SA1")
+!Define_SMW_SpriteMemorySetting08_LastSlot = !Define_SMW_MaxNormalSpriteSlot-$02
+!Define_SMW_SprTable_009E #= $3200
+!Define_SMW_SprTable_00AA #= !Define_SMW_DirectPageLocation+$9E
+!Define_SMW_SprTable_00B6 #= !Define_SMW_DirectPageLocation+$B6
+!Define_SMW_SprTable_00C2 #= !Define_SMW_DirectPageLocation+$D8
+!Define_SMW_SprTable_00D8 #= $3216
+!Define_SMW_SprTable_14C8 #= $3242
+!Define_SMW_SprTable_14D4 #= $3258
+!Define_SMW_SprTable_14EC #= $74C8
+!Define_SMW_SprTable_1504 #= $74F4
+!Define_SMW_SprTable_151C #= $3284
+!Define_SMW_SprTable_1528 #= $329A
+!Define_SMW_SprTable_1534 #= $32B0
+!Define_SMW_SprTable_1540 #= $32C6
+!Define_SMW_SprTable_154C #= $32DC
+!Define_SMW_SprTable_1558 #= $32F2
+!Define_SMW_SprTable_1564 #= $3308
+!Define_SMW_SprTable_1570 #= $331E
+!Define_SMW_SprTable_157C #= $3334
+!Define_SMW_SprTable_1594 #= $3360
+!Define_SMW_SprTable_15A0 #= $3376
+!Define_SMW_SprTable_15AC #= $338C
+!Define_SMW_SprTable_15B8 #= $7520
+!Define_SMW_SprTable_15C4 #= $7536
+!Define_SMW_SprTable_15DC #= $7562
+!Define_SMW_SprTable_15EA #= $33A2
+!Define_SMW_SprTable_15F6 #= $33B8
+!Define_SMW_SprTable_1602 #= $33CE
+!Define_SMW_SprTable_160E #= $33E4
+!Define_SMW_SprTable_161A #= $7578
+!Define_SMW_SprTable_1626 #= $758E
+!Define_SMW_SprTable_163E #= $33FA
+!Define_SMW_SprTable_164A #= $75BA
+!Define_SMW_SprTable_1656 #= $75D0
+!Define_SMW_SprTable_1662 #= $75EA
+!Define_SMW_SprTable_166E #= $7600
+!Define_SMW_SprTable_167A #= $7616
+!Define_SMW_SprTable_1686 #= $762C
+!Define_SMW_SprTable_186C #= $7642
+!Define_SMW_SprTable_187B #= $3410
+!Define_SMW_SprTable_190F #= $7658
+!Define_SMW_SprTable_1FD6 #= $766E
+!Define_SMW_SprTable_1FE2 #= $7FD6
+endif
 ; Each relocatable sprite table, defaulting to where it is today.
 ; A base that moves the sprite tables sets these instead; every
 ; per-sprite alias below is defined against the table rather than an
@@ -124,9 +177,10 @@ endif
 if defined("Define_SMW_SprTable_187B") == 0
 !Define_SMW_SprTable_187B #= !Define_SMW_LowRAMLocation+$187B
 endif
-if defined("Define_SMW_SprTable_1884") == 0
-!Define_SMW_SprTable_1884 #= !Define_SMW_LowRAMLocation+$1884
-endif
+; Slot 9 of the table at $187B, not a table of its own: the koopa kid
+; battle reads a background number out of it, and it follows that table
+; wherever a layout puts it.
+!Define_SMW_SprTable_1884 #= !Define_SMW_SprTable_187B+$09
 if defined("Define_SMW_SprTable_190F") == 0
 !Define_SMW_SprTable_190F #= !Define_SMW_LowRAMLocation+$190F
 endif
@@ -626,14 +680,26 @@ endif
 !RAM_SMW_Flag_SpritesLocked #= !Define_SMW_DirectPageLocation+$9D
 ; Sprite number, or Acts Like setting for custom sprites. To check the
 ; actual sprite ID for custom sprites, see $7FAB9E instead.
-!RAM_SMW_NorSpr_SpriteID #= !Define_SMW_DirectPageLocation+$9E
+if defined("Define_SMW_SprTable_009E") == 0
+!Define_SMW_SprTable_009E #= !Define_SMW_DirectPageLocation+$9E
+endif
+!RAM_SMW_NorSpr_SpriteID #= !Define_SMW_SprTable_009E
 ; Sprite Y speed table.
-!RAM_SMW_NorSpr_YSpeed #= !Define_SMW_DirectPageLocation+$AA
+if defined("Define_SMW_SprTable_00AA") == 0
+!Define_SMW_SprTable_00AA #= !Define_SMW_DirectPageLocation+$AA
+endif
+!RAM_SMW_NorSpr_YSpeed #= !Define_SMW_SprTable_00AA
 ; Sprite X speed table.
-!RAM_SMW_NorSpr_XSpeed #= !Define_SMW_DirectPageLocation+$B6
+if defined("Define_SMW_SprTable_00B6") == 0
+!Define_SMW_SprTable_00B6 #= !Define_SMW_DirectPageLocation+$B6
+endif
+!RAM_SMW_NorSpr_XSpeed #= !Define_SMW_SprTable_00B6
 ; Miscellaneous sprite table. In SMW, it's commonly used as a pointer to
 ; different parts of a sprite.
-!RAM_SMW_NorSpr_Table7E00C2 #= !Define_SMW_DirectPageLocation+$C2
+if defined("Define_SMW_SprTable_00C2") == 0
+!Define_SMW_SprTable_00C2 #= !Define_SMW_DirectPageLocation+$C2
+endif
+!RAM_SMW_NorSpr_Table7E00C2 #= !Define_SMW_SprTable_00C2
 	!RAM_SMW_NorSprXXX_CurrentlyActiveBoss #= !RAM_SMW_NorSpr_Table7E00C2
 ; 24-bit pointer to level's sprite data.
 !RAM_SMW_Pointer_SpriteListDataLo #= !Define_SMW_DirectPageLocation+$CE
@@ -653,7 +719,61 @@ endif
 !RAM_SMW_NorSpr086_Wiggler_SegmentPosPtrHi #= !RAM_SMW_NorSpr086_Wiggler_SegmentPosPtrLo+$01
 !RAM_SMW_NorSpr086_Wiggler_SegmentPosPtrBank #= !RAM_SMW_NorSpr086_Wiggler_SegmentPosPtrLo+$02
 ; Sprite Y position, low byte.
-!RAM_SMW_NorSpr_YPosLo #= !Define_SMW_DirectPageLocation+$D8
+if defined("Define_SMW_SprTable_00D8") == 0
+!Define_SMW_SprTable_00D8 #= !Define_SMW_DirectPageLocation+$D8
+endif
+!RAM_SMW_NorSpr_YPosLo #= !Define_SMW_SprTable_00D8
 !RAM_SMW_NorSpr_XPosLo #= !RAM_SMW_NorSpr_YPosLo+(!Define_SMW_MaxNormalSpriteSlot+$01)
+; Where the shipped cartridge keeps those two tables, for the seven sites
+; that address one fixed slot's byte directly -- Bowser's bowling ball and
+; Princess Peach in slot 8, and slot 0 in the level-load init. SA-1 Pack
+; rewrites none of these because it replaces the code around them: a JML
+; over each slot-8 spawn to code of its own, and the init routine whole.
+; Dead on that base, and kept as the pack leaves them.
+!RAM_SMW_NorSpr_YPosLo_AsShipped #= !Define_SMW_DirectPageLocation+$D8
+!RAM_SMW_NorSpr_XPosLo_AsShipped #= !Define_SMW_DirectPageLocation+$E4
+; How code reaches the current slot's byte of the sprite number and the two
+; position low bytes -- the three tables the SA-1 base takes off the direct
+; page. On the shipped cartridge the slot is X, so each of these expands to
+; `!Table,x`; on that base the tables sit in I-RAM, out of reach of a
+; two-byte instruction, and SA-1 Pack keeps a direct-page pointer to the
+; current slot's byte of each, set wherever the slot changes, so the same
+; line expands to `(!Pointer)`: the same length, over the same bytes. The
+; mode lives in the define so that one line assembles both cartridges, and
+; code never writes `!Table,x` for these three itself.
+!RAM_SMW_NorSpr_SpriteID_x = "!RAM_SMW_NorSpr_SpriteID,x"
+!RAM_SMW_NorSpr_YPosLo_x = "!RAM_SMW_NorSpr_YPosLo,x"
+!RAM_SMW_NorSpr_XPosLo_x = "!RAM_SMW_NorSpr_XPosLo,x"
+; LDX and LDY have no (dp) form, so where the sprite number is loaded into
+; an index register the SA-1 base reads the copy the pack keeps beside its
+; pointers, refreshed with them.
+!RAM_SMW_NorSpr_SpriteID_x_Cached = "!RAM_SMW_NorSpr_SpriteID,x"
+; Slot 0's byte named without an index -- the cluster sprites, Reznor's sign
+; and the ending's Yoshi borrow slot 0 to run code written for a normal
+; sprite. The pack points its pointers at slot 0 around each of those, so on
+; the SA-1 base these are the same indirect access.
+!RAM_SMW_NorSpr_SpriteID_Slot0 = "!RAM_SMW_NorSpr_SpriteID"
+!RAM_SMW_NorSpr_YPosLo_Slot0 = "!RAM_SMW_NorSpr_YPosLo"
+!RAM_SMW_NorSpr_XPosLo_Slot0 = "!RAM_SMW_NorSpr_XPosLo"
+if defined("Define_SMW_SA1")
+; SA-1 Pack's pointers to the current slot's byte of the three tables above,
+; and its copy of the slot's sprite number, in bytes the 22-slot layout
+; leaves free: the pointers after the two speed tables and where the X
+; position's slots 10 and 11 were, the copy in $87, which nothing names on
+; any cartridge.
+!RAM_SMW_Misc_CurrentSpriteIDCopy #= !Define_SMW_DirectPageLocation+$87
+!RAM_SMW_Pointer_SpriteIDTableLo #= !Define_SMW_DirectPageLocation+$B4
+!RAM_SMW_Pointer_SpriteIDTableHi #= !RAM_SMW_Pointer_SpriteIDTableLo+$01
+!RAM_SMW_Pointer_SpriteYPosTableLo #= !Define_SMW_DirectPageLocation+$CC
+!RAM_SMW_Pointer_SpriteYPosTableHi #= !RAM_SMW_Pointer_SpriteYPosTableLo+$01
+!RAM_SMW_Pointer_SpriteXPosTableLo #= !Define_SMW_DirectPageLocation+$EE
+!RAM_SMW_Pointer_SpriteXPosTableHi #= !RAM_SMW_Pointer_SpriteXPosTableLo+$01
+!RAM_SMW_NorSpr_SpriteID_x = "(!RAM_SMW_Pointer_SpriteIDTableLo)"
+!RAM_SMW_NorSpr_YPosLo_x = "(!RAM_SMW_Pointer_SpriteYPosTableLo)"
+!RAM_SMW_NorSpr_XPosLo_x = "(!RAM_SMW_Pointer_SpriteXPosTableLo)"
+!RAM_SMW_NorSpr_SpriteID_x_Cached = "!RAM_SMW_Misc_CurrentSpriteIDCopy"
+!RAM_SMW_NorSpr_SpriteID_Slot0 = "(!RAM_SMW_Pointer_SpriteIDTableLo)"
+!RAM_SMW_NorSpr_YPosLo_Slot0 = "(!RAM_SMW_Pointer_SpriteYPosTableLo)"
+!RAM_SMW_NorSpr_XPosLo_Slot0 = "(!RAM_SMW_Pointer_SpriteXPosTableLo)"
+endif
 ;Empty $0000F0-$0000FF
-!RAM_SMW_Misc_EndOfStack = !RAM_SMW_Misc_StartOfStack-$FF

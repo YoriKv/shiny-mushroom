@@ -51,7 +51,11 @@ OUTLINE_COLOR = QColor(0xA0, 0xA0, 0xA0)
 # is what makes a selection readable over artwork of any colour -- a solid line
 # of either one disappears into art that happens to match it, and the eye reads
 # the alternation itself as "selected" rather than as another marker. It is also
-# the shape every editor uses for this, so it needs no explaining.
+# the shape every editor uses for this, so it needs no explaining. **Every
+# selection on a canvas wears them** -- records, tiles, the Map16 sheet's
+# cells, the map's stamps -- so the mark never has to be learnt twice. The
+# panel grids are the one other surface, and they wear a still two-tone ring
+# instead (`ui/ring.py`): the same on every panel, different from the canvas.
 SELECTION_LINE = QColor(0x00, 0x00, 0x00)
 SELECTION_DASH = QColor(0xFF, 0xFF, 0xFF)
 
@@ -69,6 +73,16 @@ DASH_LENGTH = 2
 #: is what is being reached for. Hue does that without a second line weight or a
 #: fill, and this is the one colour in the editor that already means "a boundary
 #: the editor drew".
+#:
+#: **The blue box never snaps; the ants always do.** A box is drawn only where
+#: it and the selection are different things -- it reaches across the picture
+#: by the pixel and catches whichever *records* it touches, so it has to be
+#: seen while the ants are somewhere else. Boxing a tilemap is not that: every
+#: cell inside the box is caught, so the ants already outline the box, snapped
+#: to the grid, and a blue rectangle over them would be one statement drawn
+#: twice. So the level's records, the map's sprites, stamps and transfers box
+#: in blue; the level's Layer 2, the map's two layers and the Map16 sheets
+#: sweep with the ants alone.
 #:
 #: One colour for both, because they are one statement. A marquee says "as far
 #: as here" about a region and a resize says it about an edge, and a reader who

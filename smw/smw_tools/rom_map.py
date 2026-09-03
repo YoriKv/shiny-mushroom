@@ -4,7 +4,7 @@ empty.
 ``RomMap/ROM_Map_SMW_<ROMID>.asm`` is the one statement of the cartridge's
 layout: a flat list of ``%MACRO($XXXXXX)`` lines, one per routine or table,
 each of them an ``org`` at a literal address that ``%InsertMacroAtXPosition``
-guards with a ``warnpc``. **Nothing in the image is unplaced.** The list tiles
+guards with an ``assert pc() <=``. **Nothing in the image is unplaced.** The list tiles
 the whole 512 KB with no gaps and no overlaps, which is what makes it a memory
 map rather than a table of contents -- a placement's run of ROM is the distance
 to the next line, and there is no third thing it could be.
@@ -86,7 +86,7 @@ class Placement:
     """One macro, where the map puts it, and the run of ROM that gives it."""
 
     #: The macro's name, without the ``%`` -- which is what the map places and
-    #: so what names this run in a `warnpc` and in an error.
+    #: so what names this run in a placement guard and in an error.
     macro: str
 
     #: Its 24-bit SNES address, exactly as the map writes it.
@@ -216,7 +216,7 @@ def _placements(root: Path, romid: str) -> tuple[Placement, ...]:
     padding = _padding_sizes(root, romid)
     offsets = [snes_to_pc(addr) for _name, addr in lines]
     # The last line has nothing above it, so what bounds it is the end of its
-    # own bank -- the `warnpc` `%BANK_END` writes.
+    # own bank -- the guard `%BANK_END` writes.
     offsets.append(-(-offsets[-1] // BANK_SIZE) * BANK_SIZE)
 
     made = []

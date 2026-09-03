@@ -66,6 +66,7 @@ from shiny_mushroom.fields import (
     Flags,
     Number,
     Readout,
+    Switch,
     grouped,
     label_of,
 )
@@ -90,17 +91,17 @@ NOTHING_SELECTED = "Click an object or a sprite to see its properties."
 #: a name; measured, those asked for 268 and 301 px.
 PICKER_WIDTH = 120
 
-#: The narrowest a picker gets. A column of pickers should read as a column,
-#: so a yes/no is not sized down to the three letters in it.
-YES_NO_WIDTH = 60
+#: The narrowest a picker gets. A column of pickers should read as a column, so
+#: a two-word list is not sized down to the words in it.
+SHORT_LIST_WIDTH = 60
 
-#: A list of no more than this many entries is not a list to search: it is a
-#: yes and a no, or a pair of layers, and it is sized to **itself** between
-#: :data:`YES_NO_WIDTH` and :data:`PICKER_WIDTH` -- so the column still lines
-#: up, a short list still cannot run away with it, and a picker is never
-#: narrower than its own entry. Two options are not necessarily a yes and a no
-#: ("Layer 1" is one of them), and one elided is a value the panel is hiding.
-YES_NO_OPTIONS = 2
+#: A list of no more than this many entries is sized to **itself** between
+#: :data:`SHORT_LIST_WIDTH` and :data:`PICKER_WIDTH` -- so the column still
+#: lines up, a short list still cannot run away with it, and a picker is never
+#: narrower than its own entry, one elided being a value the panel is hiding.
+#: A pair here is a pair of *answers* -- "Layer 1" and "Layer 2"; a yes and a
+#: no is a :class:`~shiny_mushroom.fields.Switch` and is not a picker at all.
+SHORT_LIST_OPTIONS = 2
 
 #: Room a popup row needs beyond its text: the item's own margins either side.
 #: Measured against what Qt sizes the list to when it is left to itself.
@@ -274,8 +275,8 @@ class CompactComboBox(SearchableComboBox):
     ):
         super().__init__(offers_search, parent)
         #: The stated width, or ``None`` for Qt's own held between
-        #: :data:`YES_NO_WIDTH` and :data:`PICKER_WIDTH` -- see
-        #: :data:`YES_NO_OPTIONS`.
+        #: :data:`SHORT_LIST_WIDTH` and :data:`PICKER_WIDTH` -- see
+        #: :data:`SHORT_LIST_OPTIONS`.
         self._width = width
         # No AdjustToContents: it exists to re-query the hint when the model
         # changes, and the hint no longer depends on the model.
@@ -309,7 +310,7 @@ class CompactComboBox(SearchableComboBox):
         hint.setWidth(
             self._width
             if self._width is not None
-            else min(max(hint.width(), YES_NO_WIDTH), PICKER_WIDTH)
+            else min(max(hint.width(), SHORT_LIST_WIDTH), PICKER_WIDTH)
         )
         return hint
 
@@ -370,6 +371,94 @@ class SharedRow(QWidget):
     def text(self) -> str:
         """The row as one value, the way a readout writes it."""
         return SEPARATOR.join(_text_of(widget) for widget in self._widgets)
+
+
+class SwitchBox(QCheckBox):
+    """A :class:`~shiny_mushroom.fields.Switch` field: one box, ticked or not.
+
+    No caption of its own -- the row's label is already the question, and a box
+    that also said "Yes" beside itself would answer it twice. What the row
+    *reads* as is :meth:`state_text`, so a readout of the panel says "Yes" and
+    "No" where the box shows a tick.
+
+    Part-filled where the value is neither, which is a multi-record selection
+    whose records disagree. That is a state the box is put **into** and never
+    one a click puts it back into: :meth:`nextCheckState` goes straight to the
+    answer, because "leave them as they were" is not something a tick can say.
+    """
+
+    def __init__(
+        self,
+        found: Field,
+        record: object,
+        edited: Callable[[str, int], None],
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        assert isinstance(found.kind, Switch)
+        self._field = found
+        self._edited = edited
+        # No focus by wheel, for :class:`PanelSpinBox`'s reason: this panel is
+        # a scroll area, and a box that toggled because somebody scrolled past
+        # it is an edit nobody made.
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        # Filled before it is connected, because putting the record's own
+        # answer into the box showing it is not the user answering.
+        self.fill(found, record)
+        # The state rather than ``toggled``: Qt counts a part-filled box as
+        # checked, so the click that decides one changes no ``checked`` and
+        # would commit nothing.
+        self.checkStateChanged.connect(
+            lambda state, key=found.key: self._answered(key, state)
+        )
+
+    def _answered(self, key: str, state: Qt.CheckState) -> None:
+        """Commit the answer the box now shows. Part-filled is not one: it is
+        put there by a fill, which happens with the signals blocked."""
+        if state != Qt.CheckState.PartiallyChecked:
+            self._edited(key, 1 if state == Qt.CheckState.Checked else 0)
+
+    def nextCheckState(self) -> None:  # noqa: N802 - Qt's name
+        """Tick or untick, never part-fill.
+
+        Qt's three-state cycle would offer "neither" as an answer, and it is
+        only ever a report. A part-filled box ticks, because a click on records
+        that disagree is a click that decides them.
+
+        **The state is set, never the tick.** ``setChecked`` publishes the new
+        state -- which is what emits ``checkStateChanged`` -- only while
+        ``blockRefresh`` is down, and the mouse-release path raises it around
+        this call; ``QCheckBox`` compensates by publishing the state itself,
+        which is exactly the half an override replaces. ``setCheckState``
+        publishes its own, so the box says what it now shows however the click
+        arrived: by hand, by :meth:`~PySide6.QtWidgets.QAbstractButton.click`,
+        or off the keyboard.
+        """
+        checked = self.checkState() != Qt.CheckState.Checked
+        self.setCheckState(
+            Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+        )
+
+    def fill(self, found: Field, record: object) -> None:
+        """Put the record's answer into the box, without committing it."""
+        self._field = found
+        value = found.value(record)
+        self.setEnabled(found.editable)
+        # Tristate only while it is showing one: left on, a click could cycle
+        # back through the part-filled state.
+        self.setTristate(value not in (0, 1))
+        if value in (0, 1):
+            self.setChecked(bool(value))
+        else:
+            self.setCheckState(Qt.CheckState.PartiallyChecked)
+
+    def state_text(self) -> str:
+        """The row as one value, the way a readout writes it."""
+        assert isinstance(self._field.kind, Switch)
+        state = self.checkState()
+        if state == Qt.CheckState.PartiallyChecked:
+            return self._field.kind.text_for(-1)
+        return self._field.kind.text_for(1 if state == Qt.CheckState.Checked else 0)
 
 
 class FlagBoxes(QWidget):
@@ -672,17 +761,6 @@ class PropertiesDock(QDockWidget):
         found = self._fields.get(key)
         return None if found is None else found[1]
 
-    def actions(self) -> list[Field]:
-        """The :class:`~shiny_mushroom.fields.Action` fields on show, in the
-        order they were shown -- the panel's buttons, for anything that wants
-        to offer them elsewhere. The canvas's context menu does: a row per
-        button, fired through the same committed-field path."""
-        return [
-            self._fields[key][0]
-            for key in self._order
-            if isinstance(self._fields[key][0].kind, Action)
-        ]
-
     def _clear(self) -> None:
         # Rows are taken out and their widgets deleted **later**, never in
         # place: a rebuild can arrive from inside one of these widgets' own
@@ -779,6 +857,8 @@ def field_widget(
         label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         label.setWordWrap(True)
         return label
+    if isinstance(found.kind, Switch):
+        return SwitchBox(found, record, edited)
     if isinstance(found.kind, Flags):
         return FlagBoxes(found, record, edited)
     if isinstance(found.kind, Choices):
@@ -786,7 +866,7 @@ def field_widget(
         # two kinds of list this panel has: a couple of hundred names to
         # find one of, or a yes and a no.
         box = CompactComboBox(
-            None if len(found.kind.options) <= YES_NO_OPTIONS else PICKER_WIDTH,
+            None if len(found.kind.options) <= SHORT_LIST_OPTIONS else PICKER_WIDTH,
             offers_search=found.kind.searchable,
         )
         box.setModel(_shared_list_model(found.kind.options))
@@ -849,6 +929,10 @@ def fill_field_widget(found: Field, widget: QWidget, record: object) -> None:
             widget.addItem(found.text(record), value)
             index = widget.count() - 1
         widget.setCurrentIndex(index)
+    elif isinstance(widget, SwitchBox):
+        if not isinstance(found.kind, Switch):
+            return
+        widget.fill(found, record)
     elif isinstance(widget, FlagBoxes):
         widget.fill(found, record)
     elif isinstance(widget, QLabel):
@@ -918,6 +1002,8 @@ def _text_of(widget: QWidget) -> str:
     """What a row is showing, whatever kind of widget is showing it."""
     if isinstance(widget, SharedRow | FlagBoxes):
         return widget.text()
+    if isinstance(widget, SwitchBox):
+        return widget.state_text()
     if isinstance(widget, QComboBox):
         return widget.currentText()
     if isinstance(widget, QSpinBox):

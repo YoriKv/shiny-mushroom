@@ -126,6 +126,18 @@ def castle_file(romid: str) -> str:
     return "Castle_PALRev1" if romid == _PAL_REV1_ROMID else "Castle"
 
 
+def file_of(tile: int, tileset: int, castle: str = "Castle") -> tuple[str, int]:
+    """Which file defines ``tile`` under ``tileset``, and the byte offset of
+    its eight bytes there -- :func:`smw_tools.map16.table_offset` with the
+    target's castle file substituted. The module-level spelling, for a reader
+    holding file bytes rather than a whole :class:`Map16Tables`."""
+    try:
+        name, at = table_offset(tile, tileset)
+    except ValueError as error:
+        raise Map16Error(str(error)) from error
+    return (castle if name == "Castle" else name), at
+
+
 def is_shared(tile: int) -> bool:
     """Whether every tileset draws ``tile`` from the same bytes.
 
@@ -286,13 +298,9 @@ class Map16Tables:
 
     def file_of(self, tile: int, tileset: int) -> tuple[str, int]:
         """Which held file defines ``tile`` under ``tileset``, and the byte
-        offset of its eight bytes there -- :func:`smw_tools.map16.table_offset`
-        with the target's castle file substituted."""
-        try:
-            name, at = table_offset(tile, tileset)
-        except ValueError as error:
-            raise Map16Error(str(error)) from error
-        return (self.castle if name == "Castle" else name), at
+        offset of its eight bytes there -- :func:`file_of` under this
+        target's castle file."""
+        return file_of(tile, tileset, self.castle)
 
     def raw(self, tile: int, tileset: int) -> bytes:
         name, at = self.file_of(tile, tileset)

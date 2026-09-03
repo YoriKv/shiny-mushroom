@@ -1,6 +1,7 @@
 includefrom sa1.asm
 namespace level_mode
 pushpc
+if !sa1_hijacks_external == 0
 org $00A2E6
 	JSL optimize
 	
@@ -20,6 +21,7 @@ org $00C593
 	
 org $00C0FB
 	JSL stripe_help
+endif
 pullpc
 
 stripe_help:

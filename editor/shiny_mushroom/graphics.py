@@ -47,8 +47,10 @@ __all__ = [
     "Colour",
     "GraphicsError",
     "GraphicsFile",
+    "KEYWORD",
     "Kind",
     "PaletteRow",
+    "Png",
     "Price",
     "Room",
     "baseline_tiles",
@@ -64,6 +66,9 @@ __all__ = [
     "palette_rows",
     "price",
     "raster",
+    "read_png",
+    "redmean",
+    "rgba_line",
     "room",
     "rooms",
     "row_width",
@@ -71,6 +76,7 @@ __all__ = [
     "snes_value",
     "stamps",
     "tiles",
+    "write_png",
 ]
 
 #: One colour as the editor draws it: 8-bit red, green, blue.
@@ -532,7 +538,7 @@ def default_row(number: int) -> int:
 
 _SIGNATURE = b"\x89PNG\r\n\x1a\n"
 #: The keyword under which an export records what it is.
-_KEYWORD = b"shiny-mushroom"
+KEYWORD = b"shiny-mushroom"
 
 #: Colour type -> samples per pixel.
 _CHANNELS = {0: 1, 2: 3, 3: 1, 4: 2, 6: 4}
@@ -584,17 +590,17 @@ def export_png(
             scanlines.append(b"".join(tile[at : at + TILE_SIDE] for tile in strip))
     text = f"name={name};format={fmt.name};tiles={len(tiles)}".encode("latin-1")
     plte = b"".join(bytes(colour) for colour in entries)
-    return _png(
+    return write_png(
         width,
         height,
         _INDEXED,
         8,
         scanlines,
-        [(b"PLTE", plte), (b"tEXt", _KEYWORD + b"\0" + text)],
+        [(b"PLTE", plte), (b"tEXt", KEYWORD + b"\0" + text)],
     )
 
 
-def _png(
+def write_png(
     width: int,
     height: int,
     colour_type: int,
@@ -616,7 +622,7 @@ def _chunk(kind: bytes, data: bytes) -> bytes:
 
 
 @dataclass(frozen=True)
-class _Png:
+class Png:
     """A decoded PNG: one byte per sample, unfiltered and unpacked."""
 
     width: int
@@ -626,13 +632,16 @@ class _Png:
     rows: list[bytes]
     #: The ``shiny-mushroom`` text, or the empty string.
     text: str
+    #: The ``PLTE`` chunk as read, three bytes a colour -- empty for a
+    #: picture without one.
+    palette: bytes = b""
 
     @property
     def channels(self) -> int:
         return _CHANNELS[self.colour_type]
 
 
-def _read_png(data: bytes) -> _Png:
+def read_png(data: bytes) -> Png:
     """Colour types 0, 2, 3, 4 and 6; bit depths 1-8 for the indexed and
     greyscale kinds and 8 for the rest; no interlace. Every CRC is checked, so
     a truncated or edited file is refused rather than read as a picture."""
@@ -642,6 +651,7 @@ def _read_png(data: bytes) -> _Png:
     header = None
     image = bytearray()
     text = ""
+    plte = b""
     while at < len(data):
         if at + 8 > len(data):
             raise GraphicsError("PNG is truncated")
@@ -658,8 +668,10 @@ def _read_png(data: bytes) -> _Png:
             header = struct.unpack(">IIBBBBB", body)
         elif kind == b"IDAT":
             image += body
-        elif kind == b"tEXt" and body.startswith(_KEYWORD + b"\0"):
-            text = body[len(_KEYWORD) + 1 :].decode("latin-1")
+        elif kind == b"PLTE":
+            plte = bytes(body)
+        elif kind == b"tEXt" and body.startswith(KEYWORD + b"\0"):
+            text = body[len(KEYWORD) + 1 :].decode("latin-1")
         elif kind == b"IEND":
             break
     if header is None:
@@ -704,7 +716,7 @@ def _read_png(data: bytes) -> _Png:
                 else unpacked
             )
         rows.append(line)
-    return _Png(width, height, colour_type, rows, text)
+    return Png(width, height, colour_type, rows, text, plte)
 
 
 def _unfilter(kind: int, line: bytes, previous: bytes, step: int) -> bytes:
@@ -771,7 +783,7 @@ def import_png(
     size; one that records a different *name* is not, since a file may be
     imported into another of its kind on purpose.
     """
-    picture = _read_png(png)
+    picture = read_png(png)
     count = len(baseline_tiles)
     _check_kind(picture.text, fmt, count)
     columns = _sheet_columns(picture.width, picture.height, count)
@@ -780,7 +792,7 @@ def import_png(
         for y, line in enumerate(picture.rows):
             _place_row(out, y, columns, line, fmt)
         return [bytes(tile) for tile in out]
-    rows = [_rgba(line, picture.channels, picture.width) for line in picture.rows]
+    rows = [rgba_line(line, picture.channels, picture.width) for line in picture.rows]
     return _match_rows(
         rows, picture.width, columns, baseline_tiles, _entries(fmt, palette)
     )
@@ -838,7 +850,7 @@ def _entries(fmt: TileFormat, palette: Sequence[Colour]) -> list[Colour]:
     return entries + [BLACK] * (fmt.colours - len(entries))
 
 
-def _rgba(line: bytes, channels: int, width: int) -> bytes:
+def rgba_line(line: bytes, channels: int, width: int) -> bytes:
     """One decoded scanline as RGBA, whatever its colour type gave: grey is
     read into all three channels, a picture without alpha is opaque."""
     if channels == 4:
@@ -928,12 +940,12 @@ def _match(
         return base_index
     found = nearest.get(colour)
     if found is None:
-        found = min(range(len(entries)), key=lambda n: _redmean(colour, entries[n]))
+        found = min(range(len(entries)), key=lambda n: redmean(colour, entries[n]))
         nearest[colour] = found
     return found
 
 
-def _redmean(a: Colour, b: Colour) -> int:
+def redmean(a: Colour, b: Colour) -> int:
     """Squared distance weighted the way the eye is, in integers."""
     mean = (a[0] + b[0]) // 2
     dr, dg, db = a[0] - b[0], a[1] - b[1], a[2] - b[2]

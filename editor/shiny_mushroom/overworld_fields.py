@@ -10,8 +10,8 @@ commits.
 A multi-selection edits every key in one operation, one undo step. Reading a
 mixed attribute answers :data:`MIXED`, a value outside every field's range --
 so writing any real value back counts as an edit for every key rather than
-being skipped as "already there", and a flag row can offer a non-committal
-"-" until a choice is made.
+being skipped as "already there", and a flag row part-fills its box until a
+click decides it.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from shiny_mushroom.fields import (
     Field,
     Flags,
     Number,
+    Switch,
     choices,
     readout,
 )
@@ -83,9 +84,6 @@ from shiny_mushroom.overworld import (
 MIXED = -1
 
 
-_YES_NO = (Choice(0, "No"), Choice(1, "Yes"))
-_MIXED_CHOICE = Choice(MIXED, "-")
-
 #: The Layer 2 entry's bit layout -- ``YXPCCCTT TTTTTTTT``. Spelled once,
 #: here: the palette dock composes words with its own copy of these masks and
 #: nothing else in the editor reads the bits directly.
@@ -139,12 +137,10 @@ def _with_bits(entry: Layer2Entry, mask: int, bits: int) -> Layer2Entry:
 
 
 def _flag(entry: Layer2Entry, key: str, label: str, mask: int, hint: str) -> Field:
-    mixed = entry.uniform(lambda word: 1 if word & mask else 0) == MIXED
-    options = ((_MIXED_CHOICE,) if mixed else ()) + _YES_NO
     return Field(
         key=key,
         label=label,
-        kind=Choices(options),
+        kind=Switch(),
         read=lambda e, mask=mask: e.uniform(lambda word: 1 if word & mask else 0),
         write=lambda e, value, mask=mask: _with_bits(e, mask, mask if value else 0),
         hint=hint,

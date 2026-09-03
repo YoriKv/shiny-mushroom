@@ -310,7 +310,7 @@ Main:
 	ADC.b !RAM_SMW_Misc_ScratchRAM00	;/
 	TAY				;\ Y = GFX_TILE_IDX
 	ASL				;|
-	TAX				;/ X = GFX_TILE_IDX * 2; index of VRAM address at $05B93B, $05B93D, and $05B93F
+	TAX				;/ X = GFX_TILE_IDX * 2; offset of the frame's 6-byte row in DATA_05B93B
 	REP.b #$20			; A->16
 	LDA.b !RAM_SMW_Counter_LocalFrames	;\
 	AND.w #$0018			;| TILE_DATA_INDEX_PART = (EffFrame & 0b00011000) >> 2
@@ -320,7 +320,7 @@ Main:
 	LDA.w DATA_05B93B,x		;\
 	STA.w !RAM_SMW_Graphics_TileAnimationVRAMAddress3Lo	;|
 	LDA.w DATA_05B93B+$02,x		;| Write the 3 VRAM addresses of animated tiles' GFX into Gfx33DestAddr{A,B,C},
-	STA.w !RAM_SMW_Graphics_TileAnimationVRAMAddress2Lo	;| using X as an index to the pointer tables at $05B93B, $05B93D, and $05B93F.
+	STA.w !RAM_SMW_Graphics_TileAnimationVRAMAddress2Lo	;| from one 6-byte row of DATA_05B93B, X being the row's offset.
 	LDA.w DATA_05B93B+$04,x		;|
 	STA.w !RAM_SMW_Graphics_TileAnimationVRAMAddress1Lo	;/
 	LDX.b #$04			; Initialise LOOP_COUNTER = 4
@@ -449,7 +449,11 @@ LevelCodeReturn:
 	LDA.w !RAM_SMW_Misc_GameMode
 	CMP.b #!Define_SMW_GameMode22_FadeOutToEnemyRollcall
 	BPL.b CODE_05809C		; |If level mode is less than x22,
+if defined("Define_SMW_SA1")
+	JSL.l SpriteLoading_Sprite_Load_Reset
+else
 	JSL.l CODE_02A751		; |JSL to $02A751
+endif
 CODE_05809C:
 	PLP
 	RTL
@@ -1098,9 +1102,15 @@ Return0585FE:
 	RTS
 
 Main:
+if defined("Define_SMW_SA1")
+	JSL.l CallSA1
+	RTS
+	db $65	; the tail of the LDA.b below, which the hijack leaves unreached
+else
 	SEP.b #$30			; AXY->8
 	LDY.b #$00
 	LDA.b [!RAM_SMW_Pointer_Layer1DataLo],y
+endif
 	STA.b !RAM_SMW_Misc_ScratchRAM0A
 	INY
 	LDA.b [!RAM_SMW_Pointer_Layer1DataLo],y	; |Read three bytes of level data
@@ -1220,15 +1230,24 @@ LevLoadContinue:
 	LDY.w #$0000							;\ Optimization: Again with the unnecessary Y load to index the first entry in an indirect.
 	LDA.b [!RAM_SMW_Pointer_Layer1DataLo],y				;/
 	CMP.b #$FF			; |If the next byte is xFF, return (loading is done).
+if defined("Define_SMW_SA1")
+	BEQ.b Return0586E9
+else
 	BEQ.b LevelDataEnd		; |Otherwise, repeat this routine.
+endif
+if defined("Define_SMW_SA1")
+	JML.l KeepLoading
+else
 	JMP.w Main
 
 LevelDataEnd:
 	RTS								; Optimization: This could have pointed to one of the below RTSs, but given that those bits of code are useless anyway, it's no big deal.
+endif
 
 LevLoadExtObj:
 	SEP.b #$30							;\ Optimization: A/X/Y are already 8-bit!
 	JSL.l SMW_ProcessExtendedObjects_Main				;|
+Return0586E9:
 	RTS								;/
 
 LevLoadNrmObj:
@@ -1244,11 +1263,11 @@ macro ROUTINE_RT00_SMW_InitializeMap16Pointers(Address)
 namespace SMW_InitializeMap16Pointers
 %InsertMacroAtXPosition(<Address>)
 
-; Map16 tileset-specific table. Each bit (from high to low) corresponds to
-; one tile. When the game sets up tile pointers, if the bit is set, it
-; writes and then increments (by 2) P1 (which is initialized to the value at
-; $058000 + (Tileset * 2)), otherwise it writes and increments P2
-; (initialized to $(0D)8000).
+; Map16 shared/tileset-specific mask, one bit per tile from high to low, for
+; tiles $000-$1FF. When the game sets up the tile pointers, a set bit takes
+; the next definition from the shared table (SMW_Map16Data_Global) and a
+; clear bit takes it from the tileset's own table (the TilesetMap16Ptrs
+; entry); each cursor advances by 8, one definition, only when it is used.
 DATA_0581BB:
 	db $FF,$FF,$FF,$FF,$FF,$FF,$FF,$FF
 	db $FF,$FF,$FF,$FF,$FF,$FF,$E0,$00
@@ -1686,14 +1705,14 @@ if !Define_SMW_TranslevelRemap == !TRUE
 	; The tile path reads its level number off the remap table instead of
 	; computing it. The lookup lives beside the table in the relocated bank:
 	; this run of bank $05 is packed to the byte, so there is no room to
-	; grow, and it may not shrink either -- SA-1 Pack patches this routine's
-	; operands by literal address, so the JML pads back to the exact size of
-	; the two instructions it stands in for and nothing after it moves on
-	; any base. The three padded bytes are dead: nothing jumps into them.
-	; The pack's own remap of the read this replaces stands down under the
-	; same define -- the lookup reads the table where the pack keeps it --
-	; so the JML survives the patch pass untouched; see
-	; Config/TranslevelRemap.asm and the vendored remap/map16.asm. X is
+	; grow, and it may not shrink either -- the ROM map places every
+	; routine at a literal address, so the JML pads back to the exact size
+	; of the two instructions it stands in for and nothing after it moves
+	; on any base. The three padded bytes are dead: nothing jumps into
+	; them. On the sa1 base the pack's map16 remap is off, and the vendored
+	; remap/map16.asm stands its rewrite of this read down under the same
+	; define besides -- the lookup reads the table where the pack keeps it;
+	; see Config/TranslevelRemap.asm and the vendored remap/map16.asm. X is
 	; still the tile's Map16 index, so the lookup makes the same read and
 	; the same store these two made before taking the level number off its
 	; table and rejoining at CODE_05D8B7. The code from CODE_05D8A2 to
@@ -1748,7 +1767,7 @@ CODE_05D8B7:
 	STA.b !RAM_SMW_Pointer_Layer2DataBank					;|
 	REP.b #$20								;|\ Optimization: If X were stored to earlier, then changing A's size wouldn't be necessary
 #LM000Hijack_StoreSublevelNumber:						;|| From there, the following two tables could be made to use X instead of Y.
-if !Define_SMW_LevelNumberStashWanted == !TRUE
+if !SMW_LevelNumberStashWanted == !TRUE
 	; The same four bytes as the three instructions below. The stub makes
 	; the same read, stores the level number word to
 	; !RAM_SMW_LevelNumberStash_LoadedLevel -- the value is whole here and
@@ -2339,10 +2358,15 @@ namespace SMW_ProcessLevelEndRoutines
 
 ; Jumps to Level End Scorecard Subroutine
 Main:
+if defined("Define_SMW_SA1")
+	JML.l level_mode_score_stuff
+	db $07,$CC	; the tail of the JSR.w below, which the hijack leaves unreached
+else
 	PHB
 	PHK				; Wrapper
 	PLB
 	JSR.w Sub
+endif
 	PLB
 	RTL
 
@@ -3247,7 +3271,7 @@ CODE_05B28E:
 	STA.b !RAM_SMW_Mirror_ObjectAndColorWindowSettings
 	LDA.b #$22
 	STA.b !RAM_SMW_Mirror_ColorMathInitialSettings
-	LDA.b #$80
+	LDA.b #($01<<!Define_SMW_WindowHDMAChannel)
 	STA.w !RAM_SMW_Mirror_HDMAEnable				; Glitch: This STA should be TSB, or else displaying a message will disable other HDMA channels.
 CODE_05B299:
 	PLB

@@ -20,6 +20,15 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
+#: Where the custom sprites' capture keys live: a custom sprite is the same
+#: number byte as a vanilla one with the record's custom bit set, and what
+#: it draws is its own code's business -- so its capture is keyed at
+#: ``number | CUSTOM_ART_BASE``, past every vanilla number, and a mapping of
+#: captures holds both spaces without either shadowing the other. Shared
+#: here because both sides of the process boundary spell the key: the probe
+#: builds it and the canvas looks it up.
+CUSTOM_ART_BASE = 0x200
+
 
 @dataclass(frozen=True)
 class SpriteTile:

@@ -41,8 +41,8 @@ STEPS = {
     "center=CX,CY": "scroll the view to centre on a map cell",
     "click=CX,CY[,MOD]": "left-click a cell's centre (MOD: shift|ctrl|alt)",
     "middleclick=CX,CY[,MOD]": "middle-click a cell's centre",
-    "rightclick": "right-click off the picture: put down what is in hand,"
-    " or open the context menu",
+    "rightclick=[CX,CY[,MOD]]": "right-click a cell (the eyedropper); bare"
+    " `rightclick` lands off the picture and puts down what is in hand",
     "tab=N": "raise tab N of the tile palette dock",
     "dock=NAME[:off]": "show and raise (or hide) tile-palette|properties|palette",
     "action=NAME[:trigger|on|off]": "drive a menu action; see --list-actions",
@@ -59,13 +59,22 @@ STEPS = {
 
 
 def parse_step(text: str) -> tuple[str, str | None]:
-    """``name=value`` or a bare ``name``, checked against the step table."""
+    """``name=value`` or a bare ``name``, checked against the step table.
+
+    A spec whose value is spelt ``[...]`` takes either form -- the right
+    click, whose bare step aims at the surround and whose valued one at a
+    cell.
+    """
     name, eq, value = text.partition("=")
-    known = {spec.partition("=")[0]: "=" in spec for spec in STEPS}
+    known: dict[str, bool | None] = {}
+    for spec in STEPS:
+        base, _, rest = spec.partition("=")
+        known[base] = None if rest.startswith("[") else "=" in spec
     if name not in known:
         raise SystemExit(f"unknown step {name!r}; steps: {', '.join(sorted(known))}")
-    if known[name] != bool(eq):
-        raise SystemExit(f"step {name!r} {'needs' if known[name] else 'takes no'} =")
+    needs = known[name]
+    if needs is not None and needs != bool(eq):
+        raise SystemExit(f"step {name!r} {'needs' if needs else 'takes no'} =")
     return name, value if eq else None
 
 
@@ -158,7 +167,7 @@ class Driver:
             "window": lambda: w,
             "canvas": lambda: w.canvas,
             "properties": lambda: w.properties,
-            "tile-palette": lambda: w.tile_palette.widget(),
+            "tile-palette": lambda: w.tile_palette,
             "palette": lambda: w.palette_dock,
         }
         if self.target in named:
@@ -198,28 +207,34 @@ class Driver:
         elif name == "center":
             cx, cy = ints(value, (2,))
             w.view.center_on(QPoint(cx * CELL + CELL // 2, cy * CELL + CELL // 2))
-        elif name in ("click", "middleclick"):
-            parts = value.split(",")
-            cx, cy = int(parts[0]), int(parts[1])
+        elif name in ("click", "middleclick", "rightclick"):
+            parts = value.split(",") if value else []
             modifier = {
                 None: Qt.KeyboardModifier.NoModifier,
                 "shift": Qt.KeyboardModifier.ShiftModifier,
                 "ctrl": Qt.KeyboardModifier.ControlModifier,
                 "alt": Qt.KeyboardModifier.AltModifier,
             }[parts[2] if len(parts) > 2 else None]
-            point = QPoint(cx * CELL + CELL // 2, cy * CELL + CELL // 2)
-            signal = w.canvas.clicked if name == "click" else w.canvas.middle_clicked
-            signal.emit(point, modifier)
-        elif name == "rightclick":
-            # The image pixel the press landed on and the widget position it
-            # was at: `None` is the surround, which is where a bare step aims.
-            w.canvas.right_clicked.emit(None, QPoint(0, 0))
+            if name == "rightclick" and not parts:
+                # A bare step aims at the surround: `None` is how the canvas
+                # says "no pixel", and out there the eyedropper picks nothing
+                # -- the way a script puts a tool down.
+                w.canvas.right_clicked.emit(None, modifier)
+            else:
+                cx, cy = int(parts[0]), int(parts[1])
+                point = QPoint(cx * CELL + CELL // 2, cy * CELL + CELL // 2)
+                signal = {
+                    "click": w.canvas.clicked,
+                    "middleclick": w.canvas.middle_clicked,
+                    "rightclick": w.canvas.right_clicked,
+                }[name]
+                signal.emit(point, modifier)
         elif name == "tab":
             w.tile_palette._tabs.setCurrentIndex(int(value))
         elif name == "dock":
             dock_name, _, state = value.partition(":")
             dock = {
-                "tile-palette": w.tile_palette,
+                "tile-palette": w.offers,
                 "properties": w.properties,
                 "palette": w.palette_dock,
             }[dock_name]

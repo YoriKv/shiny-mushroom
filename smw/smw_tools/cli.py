@@ -38,7 +38,7 @@ from .annotations import (
 from .bases import BASES, DEFAULT_BASE, BaseError, RomBase
 from .bases import base as rom_base
 from .bases import resolve as resolve_target
-from .build import analysis_target, build_rom, build_symbols, symbols_path
+from .build import build_rom, build_symbols, stock_build
 from .check import run_check
 from .codegraph import (
     CodeGraph,
@@ -55,7 +55,7 @@ from .ram_map import RamMapError, cpu_address, window_address
 from .rom_image import read_rom
 from .rom_sizes import ROM_SIZES, RomSize, bytes_label, rom_size
 from .run import close_emulator, run_in_emulator
-from .symbols import stale_sources
+from .symbols import Symbol, SymbolTable, load_symbols, stale_sources
 from .verify_static import print_report, run_static_verification
 
 #: Everything the analysis commands derive from a tree, cached **per base**.
@@ -544,12 +544,14 @@ def _symbols_for(base: RomBase) -> Path:
     The index takes file:line from the current tree but every *address* from this
     file, so a stale one answers exactly like a right answer with the addresses
     of an older build. Rebuilt rather than refused, because that is already what
-    a missing one does and the fix is the same either way.
+    a missing one does and the fix is the same either way. A build made with a
+    feature switched on or at another size is the same trap with a record
+    beside it, and :func:`~smw_tools.build.stock_build` replaces it first.
     """
-    sym_path = symbols_path(base, analysis_target(base))
-    if not sym_path.exists():
+    built = stock_build(base, on_progress=lambda m: print(f"> {m}"))
+    if built is None or built.symbols_path is None:
         print(f"> no symbol file for {base.id} yet, building one")
-    elif stale := stale_sources(sym_path, root=base.src_root):
+    elif stale := stale_sources(sym_path := built.symbols_path, root=base.src_root):
         print(
             f"> {len(stale)} source file(s) changed since {base.id}'s symbol file "
             f"was built, starting with {stale[0]} -- rebuilding it"
@@ -576,7 +578,7 @@ def _relocated_to(base: RomBase, ix: AddressIndex, addr: int) -> list[IndexedSym
     """
     found: list[IndexedSymbol] = []
     for s in ix.symbols:
-        if s.vanilla_offset is None:
+        if s.vanilla_offset is None or s.name in base.ram_map.role_names:
             continue
         try:
             at = base.ram_map.place(s.vanilla_offset)
@@ -610,6 +612,10 @@ def _print_relocation(base: RomBase, s: IndexedSymbol) -> None:
     vanilla = 0x7E0000 + s.vanilla_offset
     if s.addr != vanilla:
         print(f"  {'':5} {format_addr(vanilla)} on {DEFAULT_BASE}")
+    if s.name in base.ram_map.role_names:
+        # A bound, not a byte: the relocation of the page it points into says
+        # nothing about it, and the source's value is the measured one.
+        return
     try:
         at = base.ram_map.place(s.vanilla_offset)
     except RamMapError as error:
@@ -657,6 +663,12 @@ def cmd_symbol(args: argparse.Namespace) -> int:
                     f"  full detail: smw xref {query}"
                 )
                 return 0
+            # A label inside a routine -- a data table, a branch target --
+            # which the index does not key but the symbol file spells as
+            # `<namespace>_<label>`. Asked for by either spelling.
+            inner = _inner_labels_named(load_symbols(sym_path), query)
+            if _print_inner_labels(inner, g):
+                return 0
             print(
                 f'error: "{query}" is neither a known symbol nor an address '
                 f"-- try: smw xref --search {query}",
@@ -685,6 +697,14 @@ def cmd_symbol(args: argparse.Namespace) -> int:
                 f"  nothing the source assembles to {format_addr(addr)} -- "
                 f"showing what a running {base.id} cartridge keeps there\n"
             )
+        if not hits and "rom" in in_spaces:
+            # An exact label at the address that the index does not key: a
+            # table or a branch target inside a routine. Better than the
+            # routine it falls inside, which is what the walk below answers.
+            table = load_symbols(sym_path)
+            exact = [s for s in table.by_addr if s.addr == addr]
+            if _print_inner_labels(exact, g):
+                return 0
         if not hits:
             for sp in spaces:
                 c = lookup_containing(ix, sp, addr)
@@ -744,6 +764,44 @@ def cmd_symbol(args: argparse.Namespace) -> int:
         if len(hits) > 1:
             print("")
     return 0
+
+
+def _inner_labels_named(table: SymbolTable, query: str) -> list[Symbol]:
+    """The symbol-file labels ``query`` names: the flattened spelling
+    exactly, or the bare label as its file spells it, `_<label>`-suffixed by
+    whichever namespaces hold one."""
+    if found := table.by_name.get(query):
+        return [found]
+    suffix = f"_{query}"
+    return sorted(
+        (s for s in table.by_name.values() if s.name.endswith(suffix)),
+        key=lambda s: s.addr,
+    )
+
+
+def _print_inner_labels(found: list[Symbol], g: CodeGraph) -> bool:
+    """Print the labels the index does not key -- the ones inside a routine
+    -- naming the routine each sits in. False when there are none."""
+    if not found:
+        return False
+    for s in found:
+        owner = max(
+            (
+                name
+                for name, r in g.routines.items()
+                if r.namespace and s.name.startswith(f"{r.namespace}_")
+            ),
+            key=len,
+            default=None,
+        )
+        print(f"  {s.name}")
+        inside = f"   a label inside {owner}" if owner else ""
+        print(f"  rom   {format_addr(s.addr)}{inside}")
+        if owner:
+            print(f"\n  full detail: smw xref {owner}")
+        if len(found) > 1:
+            print("")
+    return True
 
 
 def cmd_xref(args: argparse.Namespace) -> int:

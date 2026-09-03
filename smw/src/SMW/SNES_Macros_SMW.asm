@@ -37,7 +37,7 @@ endmacro
 ; label a pointer table names is the line above the call.
 macro SMW_InsertOriginalLevelData(LevelName, VerDif, Data)
 %SMW_ResolveLevelData(<LevelName>, <VerDif>, <Data>)
-incbin "levels/!TEMP.mwl":(!ReadFileDataOffset)-(!ReadFileSize)
+incbin "levels/!TEMP.mwl":!ReadFileDataOffset..!ReadFileSize
 endmacro
 
 ; The same insertion with its label as an argument, which is the form every
@@ -55,14 +55,20 @@ endmacro
 ; pointer-table row naming it loads an empty level, and the bytes the stream
 ; occupied are room for the streams after it -- on a stock build as well,
 ; where the fitted padding behind the macro grows by what was deleted.
+;
+; While the level banks are managed, the stream is emitted only from the
+; packing (%SMW_PlaceManagedLevels in Config/ManagedLevelMemory.asm): at
+; its macro's ROM map line the insertion emits nothing at all, label
+; included, and the run the map gave the macro is a hole.
 macro SMW_InsertLevelData(Label, LevelName, VerDif, Data)
-if defined("SMW_LevelDeleted_<Label>")
+if !Define_SMW_ManagedLevelMemory == !TRUE && !SMW_ManagedLevelEmit == !FALSE
+elseif defined("SMW_LevelDeleted_<Label>")
 	if stringsequal("<Data>", "SPRITES")
 		!SMW_LevelStreamSize #= $02
 	else
 		!SMW_LevelStreamSize #= $06
 	endif
-	if !SMW_ManagedLevelPacking == !TRUE
+	if !SMW_ManagedLevelEmit == !TRUE
 		%SMW_ManagedLevelFit(!SMW_LevelStreamSize)
 	endif
 <Label>:
@@ -73,12 +79,12 @@ if defined("SMW_LevelDeleted_<Label>")
 	endif
 else
 %SMW_ResolveLevelData(<LevelName>, <VerDif>, <Data>)
-if !SMW_ManagedLevelPacking == !TRUE
+if !SMW_ManagedLevelEmit == !TRUE
 	!SMW_LevelStreamSize #= !ReadFileSize-!ReadFileDataOffset
 	%SMW_ManagedLevelFit(!SMW_LevelStreamSize)
 endif
 <Label>:
-incbin "levels/!TEMP.mwl":(!ReadFileDataOffset)-(!ReadFileSize)
+incbin "levels/!TEMP.mwl":!ReadFileDataOffset..!ReadFileSize
 endif
 endmacro
 
@@ -149,21 +155,21 @@ endmacro
 !RIGHT = $00
 !END = $FF
 
+; One byte per run of up to fifteen tiles: the count in the high nibble and
+; the direction in the low, a full run of fifteen spelled $F. Counted down by
+; subtraction rather than divided, so the bytes are the same whichever way
+; the assembler's division rounds.
 macro SMW_CreateEatBlockPath(Direction, Blocks)
 if !<Direction> != $FF
-	if <Blocks> < $000F
-		db ((<Blocks>&$01FF)<<4)+(!<Direction>&$03)
-	else
-		!LoopCounter = ((<Blocks>&$01FF)/$0F)
-		assert <Blocks> < $0200,"512 tiles is more than enough distance for the Create/Eat Block to travel in one direction."
-		assert <Blocks> > $0000,"You can't set the Create/Eat Block to move 0 tiles!"
-		while !LoopCounter > 0
-			db $F0+(!<Direction>&$03)
-			!LoopCounter #= !LoopCounter-$01
-		endif
-		if (((<Blocks>&$01FF)/$0F)*$0F) != (<Blocks>&$01FF)
-			db (((<Blocks>&$01FF)-(((<Blocks>&$01FF)/$0F)*$0F))<<4)+(!<Direction>&$03)
-		endif
+	assert <Blocks> < $0200,"512 tiles is more than enough distance for the Create/Eat Block to travel in one direction."
+	assert <Blocks> > $0000,"You can't set the Create/Eat Block to move 0 tiles!"
+	!SMW_BlocksLeft #= <Blocks>&$01FF
+	while !SMW_BlocksLeft >= $0F
+		db $F0+(!<Direction>&$03)
+		!SMW_BlocksLeft #= !SMW_BlocksLeft-$0F
+	endwhile
+	if !SMW_BlocksLeft > $00
+		db (!SMW_BlocksLeft<<4)+(!<Direction>&$03)
 	endif
 else
 	db $FF
@@ -181,7 +187,13 @@ endmacro
 ; would have put it. GFX33 has to end in the bank GFX32 starts in: the
 ; boot-time decompression of the pair reads GFX32 with GFX33's ending bank,
 ; so the managed build asserts it where the stock layout guarantees it.
+; While the graphics are managed, the file is emitted only from the
+; packing (%SMW_PlaceManagedGraphics in Config/ManagedGraphicsMemory.asm):
+; at the stock macro's ROM map line the insertion emits nothing at all,
+; label included.
 macro SMW_INCGFX(graphic)
+if !Define_SMW_ManagedGraphicsMemory == !TRUE && !SMW_ManagedGraphicsEmit == !FALSE
+else
 if ver_is_japanese(!Define_Global_ROMToAssemble)
 	!SMW_GraphicsFile = GFX/SMW_J/<graphic>.lz1
 elseif ver_is_pal_rev1(!Define_Global_ROMToAssemble)
@@ -199,6 +211,7 @@ if !Define_SMW_ManagedGraphicsMemory == !TRUE
 	if stringsequal("<graphic>", "GFX33")
 		assert (pc()-$01)>>$10 == SMW_GFX32>>$10, "GFX33 must end in the bank GFX32 starts in: the boot-time decompression reads GFX32 with the bank GFX33 ended in. Take bytes out of GFX32 or GFX33."
 	endif
+endif
 endif
 endmacro
 

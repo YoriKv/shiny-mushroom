@@ -34,6 +34,7 @@ from typing import Any
 
 from shiny_mushroom import configure_logging
 from shiny_mushroom import worker_protocol as protocol
+from shiny_mushroom.brk import BrkRaised, BrkReport
 from shiny_mushroom.worker_protocol import MODE_PLAY, MODE_RENDER, WORKER_FLAG
 
 __all__ = ["WORKER_FLAG", "main"]
@@ -112,11 +113,18 @@ class _Session:
             self.play = PlaySession(
                 core=self.core, state_dir=state_dir, addresses=addresses
             )
-            self.play.open()
+            session = self.play
         else:
             self.loader = SmwLevelLoader(
                 core=self.core, state_dir=state_dir, addresses=addresses
             )
+            session = self.loader
+        # Before the boot, so a cartridge that BRKs on its way to the title
+        # screen is reported as that rather than as a cart that never booted.
+        session.watch_for_brk()
+        if playing:
+            self.play.open()
+        else:
             self.loader.prepare()
         return {"version": list(self.core.version), "mode": mode}
 
@@ -176,6 +184,22 @@ class _Session:
             "game_mode": entry.game_mode,
         }, []
 
+    def enter_cartridge(self) -> tuple[dict[str, Any], list[bytes]]:
+        """Run the cartridge itself, from its title screen and with no edits."""
+        entry = self._playing().enter_cartridge()
+        return {"duration": entry.duration, "game_mode": entry.game_mode}, []
+
+    def brk_note(self) -> dict[str, Any]:
+        """``{"brks": [...]}`` for whatever the session kept, or nothing."""
+        session = self.play or self.loader
+        reports = session.taken_brks() if session is not None else []
+        return {"brks": [report.as_dict() for report in reports]} if reports else {}
+
+    def carry_on_past_brk(self) -> tuple[dict[str, Any], list[bytes]]:
+        """Execute the ``BRK`` the run is stopped at and let it carry on."""
+        self._playing().carry_on_past_brk()
+        return {}, []
+
     def beat_level(self, secret: bool) -> tuple[dict[str, Any], list[bytes]]:
         return dict(self._playing().complete_level(secret)), []
 
@@ -222,6 +246,13 @@ class _Session:
             "paused": session.paused,
             "game_mode": session.game_mode(),
         }
+        # A run stopped at a BRK draws no frames, so the pump is the one thing
+        # still crossing the pipe and the only place the window can be told.
+        # Carried on every pump while the machine is stopped, because the
+        # window may have been closed and reopened over the same session.
+        report = session.brk()
+        if report is not None:
+            header["brk"] = report.as_dict()
         if frame is None:
             return header, []
         header["width"] = frame.width
@@ -247,6 +278,11 @@ class _Session:
             "sprite_art": {
                 str(number): encode_tiles(tiles)
                 for number, tiles in snapshot.sprite_art.items()
+            },
+            # The custom sprites' extra-byte stride, off the cartridge's own
+            # count table: whoever parses this snapshot's stream needs it.
+            "extra_counts": {
+                str(number): count for number, count in snapshot.extra_counts.items()
             },
             # One list of tilemap offsets per object. A couple of thousand small
             # integers for a whole level, so the header carries it rather than
@@ -420,6 +456,32 @@ class _Session:
 def _dispatch(
     session: _Session, request: dict[str, Any]
 ) -> tuple[dict[str, Any], list[bytes]]:
+    """Answer one request, turning a cartridge that stopped into a report.
+
+    Every op crosses this line, so the translation from "the core stopped at a
+    break" to "the cartridge raised exception ``$2A`` at ``$01A4C7``" is made
+    once. What the core gathered while the machine was stopped is already a
+    :class:`~shiny_mushroom.brk.BrkReport` -- the session built it -- so all
+    that happens here is that it is put on an exception the reply knows how to
+    carry.
+
+    Recognised by what it carries rather than by its class, which is what keeps
+    :mod:`shiny_mushroom.emu.core` out of this module's imports:
+    :class:`~shiny_mushroom.emu.core.CoreBroke` is the only exception in the
+    editor with a report for evidence.
+    """
+    try:
+        return _serve(session, request)
+    except Exception as exc:
+        evidence = getattr(exc, "evidence", None)
+        if isinstance(evidence, BrkReport):
+            raise BrkRaised(evidence) from exc
+        raise
+
+
+def _serve(
+    session: _Session, request: dict[str, Any]
+) -> tuple[dict[str, Any], list[bytes]]:
     op = request.get("op")
     if op == "ping":
         return {"pong": True}, []
@@ -460,6 +522,10 @@ def _dispatch(
         )
     if op == "enter_overworld":
         return session.enter_overworld(request)
+    if op == "enter_cartridge":
+        return session.enter_cartridge()
+    if op == "carry_on_past_brk":
+        return session.carry_on_past_brk()
     if op == "beat_level":
         return session.beat_level(bool(request.get("secret", False)))
     if op == "peek":
@@ -510,11 +576,25 @@ def main() -> int:
             try:
                 header, blobs = _dispatch(session, request)
             except Exception as exc:  # noqa: BLE001 - the boundary reports everything
-                protocol.write_message(
-                    out, {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
-                )
+                reply: dict[str, Any] = {
+                    "ok": False,
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+                # A request that failed because the cartridge hit a BRK comes
+                # with the whole report, so the editor can put the exception in
+                # front of somebody instead of "the routine did not return".
+                report = getattr(exc, "report", None)
+                if isinstance(report, BrkReport):
+                    reply["brk"] = report.as_dict()
+                protocol.write_message(out, reply)
             else:
-                protocol.write_message(out, {"ok": True, **header}, blobs)
+                # Every successful reply carries whatever BRKs the request met
+                # and carried on past -- one custom sprite's exception does not
+                # stop a level from loading, and the level's reply is where the
+                # editor is listening.
+                protocol.write_message(
+                    out, {"ok": True, **header, **session.brk_note()}, blobs
+                )
     finally:
         session.close()
 
