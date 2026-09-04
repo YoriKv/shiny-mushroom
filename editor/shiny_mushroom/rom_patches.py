@@ -54,9 +54,13 @@ from shiny_mushroom.addresses import (
 )
 from shiny_mushroom.header import HEADER_SIZE
 from shiny_mushroom.hexnum import hexnum
+from shiny_mushroom.layer3 import ROLES as LAYER3_ROLES
+from shiny_mushroom.layer3 import SIZE as LAYER3_SIZE
+from shiny_mushroom.lunar_magic import ROLES as LUNAR_MAGIC_ROLES
+from shiny_mushroom.lunar_magic import SIZE as LUNAR_MAGIC_SIZE
 from shiny_mushroom.secondary_entrances import COUNT as SECONDARY_ENTRANCE_COUNT
 from shiny_mushroom.secondary_header import SIZE as SECONDARY_HEADER_SIZE
-from smw_tools import graphics, graphics_memory, level_graphics
+from smw_tools import custom_tiles, graphics, graphics_memory, level_graphics
 
 if TYPE_CHECKING:
     from smw_tools.compression import Family
@@ -738,11 +742,13 @@ def vertical_level(rom: bytes, level_mode: int, *, where: Addresses) -> bool:
     return bool(rom[entry] & 0x01)
 
 
-#: Bytes per object record, and the one exception: extended object ``$00``,
-#: the screen exit, reads a fourth byte. Walking three at a time
-#: desynchronises on the first level that has an exit in it, which is most
-#: of them -- which is why one walk answers for both :func:`object_stream`
-#: and :mod:`shiny_mushroom.emu.footprints`.
+#: Bytes per object record, and the exceptions: extended object ``$00``, the
+#: screen exit, reads a fourth byte, and Lunar Magic's direct-tile objects
+#: and its reserved one read up to :data:`smw_tools.custom_tiles.CONDITIONAL_SIZE`
+#: (:func:`smw_tools.custom_tiles.record_size`). Walking three at a time
+#: desynchronises on the first level that has an exit in it, which is most of
+#: them, and on the first custom tile placed -- which is why one walk answers
+#: for both :func:`object_stream` and :mod:`shiny_mushroom.emu.footprints`.
 OBJECT_RECORD_SIZE = 3
 OBJECT_SCREEN_EXIT_SIZE = 4
 OBJECT_TERMINATOR = 0xFF
@@ -765,12 +771,18 @@ def record_offsets(stream: bytes) -> list[int]:
         if first == OBJECT_TERMINATOR:
             break
         offsets.append(at)
-        extended = (((first & 0x60) >> 1) | (second >> 4)) == 0
-        at += (
-            OBJECT_SCREEN_EXIT_SIZE
-            if extended and settings == 0x00
-            else OBJECT_RECORD_SIZE
-        )
+        number = ((first & 0x60) >> 1) | (second >> 4)
+        if number == 0:
+            size = OBJECT_SCREEN_EXIT_SIZE if settings == 0x00 else OBJECT_RECORD_SIZE
+        else:
+            # A direct-tile object's length is in its number, and a 27's in
+            # its fourth byte too -- the stride
+            # :func:`shiny_mushroom.objects.parse_objects` takes, which this
+            # has to match or the two disagree about where every record after
+            # it begins.
+            fourth = stream[at + 3] if at + 3 < len(stream) else None
+            size = custom_tiles.record_size(number, settings, fourth)
+        at += size
     offsets.append(at)
     return offsets
 
@@ -787,10 +799,11 @@ def object_stream(rom: bytes, base: int) -> bytes:
     :mod:`shiny_mushroom.emu.footprints` buckets writes by as well, so a
     stream copied here and the footprints attributed there cannot disagree
     about where a record begins.
-    The window it is given is :data:`MAX_OBJECT_RECORDS` records wide, which
-    bounds a stream whose terminator is missing rather than limiting the format.
+    The window it is given is :data:`MAX_OBJECT_RECORDS` of the longest record
+    wide, which bounds a stream whose terminator is missing rather than
+    limiting the format.
     """
-    window = rom[base : base + MAX_OBJECT_RECORDS * OBJECT_SCREEN_EXIT_SIZE]
+    window = rom[base : base + MAX_OBJECT_RECORDS * custom_tiles.CONDITIONAL_SIZE]
     return window[: record_offsets(window)[-1] + 1]
 
 
@@ -901,6 +914,91 @@ def secondary_header_tables(where: Addresses) -> tuple[int, int, int, int]:
         where.secondary_header_fg_position,
         where.secondary_header_entrance,
     )
+
+
+def lunar_magic_tables(where: Addresses) -> tuple[int, int, int, int] | None:
+    """The four Lunar Magic tables' addresses, in table order -- the order
+    :mod:`shiny_mushroom.lunar_magic` keeps its four bytes in -- or ``None``
+    on a cartridge whose base does not carry them: the roles are the
+    ``lunar-magic-levels`` feature's own, declared only where it is on."""
+    found = tuple(where.roles.get(role) for role in LUNAR_MAGIC_ROLES)
+    if any(one is None for one in found):
+        return None
+    return found  # type: ignore[return-value]
+
+
+def lunar_magic_bytes(rom: bytes, level: int, *, where: Addresses) -> bytes:
+    """``level``'s four Lunar Magic bytes, read off the image -- empty where
+    the image's base keeps no such tables. The fallback source for a
+    session with no project to ask, and the baseline a preview patch is
+    measured against."""
+    tables = lunar_magic_tables(where)
+    if tables is None:
+        return b""
+    return bytes(rom[where.offset(table + level)] for table in tables)
+
+
+def lunar_magic_patch(
+    rom: bytes, level: int, settings: bytes, *, where: Addresses
+) -> dict[int, bytes]:
+    """The cartridge edit that gives ``level`` these four bytes: one byte
+    per table, always safe in place, and nothing at all on a cartridge
+    without the tables -- the document's bytes then describe a build this
+    image is not."""
+    if len(settings) != LUNAR_MAGIC_SIZE:
+        raise ValueError(
+            f"the Lunar Magic settings are {LUNAR_MAGIC_SIZE} bytes, "
+            f"not {len(settings)}"
+        )
+    tables = lunar_magic_tables(where)
+    if tables is None:
+        return {}
+    patches = {}
+    for table, value in zip(tables, settings, strict=True):
+        offset = where.offset(table + level)
+        if rom[offset] != value:
+            patches[offset] = bytes([value])
+    return patches
+
+
+def layer3_tables(where: Addresses) -> tuple[int, int, int, int] | None:
+    """The four Layer 3 tables' addresses, in table order, or ``None`` on a
+    cartridge whose base does not carry them -- the ``layer3-settings``
+    feature's own roles, declared only where it is on."""
+    found = tuple(where.roles.get(role) for role in LAYER3_ROLES)
+    if any(one is None for one in found):
+        return None
+    return found  # type: ignore[return-value]
+
+
+def layer3_bytes(rom: bytes, level: int, *, where: Addresses) -> bytes:
+    """``level``'s four Layer 3 bytes, read off the image -- empty where the
+    image's base keeps no such tables."""
+    tables = layer3_tables(where)
+    if tables is None:
+        return b""
+    return bytes(rom[where.offset(table + level)] for table in tables)
+
+
+def layer3_patch(
+    rom: bytes, level: int, settings: bytes, *, where: Addresses
+) -> dict[int, bytes]:
+    """The cartridge edit that gives ``level`` these four bytes: one byte per
+    table, always safe in place, and nothing at all on a cartridge without
+    the tables."""
+    if len(settings) != LAYER3_SIZE:
+        raise ValueError(
+            f"the Layer 3 settings are {LAYER3_SIZE} bytes, not {len(settings)}"
+        )
+    tables = layer3_tables(where)
+    if tables is None:
+        return {}
+    patches = {}
+    for table, value in zip(tables, settings, strict=True):
+        offset = where.offset(table + level)
+        if rom[offset] != value:
+            patches[offset] = bytes([value])
+    return patches
 
 
 def secondary_entrance_tables(where: Addresses) -> tuple[int, int, int, int]:

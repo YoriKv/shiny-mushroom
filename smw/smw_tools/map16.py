@@ -37,11 +37,12 @@ PAGE = 256
 _PAGES = 128
 
 #: What Lunar Magic writes for a tile no one has defined.
-_EMPTY_TILE = bytes.fromhex("0410") * 4
+EMPTY_TILE = bytes.fromhex("0410") * 4
 
-#: Tiles above this act like themselves; above it, like `$130`.
+#: Tiles below this act like themselves; from it up, like :data:`ACTS_DEFAULT`
+#: -- the cement block -- until someone says otherwise.
 _ACTS_IDENTITY = 512
-_ACTS_DEFAULT = 0x130
+ACTS_DEFAULT = 0x130
 
 _HEADER = bytes.fromhex(
     "4c4d3136000101005302010000000000"
@@ -68,6 +69,22 @@ _SIZE = 0x9F1F0
 
 #: SHA-1 of the container the tree's tables were split from.
 VANILLA_SHA1 = "75258d07963381da3cda58610374b88921c47fe0"
+
+
+def definitions_offset(page: int) -> int:
+    """Where ``page``'s 256 definitions start in a container, eight bytes a
+    tile: pages ``$00``-``$7F`` are the foreground half."""
+    if not 0 <= page < _PAGES:
+        raise ValueError(f"no foreground page {page:#04x}")
+    return _TILEMAP + page * PAGE * TILE
+
+
+def acts_like_offset(page: int) -> int:
+    """Where ``page``'s 256 acts-like words start in a container, two bytes
+    a tile, in the one table that covers every page."""
+    if not 0 <= page < _PAGES * 2:
+        raise ValueError(f"no page {page:#04x}")
+    return _ACTS_LIKE + page * PAGE * 2
 
 
 # -- what each table holds ---------------------------------------------------
@@ -212,7 +229,7 @@ def pack(tables: dict[str, bytes]) -> bytes:
     if missing:
         raise ValueError(f"missing tables: {', '.join(sorted(missing))}")
 
-    out = bytearray(_EMPTY_TILE * (_SIZE // TILE))
+    out = bytearray(EMPTY_TILE * (_SIZE // TILE))
     out[: len(_HEADER)] = _HEADER
 
     # Pages $00-$01: the tileset 0 view, with the sloped-pipe block applied --
@@ -233,7 +250,7 @@ def pack(tables: dict[str, bytes]) -> bytes:
 
     acts = bytearray()
     for tile in range((_TILESET_VIEWS - _ACTS_LIKE) // 2):
-        value = tile if tile < _ACTS_IDENTITY else _ACTS_DEFAULT
+        value = tile if tile < _ACTS_IDENTITY else ACTS_DEFAULT
         acts += value.to_bytes(2, "little")
     out[_ACTS_LIKE:_TILESET_VIEWS] = acts
 

@@ -17,10 +17,12 @@ includeonce
 ;# other will want. smw_tools.features declares the run as a single TablePool
 ;# and the editor prices every save in it against the total.
 ;#
-;# Three occupants, in the order %SMW_PlaceReservedRun emits them:
+;# Five occupants, in the order %SMW_PlaceReservedRun emits them:
 ;#
 ;# - The translevel remap table, at the head (Config/TranslevelRemap.asm).
 ;# - The relocated overworld tables (Config/OverworldTableRelocation.asm).
+;# - The custom tiles' pages, acts-like words and stubs (Config/CustomTiles.asm).
+;# - The music and time limit bypass objects (Config/HeaderBypasses.asm).
 ;# - The relocated strings, with their stubs (Config/StringTableRelocation.asm).
 ;#
 ;# The order is fixed, and it is a fact the reading side depends on: an
@@ -68,7 +70,7 @@ endif
 ; bank, so either of the two PLBs that follow lands on it.
 !Define_SMW_ReservedBankDBR #= !Define_SMW_ReservedBank*$0101
 
-; Whether anything wants the bank at all. A build with none of the three
+; Whether anything wants the bank at all. A build with none of the five
 ; features on reserves nothing, so a stock cartridge gains no RATS tag and no
 ; symbol -- and the editor's memory map draws the expansion banks free from
 ; end to end, which is what they are.
@@ -80,6 +82,12 @@ if !Define_SMW_TranslevelRemap == !TRUE
 	!SMW_ReservedBankWanted #= !TRUE
 endif
 if !Define_SMW_RelocateStringTables == !TRUE
+	!SMW_ReservedBankWanted #= !TRUE
+endif
+if !Define_SMW_CustomTiles == !TRUE
+	!SMW_ReservedBankWanted #= !TRUE
+endif
+if !Define_SMW_HeaderBypasses == !TRUE
 	!SMW_ReservedBankWanted #= !TRUE
 endif
 
@@ -128,6 +136,8 @@ if !SMW_ReservedBankWanted == !TRUE
 	org !Loc_SMW_ReservedBank_Packed
 	%SMW_PlaceTranslevelLevelTable()
 	%SMW_PlaceRelocatedOverworldTables()
+	%SMW_PlaceCustomTiles()
+	%SMW_PlaceHeaderBypasses()
 	%SMW_PlaceRelocatedStrings()
 endif
 endmacro

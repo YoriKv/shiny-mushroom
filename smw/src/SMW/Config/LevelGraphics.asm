@@ -72,6 +72,15 @@ includeonce
 ;# slot is compared against what the slot holds, and skipped when it
 ;# already holds that file.
 ;#
+;# A third hook, in DecompressGFX32And33 (Banks/Bank00.asm, CODE_00B8D7),
+;# plants the record the moment the boot has expanded GFX33: the buffer
+;# holds the game's own tiles from there, at power-on and after a reset
+;# alike, so a level that keeps them is answered by the compare and never
+;# reloads. Without it the first level of a session found a record that
+;# did not answer for itself and reloaded GFX33 through the decompressor's
+;# entry, which on a cartridge whose graphics are not managed indexes past
+;# the fifty stock pointers and never returns.
+;#
 ;# The define needs a cartridge assembled at 1 MB or larger, which the
 ;# bank's reservation says rather than letting the image quietly double.
 ;#############################################################################################################
@@ -318,6 +327,21 @@ SMW_LevelGraphics_Animated:
 	STA.l !RAM_SMW_LevelGraphics_AnimatedFileCheck	;/ is what makes it answerable
 .Held:
 	RTS
+
+; The boot's record: the bank $00 hook lands here from DecompressGFX32And33
+; in place of the pair that points the decompressor at GFX32 once GFX33 is
+; expanded, entered by JSL with A and XY 16-bit and the boot's direct page.
+; The displaced pair, then the record: the buffer holds the game's own
+; GFX33 from here, whatever the record held before -- which is what makes
+; it true at power-on, where the page holds anything, and after a reset,
+; where it holds the last level's file while the boot has put GFX33 back.
+; One 16-bit store writes the byte and, behind it, the complement.
+SMW_LevelGraphics_Boot:
+	LDA.w #SMW_GFX32			;\ The displaced pair: the player's
+	STA.b !RAM_SMW_Misc_ScratchRAM8A	;/ file is decompressed next
+	LDA.w #((($33^$FF)<<8)|$33)		;\ $33, and $33 complemented in
+	STA.l !RAM_SMW_LevelGraphics_AnimatedFile	;/ the byte behind it
+	RTL
 
 	assert pc() == SMW_LevelGraphics_Rows+!Define_SMW_Block_LevelGraphics, "The level graphics block is not the size Config/PackedRuns.asm states. A stub that changed size changes what the palettes behind it are read past, so pin the new figure in Define_SMW_Block_LevelGraphics."
 endif

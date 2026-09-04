@@ -101,10 +101,9 @@ TITLE = "Graphics Files"
 #: What the list is, and the one idea a reader has to be handed: the raw file
 #: in the project is the edit, and everything here is a way of making one.
 HINT = (
-    "Each row is a graphics file the build reads. Export one to a PNG and "
-    "import it back, copy and paste through the clipboard, or edit the "
-    "project's copy in place through Open Folder. Add File adds a file of the "
-    "project's own; Clone File copies the one on show."
+    "Each row is a graphics file the build reads. Editing one puts the "
+    "project's own copy in its place -- through a PNG, the clipboard, or "
+    "Open Folder."
 )
 
 #: The gestures that need the managed graphics banks, as
@@ -431,7 +430,7 @@ class GraphicsDialog(QDialog):
         side_layout.addLayout(controls)
 
         self._swatches = SwatchGrid(columns=16, cell=14)
-        self._swatches.setToolTip("The colours the sheet is drawn under")
+        self._swatches.setToolTip("The colours the sheet is drawn under.")
         side_layout.addWidget(self._swatches, 0, Qt.AlignmentFlag.AlignLeft)
 
         side_layout.addWidget(ZoomedArea(self._sheet, self._zoom_pick), 1)

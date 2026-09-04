@@ -284,6 +284,12 @@ endif
 !RAM_SMW_LM_LCZ3_ScratchRAME7 #= !Define_SMW_DirectPageLocation+$E7
 !RAM_SMW_LM_LCZ3_ScratchRAME8 #= !Define_SMW_DirectPageLocation+$E8
 !RAM_SMW_LM_LCZ3_ScratchRAME9 #= !Define_SMW_DirectPageLocation+$E9
+; Which way the player is shot out of the pipe an entrance action fires
+; from: #$40 rightwards, #$C0 leftwards, the X speed the shoot-out state
+; loads. Lunar Magic writes it at every level load from the entrance's
+; face-left flag, and so does Config/LunarMagicLevels.asm. Empty in the
+; original game.
+!RAM_SMW_LM_Misc_PipeShootDirection #= !Define_SMW_DirectPageLocation+$F9
 !RAM_SMW_LM_Misc_OldGFXBypassUnusedRAM #= !Define_SMW_DirectPageLocation+$FA
 !RAM_SMW_LM_Misc_OldGFXBypassAn2GFXList #= !Define_SMW_DirectPageLocation+$FB
 !RAM_SMW_LM_Misc_OldGFXBypassFGBGGFXList #= !Define_SMW_DirectPageLocation+$FC

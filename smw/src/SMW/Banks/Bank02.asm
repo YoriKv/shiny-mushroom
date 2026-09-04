@@ -2364,7 +2364,11 @@ CODE_02A6DB:
 	INC.b !RAM_SMW_Misc_ScratchRAM07
 	LDA.b [!RAM_SMW_Misc_ScratchRAM05]
 #LM000Hijack_ProcessCustomMarioFireballBlockCode:
+if !Define_SMW_CustomTiles == !TRUE
+	JSL.l SMW_CustomTiles_ActsLikeOf		;> A custom tile as the vanilla tile it acts like, then the stock routine (Config/CustomTiles.asm)
+else
 	JSL.l SMW_ModifyMap16IDForSpecialBlocks_Main
+endif
 	CMP.b #$00
 	BEQ.b CODE_02A729
 	LDA.w !RAM_SMW_Blocks_CurrentlyProcessedMap16TileLo
@@ -2960,7 +2964,11 @@ CODE_02960D:
 	INC.b !RAM_SMW_Misc_ScratchRAM07
 	LDA.b [!RAM_SMW_Misc_ScratchRAM05]
 #LM000Hijack_ProcessCustomCapeBlockCode:
+if !Define_SMW_CustomTiles == !TRUE
+	JSL.l SMW_CustomTiles_ActsLikeOf		;> A custom tile as the vanilla tile it acts like, then the stock routine (Config/CustomTiles.asm)
+else
 	JSL.l SMW_ModifyMap16IDForSpecialBlocks_Main
+endif
 	CMP.b #$00
 	BEQ.b Return029630
 	LDA.b !RAM_SMW_Misc_ScratchRAM0F

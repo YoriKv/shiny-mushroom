@@ -197,7 +197,7 @@ class StringsWindow(QDialog):
         self._revert.clicked.connect(self._revert_current)
         bottom.addWidget(self._revert)
         self._save = QPushButton("&Save", self)
-        self._save.setToolTip("Write the text into the project  (Ctrl+S)")
+        self._save.setToolTip("Write the text into the project (Ctrl+S).")
         self._save.clicked.connect(self.save_asked.emit)
         bottom.addWidget(self._save)
         close = QPushButton("&Close", self)
@@ -647,7 +647,7 @@ class StringsWindow(QDialog):
                 table.setCellWidget(row, 1, level)
                 second = QCheckBox(table)
                 second.setChecked(slot.second)
-                second.setToolTip("Shown for the level's second message box")
+                second.setToolTip("Shown for the level's second message box.")
                 second.clicked.connect(
                     lambda _=False, at=slot.number: self._slot_level_edited(at)
                 )

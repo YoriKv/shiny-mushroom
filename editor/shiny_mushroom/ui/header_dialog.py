@@ -30,6 +30,18 @@ check weighs the *edited* header against the *chosen* entry and holds OK shut
 on the pair, which lets a mode edited out of the way in the same accept be
 the fix rather than a second refusal.
 
+**The entrance, the Lunar Magic settings and Layer 3 are sections of the
+same dialog**, under their own rules and captions like the Layer 2 one. The four
+secondary-header bytes and the four Lunar Magic adds are the level's, in the
+document beside the five (:mod:`shiny_mushroom.secondary_header`,
+:mod:`shiny_mushroom.lunar_magic`), edited through the records' own fields
+with the properties panel's widgets, and handed back on accept for one
+commit with the header -- so cancel keeps its meaning for all of them. The
+Lunar Magic section appears only where the document carries the bytes,
+which is a cartridge built with the ``lunar-magic-levels`` feature, and the
+Layer 3 one the same way for ``layer3-settings``
+(:mod:`shiny_mushroom.layer3`).
+
 **The level's own graphics row is not here**, though the header decides what
 it is laid over: it is eight bytes the cartridge only has room for under a
 feature, and it has a dialog of its own
@@ -62,6 +74,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from shiny_mushroom.fields import Field
 from shiny_mushroom.header import (
     FIELDS,
     FIELDS_BY_KEY,
@@ -71,8 +84,15 @@ from shiny_mushroom.header import (
     format_bytes,
 )
 from shiny_mushroom.layer2_table import Layer2Entry
+from shiny_mushroom.layer3 import Layer3Settings
+from shiny_mushroom.layer3 import fields as layer3_fields
+from shiny_mushroom.lunar_magic import LunarMagicSettings
+from shiny_mushroom.lunar_magic import fields as lunar_magic_fields
+from shiny_mushroom.secondary_header import SecondaryHeader
+from shiny_mushroom.secondary_header import fields as secondary_fields
 from shiny_mushroom.ui.dialogs import ChoiceBox, NumberBox, selectable_label
 from shiny_mushroom.ui.palette_grid import Swatch, SwatchGrid
+from shiny_mushroom.ui.properties import field_widget, refill_field
 from shiny_mushroom.ui.tips import wrap_tip
 
 if TYPE_CHECKING:
@@ -128,6 +148,43 @@ LAYER2_NOTE = (
     "repoints this level alone, and reloads it on OK."
 )
 
+#: The two record sections' captions and notes: the secondary header the
+#: stock game keeps per level, and the four bytes Lunar Magic adds to it.
+ENTRANCE_KEY = "entrance"
+ENTRANCE_TITLE = "Entrance and camera"
+ENTRANCE_NOTE = (
+    "Not part of the header: the level's four secondary-header bytes, kept "
+    "in the cartridge's tables. Saved with the level."
+)
+LUNAR_MAGIC_KEY = "lunar-magic"
+LUNAR_MAGIC_TITLE = "Lunar Magic settings"
+LUNAR_MAGIC_NOTE = (
+    "The four bytes Lunar Magic adds to the secondary header, kept in the "
+    "level bank's tables. Saved with the level."
+)
+
+LAYER3_KEY = "layer3"
+LAYER3_TITLE = "Layer 3"
+LAYER3_NOTE = (
+    "How this level's Layer 3 scrolls, where it starts and which screen it "
+    "is drawn on, kept in the level bank's tables. A level whose Layer 3 is "
+    "a tide keeps the tide. Saved with the level."
+)
+
+
+@dataclass(frozen=True)
+class HeaderEdit:
+    """What an accepted dialog decided: the header as edited, and each of
+    the other three where it was offered and moved -- ``None`` for a
+    section left as it was, or never offered, so a caller acts only on an
+    actual decision."""
+
+    header: bytes
+    layer2: Layer2Entry | None = None
+    secondary: bytes | None = None
+    lunar_magic: bytes | None = None
+    layer3: bytes | None = None
+
 
 @dataclass(frozen=True)
 class Layer2Options:
@@ -156,8 +213,26 @@ class HeaderDialog(QDialog):
         gap: Callable[[bytes, Layer2Entry], Layer2Gap | None] | None = None,
         preview: Callable[[bytes | None], None] | None = None,
         tracks: Sequence[str] | None = None,
+        secondary: bytes | None = None,
+        lunar_magic: bytes | None = None,
+        layer3: bytes | None = None,
     ) -> None:
         super().__init__(parent)
+        #: The two records as edited, and as they came in: a section is
+        #: offered for a record the caller handed over, and hands back only
+        #: what moved. Frozen records, so an edit is a replacement.
+        self._records: dict[str, object] = {}
+        self._given: dict[str, bytes] = {}
+        self._record_widgets: dict[tuple[str, str], tuple[Field, QWidget]] = {}
+        if secondary is not None:
+            self._given[ENTRANCE_KEY] = bytes(secondary)
+            self._records[ENTRANCE_KEY] = SecondaryHeader(bytes(secondary))
+        if lunar_magic is not None:
+            self._given[LUNAR_MAGIC_KEY] = bytes(lunar_magic)
+            self._records[LUNAR_MAGIC_KEY] = LunarMagicSettings(bytes(lunar_magic))
+        if layer3 is not None:
+            self._given[LAYER3_KEY] = bytes(layer3)
+            self._records[LAYER3_KEY] = Layer3Settings(bytes(layer3))
         #: What this project's eight music settings are called. The field's own
         #: list is the *shipped* table's tracks and stops being true the moment
         #: Project > Audio changes one, so a project's own names are asked for
@@ -217,6 +292,30 @@ class HeaderDialog(QDialog):
         page.addWidget(note)
         if layer2 is not None:
             self._build_layer2(page, layer2)
+        if ENTRANCE_KEY in self._records:
+            self._build_record(
+                page,
+                ENTRANCE_KEY,
+                ENTRANCE_TITLE,
+                ENTRANCE_NOTE,
+                list(secondary_fields(lunar_magic=LUNAR_MAGIC_KEY in self._records)),
+            )
+        if LUNAR_MAGIC_KEY in self._records:
+            self._build_record(
+                page,
+                LUNAR_MAGIC_KEY,
+                LUNAR_MAGIC_TITLE,
+                LUNAR_MAGIC_NOTE,
+                list(lunar_magic_fields()),
+            )
+        if LAYER3_KEY in self._records:
+            self._build_record(
+                page,
+                LAYER3_KEY,
+                LAYER3_TITLE,
+                LAYER3_NOTE,
+                list(layer3_fields()),
+            )
         page.addStretch(1)
 
         # **The fields scroll, and the buttons do not.** Thirteen rows, a
@@ -414,6 +513,94 @@ class HeaderDialog(QDialog):
         self._gap_note.hide()
         layout.addWidget(self._gap_note)
 
+    def _build_record(
+        self,
+        layout: QVBoxLayout,
+        key: str,
+        title: str,
+        note_text: str,
+        fields: list[Field],
+    ) -> None:
+        """A record section: a rule, a caption, one row per field, a note.
+
+        The same compartment the Layer 2 subsection is -- a different
+        document than the five bytes, said so by the caption and the note --
+        and the same widgets the properties panel edits a record with, so a
+        secondary-header field reads and commits here exactly as it does
+        there. An edit replaces the frozen record and refills the section's
+        widgets from it; nothing reaches the level until accept.
+        """
+        rule = QFrame()
+        rule.setFrameShape(QFrame.Shape.HLine)
+        rule.setFrameShadow(QFrame.Shadow.Sunken)
+        layout.addWidget(rule)
+        caption = QLabel(title)
+        bold = caption.font()
+        bold.setBold(True)
+        caption.setFont(bold)
+        layout.addWidget(caption)
+        form = QFormLayout()
+        record = self._records[key]
+        for found in fields:
+            widget = field_widget(
+                found,
+                record,
+                lambda field_key, value, section=key: self._record_edited(
+                    section, field_key, value
+                ),
+            )
+            widget.setToolTip(wrap_tip(found.hint))
+            self._record_widgets[(key, found.key)] = (found, widget)
+            label = QLabel(f"{found.label}:")
+            label.setToolTip(wrap_tip(found.hint))
+            form.addRow(label, widget)
+        layout.addLayout(form)
+        note = QLabel(note_text)
+        note.setWordWrap(True)
+        layout.addWidget(note)
+
+    def _record_edited(self, section: str, key: str, value: int) -> None:
+        """A record section's row committed: the new record, and every row
+        of the section refilled from it, since a field can read bits another
+        field's write moved."""
+        found, _ = self._record_widgets[(section, key)]
+        record = self._records[section]
+        edited = found.applied(record, value)
+        if edited is record:
+            return
+        self._records[section] = edited
+        for (held_section, field_key), (field, _) in self._record_widgets.items():
+            if held_section == section:
+                refill_field(
+                    self._record_widgets, (held_section, field_key), field, edited
+                )
+
+    def set_record_field(self, section: str, key: str, value: int) -> None:
+        """Set one record section's field by name, as an edit would."""
+        self._record_edited(section, key, value)
+
+    def _record_bytes(self, section: str) -> bytes | None:
+        """A section's bytes if it was offered and moved, else ``None``."""
+        if section not in self._records:
+            return None
+        held = self._records[section].data
+        return None if held == self._given[section] else held
+
+    @property
+    def secondary(self) -> bytes | None:
+        """The edited secondary header, or ``None`` while it is as given."""
+        return self._record_bytes(ENTRANCE_KEY)
+
+    @property
+    def lunar_magic(self) -> bytes | None:
+        """The edited Lunar Magic settings, or ``None`` while as given."""
+        return self._record_bytes(LUNAR_MAGIC_KEY)
+
+    @property
+    def layer3(self) -> bytes | None:
+        """The edited Layer 3 settings, or ``None`` while as given."""
+        return self._record_bytes(LAYER3_KEY)
+
     def _changed(self, field: HeaderField, value: int) -> None:
         self._header = field.set(self._header, value)
         self._show_bytes()
@@ -493,14 +680,17 @@ class HeaderDialog(QDialog):
         gap: Callable[[bytes, Layer2Entry], Layer2Gap | None] | None = None,
         preview: Callable[[bytes | None], None] | None = None,
         tracks: Sequence[str] | None = None,
-    ) -> tuple[bytes, Layer2Entry | None] | None:
+        secondary: bytes | None = None,
+        lunar_magic: bytes | None = None,
+        layer3: bytes | None = None,
+    ) -> HeaderEdit | None:
         """Show the dialog; return what was decided, or ``None`` if cancelled.
 
         One entry point rather than a build-exec-read dance at the call site,
         so that "cancel changes nothing" is a property of this method instead
-        of something every caller has to remember. The pair is the edited
-        header and the Layer 2 repoint, ``None`` when the pointer was left
-        alone, which is most accepts.
+        of something every caller has to remember. The result carries the
+        edited header and, for each of the other three sections, what moved
+        or ``None``, which for most accepts is all of them.
         """
         dialog = cls(
             header,
@@ -510,10 +700,19 @@ class HeaderDialog(QDialog):
             gap=gap,
             preview=preview,
             tracks=tracks,
+            secondary=secondary,
+            layer3=layer3,
+            lunar_magic=lunar_magic,
         )
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return None
-        return dialog.header, dialog.layer2
+        return HeaderEdit(
+            dialog.header,
+            dialog.layer2,
+            dialog.secondary,
+            dialog.lunar_magic,
+            dialog.layer3,
+        )
 
 
 def _position(field: HeaderField) -> str:

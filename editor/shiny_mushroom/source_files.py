@@ -8,9 +8,10 @@ it reverts -- and it is also why this module exists, because nothing else says
 *which* of those files the editor writes for itself.
 
 **Ownership is by file, and the emitter's grammar is the fence.** The editor
-only ever writes whole files it owns: the ``.mwl`` containers, the palette and
-world-map binaries, and the asm fragments under ``overworld/tables/`` that
-:mod:`smw_tools.asm_regions` splits out of their banks. Everything else in the
+only ever writes whole files it owns: the ``.mwl`` containers, the palette,
+world-map and Map16 binaries, the custom tiles' container, and the asm
+fragments under ``overworld/tables/`` that :mod:`smw_tools.asm_regions` splits
+out of their banks. Everything else in the
 source tree is nobody's but the person editing it. For the fragments the two
 overlap, and the grammar decides: a hand edit that still parses is
 indistinguishable from a structured save and is simply read back, and one that
@@ -54,9 +55,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from shiny_mushroom import palettes
+from shiny_mushroom import custom_tiles, map16, palettes
 from shiny_mushroom.build import BuildError, asm_room, built_symbols, features_wanted
 from shiny_mushroom.project import RAW_NAME, Project, ProjectError, scanning_once
+from shiny_mushroom.project_music import MUSIC_DIR, MUSIC_SUFFIXES
 from shiny_mushroom.project_overworld import (
     OVERWORLD_DEFINITIONS,
     OVERWORLD_EVENT_2X2,
@@ -67,7 +69,13 @@ from shiny_mushroom.project_overworld import (
 from smw_tools import asm_codec, asm_regions, graphics, level_code, packed, sprite_code
 from smw_tools.bases import RomBase
 from smw_tools.bases import base as rom_base
-from smw_tools.features import CUSTOM_SPRITES, FEATURES, UBERASM_SUPPORT, FeatureError
+from smw_tools.features import (
+    CUSTOM_MUSIC,
+    CUSTOM_SPRITES,
+    FEATURES,
+    UBERASM_SUPPORT,
+    FeatureError,
+)
 from smw_tools.levels import LEVELS_DIR
 
 #: What owns a row, which is the whole of what a viewer has to decide about it:
@@ -77,6 +85,11 @@ REGION = "table"
 LEVEL = "level"
 PALETTE = "palettes"
 WORLD_MAP = "world map"
+#: The Map16 tables and the custom tiles' container: plain binaries the Map16
+#: editor writes whole, so a run patches them in and no build is owed for
+#: the run's sake -- the same reading a palette file gets.
+MAP16 = "map16"
+CUSTOM_TILES = "custom tiles"
 #: The raw area's two kinds: a graphics file, which a tile editor works on in
 #: place, and the compressed tilemaps and tables, whose editor is in the
 #: application.
@@ -106,6 +119,8 @@ KIND_NAMES = {
     LEVEL: "level",
     PALETTE: "palettes",
     WORLD_MAP: "world map",
+    MAP16: "Map16 tables",
+    CUSTOM_TILES: "custom tiles",
     GRAPHICS: "graphics file",
     PACKED: "compressed data",
     CODE: "level code",
@@ -198,6 +213,13 @@ FEATURE_OF = {
     **{kind: UBERASM_SUPPORT.id for kind in UBERASM_KINDS},
     **{kind: CUSTOM_SPRITES.id for kind in PIXI_KINDS},
 }
+
+#: A song package, which is not in the overlay at all: ``music/`` sits
+#: beside ``patches/`` in the project folder, and what the build reads is
+#: what the last compile put in the overlay from it. Its own kind, listed
+#: by :func:`music_rows` rather than :func:`rows`.
+SONG = "song"
+KIND_NAMES[SONG] = "song package"
 
 #: Where a sprite's properties sibling lives and the fragment it is read
 #: through: only a normal sprite has one, because only the normal tables
@@ -321,9 +343,9 @@ def feature_off(project: Project, feature_id: str) -> str:
     return _feature_off_note(feature_id)
 
 
-def _feature_off_note(feature_id: str) -> str:
+def _feature_off_note(feature_id: str, does: str = "assembles") -> str:
     return (
-        f"only a build with {FEATURES[feature_id].name} assembles it -- "
+        f"only a build with {FEATURES[feature_id].name} {does} it -- "
         f"turn the feature on under Project > Features"
     )
 
@@ -459,6 +481,9 @@ def _owners(project: Project) -> dict[Path, tuple[str, str | None]]:
         owned[relative] = (PALETTE, None)
     for relative in _WORLD_MAP_FILES:
         owned[relative] = (WORLD_MAP, None)
+    for name in map16.FILES:
+        owned[map16.DIRECTORY / f"{name}.bin"] = (MAP16, None)
+    owned[custom_tiles.CONTAINER] = (CUSTOM_TILES, None)
     return owned
 
 
@@ -936,3 +961,104 @@ def _same(held: Path, baseline: Path) -> bool:
         return held.read_bytes() == baseline.read_bytes()
     except OSError:
         return False
+
+
+# -- the song packages ----------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class MusicRow:
+    """One package in ``music/``: the MML file, as the AddmusicK tab lists
+    it. The same shape a :class:`SourceFileRow` has where a viewer reads it
+    -- :attr:`relative`, :attr:`kind`, :attr:`note`, :attr:`problem` -- so
+    one table draws both.
+
+    :attr:`relative` is spelled from the project folder, ``music/song.txt``,
+    since the overlay is not where it lives.
+    """
+
+    relative: Path
+    kind: str = SONG
+    note: str = ""
+    problem: bool = False
+    #: The music value the last compile gave it, or ``None`` before one.
+    value: int | None = None
+
+    @property
+    def name(self) -> str:
+        return KIND_NAMES[self.kind]
+
+    #: An MML is text; the desktop's editor is where it is edited.
+    editable = True
+    #: A package is never a stray: nothing shadows anything here.
+    stray = False
+    added = True
+
+
+def music_rows(project: Project) -> list[MusicRow]:
+    """Every package in ``music/``, in the order the compile numbers them.
+
+    What is worth saying about one: whether the last compile carried it and
+    at which value, a sample folder it names that is not beside it, a stem
+    another package already has -- the compile refuses that by name -- and,
+    ahead of all of it, the feature being off, which makes every song a file
+    the build carries nothing of.
+    """
+    off = CUSTOM_MUSIC.id not in features_wanted(project)
+    compiled = {song.name: song.value for song in project.imported_music()}
+    packages = project.music_packages()
+    stems = [one.stem for one in packages]
+    folder = project.music_folder
+    found = []
+    for path in packages:
+        relative = MUSIC_DIR / path.relative_to(folder)
+        value = compiled.get(path.stem, compiled.get(path.name))
+        if off:
+            note, problem = _feature_off_note(CUSTOM_MUSIC.id, "carries"), True
+        elif stems.count(path.stem) > 1:
+            note, problem = (
+                f"another package is named {path.stem}: songs are handed to "
+                f"AddmusicK by name, so one has to be renamed",
+                True,
+            )
+        else:
+            missing = [
+                one.name for one in project.sample_folders(path) if not one.is_dir()
+            ]
+            if missing:
+                note, problem = (
+                    f"names the sample folder {', '.join(missing)}, which is "
+                    f"not beside it",
+                    True,
+                )
+            elif value is None:
+                note, problem = (
+                    "not compiled yet: Import in the Audio window compiles "
+                    "every package here",
+                    False,
+                )
+            else:
+                note, problem = f"compiled, music value ${value:02X}", False
+        found.append(
+            MusicRow(relative=relative, note=note, problem=problem, value=value)
+        )
+    return found
+
+
+def music_stamps(project: Project) -> dict[Path, tuple[int, int]]:
+    """``(size, mtime_ns)`` for every package :func:`music_rows` would list,
+    keyed as the rows are -- :func:`overlay_stamps`'s answer for the music
+    folder, so a package dropped in from outside is noticed the same way."""
+    found: dict[Path, tuple[int, int]] = {}
+    folder = project.music_folder
+    if not folder.is_dir():
+        return found
+    for path in folder.rglob("*"):
+        if not path.is_file() or path.suffix.lower() not in MUSIC_SUFFIXES:
+            continue
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        found[MUSIC_DIR / path.relative_to(folder)] = (stat.st_size, stat.st_mtime_ns)
+    return found

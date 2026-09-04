@@ -95,6 +95,6 @@ def _rebuild_detail(detail: str) -> str:
         return detail
     return (
         f"{detail}. This cartridge was built before the disassembly that "
-        f"names it -- Project > Rebuild (F5) builds it again against the "
+        f"names it -- Project > Rebuild (Ctrl+B) builds it again against the "
         f"source in hand, and the save works from there."
     )

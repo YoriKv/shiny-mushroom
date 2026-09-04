@@ -28,6 +28,7 @@ from shiny_mushroom.addresses import (
     LAYER2_REGION_VERTICAL,
     LAYOUT_LAYER1_VERTICAL,
     MAP16_DEF_SIZE,
+    MAP16_TILE_COUNT,
 )
 from shiny_mushroom.header import field_value
 from shiny_mushroom.rom_patches import (
@@ -36,6 +37,8 @@ from shiny_mushroom.rom_patches import (
     PlayerPosition,
 )
 from shiny_mushroom.sprite_art import SpriteTile
+from smw_tools.custom_tiles import END_TILE as END_CUSTOM_TILE
+from smw_tools.custom_tiles import FIRST_TILE as FIRST_CUSTOM_TILE
 
 
 def _definition(table: bytes, tile: int) -> bytes:
@@ -52,6 +55,15 @@ def _definition(table: bytes, tile: int) -> bytes:
     """
     start = tile * MAP16_DEF_SIZE
     return table[start : start + MAP16_DEF_SIZE].ljust(MAP16_DEF_SIZE, b"\x00")
+
+
+def _custom_definition(table: bytes, tile: int) -> bytes:
+    """A custom tile's eight bytes out of the cartridge's table, or the zero
+    definition for one past the pages it holds -- what the cartridge itself
+    draws there (``SMW_CustomTiles_Undefined``)."""
+    if not FIRST_CUSTOM_TILE <= tile < END_CUSTOM_TILE:
+        return bytes(MAP16_DEF_SIZE)
+    return _definition(table, tile - FIRST_CUSTOM_TILE)
 
 
 @dataclass(frozen=True)
@@ -114,6 +126,13 @@ class LevelSnapshot:
     #: Empty on a snapshot made before this was captured, and on the overworld,
     #: which is what makes the renderer fall back to :attr:`map16_defs`.
     pipe_definitions: tuple[bytes, ...] = ()
+
+    #: The custom tiles' definitions -- eight bytes a tile from
+    #: :data:`~shiny_mushroom.custom_tiles.FIRST_TILE` -- read off the
+    #: cartridge where it carries the feature, and empty otherwise. A tile
+    #: number past the stock two pages resolves here; past what this holds
+    #: it is the zero definition the console shows for one too.
+    custom_defs: bytes = b""
 
     #: Where the player starts, as the game itself worked it out during this
     #: load -- see :data:`~shiny_mushroom.addresses.PLAYER_X`. The editor draws
@@ -242,7 +261,7 @@ class LevelSnapshot:
         """
         if self.layer2_background:
             return _definition(self.layer2_defs, tile)
-        definition = _definition(self.map16_defs, tile)
+        definition = self.definition(tile)
         if self.fg_bg_tileset != LAYER2_PALETTE_TILESET:
             return definition
         # The high byte of each little-endian tilemap word, which is where the
@@ -253,7 +272,10 @@ class LevelSnapshot:
         )
 
     def definition(self, tile: int) -> bytes:
-        """The eight bytes defining Map16 tile ``tile``."""
+        """The eight bytes defining Map16 tile ``tile``: the loader's own for
+        the stock two pages, the custom tiles' table past them."""
+        if tile >= MAP16_TILE_COUNT:
+            return _custom_definition(self.custom_defs, tile)
         return _definition(self.map16_defs, tile)
 
     @property

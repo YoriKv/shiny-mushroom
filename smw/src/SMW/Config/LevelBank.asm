@@ -14,7 +14,7 @@ includeonce
 ;# room fungible: a level that grew into the bank pays for it out of what
 ;# the palettes did not take, and the other way round.
 ;#
-;# Five occupants, and the order is fixed by what each needs:
+;# Six occupants, and the order is fixed by what each needs:
 ;#
 ;# - The level graphics, at the head (Config/LevelGraphics.asm): $200 rows
 ;#   of eight bytes at the run's fixed start, so their address is the same
@@ -22,6 +22,10 @@ includeonce
 ;#   size, whatever else is on.
 ;# - The per-level code's tables and stubs behind them (Config/LevelCode.asm),
 ;#   one block of one size too.
+;# - The Lunar Magic tables behind those (Config/LunarMagicLevels.asm): four
+;#   $200-row tables and their stubs, one block of one size too.
+;# - The Layer 3 tables behind those (Config/Layer3Settings.asm): four
+;#   $200-row tables and their stubs, one block of one size too.
 ;# - The custom level palettes, after those (Config/LevelCustomPalettes.asm):
 ;#   the pointer table at the run's start, or the fixed sizes behind it, so
 ;#   its address is one number per cartridge, then the stubs, then the
@@ -37,10 +41,8 @@ includeonce
 ;#   project adds after those. The feature's sprite-bank stub and its per-level table
 ;#   sit at the top of bank $07 rather than in this bank at all, where the
 ;#   loader's hook and SA-1 Pack's sprite-memory rewrite can both find the
-;#   table without a symbol on every cartridge. That occupant is the one this
-;#   bank is optional for: it wants the room and can do without it, so on a
-;#   cartridge with no expansion bank it packs into what the two level
-;#   banks leave -- !Define_SMW_LevelBankExists is what it reads.
+;#   table without a symbol on every base -- this bank moves with the
+;#   reservation, and bank $07 does not.
 ;#
 ;# The bank is emitted as one sequence, %SMW_PlaceLevelBank below: one org
 ;# at its head, then the occupants one after another, so where each lands
@@ -66,10 +68,7 @@ includeonce
 ;# was given.
 ;#
 ;# The reservation needs a cartridge assembled at 1 MB or larger, and says so
-;# rather than letting the image quietly double -- for the occupants that
-;# have nowhere else to go. The managed level banks ask whether the bank is
-;# there and do without where it is not, so a 512 KB build with only that
-;# occupant on reserves nothing and gains no RATS tag.
+;# rather than letting the image quietly double.
 ;#############################################################################################################
 
 ; The bank. %SMW_ReserveLevelBank asserts that the run landed in it.
@@ -78,19 +77,10 @@ if defined("Define_SMW_LevelBank") == 0
 endif
 !Define_SMW_LevelBankBase #= (!Define_SMW_LevelBank<<$10)|$8000
 
-; Whether the cartridge has this bank at all (Config/ExpansionBanks.asm).
-; The managed level banks read it: they use the bank for room they can do
-; without, and pack into what banks $06 and $07 leave on a cartridge that
-; has no expansion bank to reserve.
-%SMW_ExpansionBankExists(!Define_SMW_LevelBank)
-!Define_SMW_LevelBankExists #= !SMW_ExpansionBankExists
-
 ; Whether anything wants the bank at all. A build with none of its
 ; occupants on reserves nothing, so a stock cartridge gains no RATS tag and
-; no symbol. The level graphics, the code features and the custom level
-; palettes have nowhere else to put their tables, so each wants the bank
-; whatever the cartridge is and the reservation refuses a cartridge without
-; one; the managed level banks want it only where it exists.
+; no symbol. Every occupant wants it whatever the cartridge is, and the
+; reservation refuses a cartridge without one.
 !SMW_LevelBankWanted #= !FALSE
 if !Define_SMW_LevelGraphics == !TRUE
 	!SMW_LevelBankWanted #= !TRUE
@@ -99,6 +89,12 @@ if !Define_SMW_LevelCustomPalettes == !TRUE
 	!SMW_LevelBankWanted #= !TRUE
 endif
 if !Define_SMW_LevelCode == !TRUE
+	!SMW_LevelBankWanted #= !TRUE
+endif
+if !Define_SMW_LunarMagicLevels == !TRUE
+	!SMW_LevelBankWanted #= !TRUE
+endif
+if !Define_SMW_Layer3Settings == !TRUE
 	!SMW_LevelBankWanted #= !TRUE
 endif
 if !Define_SMW_GameModeCode == !TRUE
@@ -116,9 +112,7 @@ if !SMW_FrameHookWanted == !TRUE
 	!SMW_LevelBankWanted #= !TRUE
 endif
 if !Define_SMW_ManagedLevelMemory == !TRUE
-	if !Define_SMW_LevelBankExists == !TRUE
-		!SMW_LevelBankWanted #= !TRUE
-	endif
+	!SMW_LevelBankWanted #= !TRUE
 endif
 
 !Loc_SMW_LevelBank_Tag		#= !Define_SMW_LevelBankBase+$0000	;> the RATS tag, 8 bytes
@@ -137,10 +131,9 @@ else
 endif
 
 ; Where the run ends for whatever packs into it: the bank's last byte, and
-; nothing is held back from it. The managed level banks' sprite-bank tail is
-; the one thing that used to be, and it sits at the top of bank $07 instead
-; -- one address on every cartridge, since this bank is one the feature may
-; not have (Config/ManagedLevelMemory.asm).
+; nothing is held back from it. The managed level banks' sprite-bank tail
+; sits at the top of bank $07 rather than here -- one address on every base
+; (Config/ManagedLevelMemory.asm).
 !Loc_SMW_LevelBank_RunEnd	#= !Loc_SMW_LevelBank_End
 
 ; Where the per-level code's rows go: the packed head, or the level
@@ -153,14 +146,33 @@ else
 	!Loc_SMW_LevelBank_Code		#= !Loc_SMW_LevelBank_Packed
 endif
 
-; And where the custom level palettes' pointer table goes: behind the code's
-; block where that feature is on too. The palettes are the packed head's
-; last occupant, because their blobs are its growing end and nothing may
-; declare an address behind them. Their placement asserts it landed here.
+; Where the Lunar Magic tables go: behind the code's block where that
+; feature is on too (Config/LunarMagicLevels.asm). Their placement asserts
+; it landed here.
 if !Define_SMW_LevelCode == !TRUE
-	!Loc_SMW_LevelBank_Palettes	#= !Loc_SMW_LevelBank_Code+!Define_SMW_Block_LevelCode
+	!Loc_SMW_LevelBank_LunarMagic	#= !Loc_SMW_LevelBank_Code+!Define_SMW_Block_LevelCode
 else
-	!Loc_SMW_LevelBank_Palettes	#= !Loc_SMW_LevelBank_Code
+	!Loc_SMW_LevelBank_LunarMagic	#= !Loc_SMW_LevelBank_Code
+endif
+
+; Where the Layer 3 tables go: behind the Lunar Magic tables' block where
+; that feature is on too (Config/Layer3Settings.asm). Their placement
+; asserts it landed here.
+if !Define_SMW_LunarMagicLevels == !TRUE
+	!Loc_SMW_LevelBank_Layer3	#= !Loc_SMW_LevelBank_LunarMagic+!Define_SMW_Block_LunarMagicLevels
+else
+	!Loc_SMW_LevelBank_Layer3	#= !Loc_SMW_LevelBank_LunarMagic
+endif
+
+; And where the custom level palettes' pointer table goes: behind the Layer
+; 3 tables' block where that feature is on too. The palettes are the packed
+; head's last occupant, because their blobs are its growing end and nothing
+; may declare an address behind them. Their placement asserts it landed
+; here.
+if !Define_SMW_Layer3Settings == !TRUE
+	!Loc_SMW_LevelBank_Palettes	#= !Loc_SMW_LevelBank_Layer3+!Define_SMW_Block_Layer3Settings
+else
+	!Loc_SMW_LevelBank_Palettes	#= !Loc_SMW_LevelBank_Layer3
 endif
 
 ; Where the bank's sequence ended, and so where the packer opens its
@@ -219,6 +231,8 @@ if !SMW_LevelBankWanted == !TRUE
 	%SMW_PlaceLevelNumberStash()
 	%SMW_PlaceLevelGraphics()
 	%SMW_PlaceLevelCode()
+	%SMW_PlaceLunarMagicLevels()
+	%SMW_PlaceLayer3Settings()
 	%SMW_PlaceLevelCustomPalettes()
 ; Where the project's own code begins and where it ends -- and so where the
 ; packed streams open. Two labels the build's symbol file carries and

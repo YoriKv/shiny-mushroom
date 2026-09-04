@@ -105,7 +105,7 @@ class LevelBar(IconBar):
         # `activated` for the combos' shared reason: `set_editing` must show
         # the mode in effect without asking for it back.
         self._editing = QComboBox()
-        self._editing.setToolTip("Which part of the level a gesture edits")
+        self._editing.setToolTip("Which part of the level a gesture edits (keys 1-2)")
         for name in EDITING_ROWS:
             self._editing.addItem(name)
         self._editing.activated.connect(self.editing_picked.emit)

@@ -1,9 +1,10 @@
 """The Level Load Path window: one level's whole chain, and its edits.
 
 The overworld tile that loads the level, the translevel and the tables it
-indexes, the level number, the files and the Layer 2 stream its pointer names,
-and the entrance -- read from whichever document or table can answer, and each
-box editable exactly where the thing it describes is owned. Following the
+indexes, the level number, the files and the Layer 2 stream its pointer names
+-- read from whichever document or table can answer, and each box editable
+exactly where the thing it describes is owned. The entrance and the Lunar
+Magic settings are the level header dialog's sections, not this window's. Following the
 editor rather than pinned to a level: the selected tile over the world map,
 the open level otherwise.
 
@@ -13,7 +14,7 @@ is what fills it in and where each committed row lands.
 
 from __future__ import annotations
 
-from shiny_mushroom import level_names, secondary_header
+from shiny_mushroom import level_names, lunar_magic, secondary_header
 from shiny_mushroom.fields import Action, Field, readout
 from shiny_mushroom.header import FIELDS_BY_KEY, HEADER_SIZE
 from shiny_mushroom.hexnum import hexnum
@@ -43,9 +44,14 @@ from shiny_mushroom.rom_patches import (
     layer2_is_background,
     levels_sharing_layer2,
 )
+from shiny_mushroom.ui.header_dialog import ENTRANCE_TITLE, LUNAR_MAGIC_TITLE
 from shiny_mushroom.ui.load_path_dialog import LoadPathDialog, Section
 from shiny_mushroom.ui.overworld_mode import Kind
 from shiny_mushroom.ui.window.modes import EditorMode
+
+#: Under the frozen entrance and Lunar Magic sections: where the rows are
+#: edited, which is the open level's header dialog.
+ENTRANCE_READOUT_NOTE = "Open the level to edit these in its Level Header window."
 
 __all__ = ["SHOW_ON_MAP_ZOOM", "LoadPathWindow"]
 
@@ -179,6 +185,7 @@ class LoadPathWindow:
                 self._world_section(reading, cell, world_mode),
                 self._level_section(level, world_mode),
                 self._entrance_section(level, world_mode),
+                self._lunar_magic_section(level, world_mode),
             )
             if found is not None
         ]
@@ -260,6 +267,40 @@ class LoadPathWindow:
             return reading.level_events
         snapshot = self._world.snapshot
         return b"" if snapshot is None else snapshot.level_events
+
+    def _entrance_section(self, level: int, world_mode: bool) -> Section | None:
+        """The secondary header's rows for a level that is not the open one,
+        read off the tables and frozen: the open level's are a section of
+        the header dialog, on the level's own undo stack, and nothing else
+        shows another level's main entrance."""
+        if not world_mode and self._level == level:
+            return None
+        data = self._secondary_header_bytes(level)
+        if len(data) != secondary_header.SIZE:
+            return None
+        rows = frozen_fields(
+            list(
+                secondary_header.fields(
+                    lunar_magic=self._lunar_magic_bytes(level) != b""
+                )
+            )
+        )
+        record = secondary_header.SecondaryHeader(data)
+        return Section("entrance", ENTRANCE_TITLE, rows, record, ENTRANCE_READOUT_NOTE)
+
+    def _lunar_magic_section(self, level: int, world_mode: bool) -> Section | None:
+        """The four Lunar Magic bytes the same way, where the cartridge keeps
+        them."""
+        if not world_mode and self._level == level:
+            return None
+        data = self._lunar_magic_bytes(level)
+        if len(data) != lunar_magic.SIZE:
+            return None
+        rows = frozen_fields(list(lunar_magic.fields()))
+        record = lunar_magic.LunarMagicSettings(data)
+        return Section(
+            "lunar-magic", LUNAR_MAGIC_TITLE, rows, record, ENTRANCE_READOUT_NOTE
+        )
 
     def _level_section(self, level: int, world_mode: bool) -> Section:
         info = self._level_info(level, world_mode)
@@ -356,23 +397,6 @@ class LoadPathWindow:
             )
         )
 
-    def _entrance_section(self, level: int, world_mode: bool) -> Section | None:
-        """The secondary header's box: editable over the open level, a
-        reading of the tables anywhere else."""
-        current = not world_mode and self._level == level and self._doc is not None
-        rows = list(secondary_header.fields())
-        note = ""
-        if current and len(self._doc.secondary) == secondary_header.SIZE:
-            record = secondary_header.SecondaryHeader(self._doc.secondary)
-        else:
-            data = self._secondary_header_bytes(level)
-            if len(data) != secondary_header.SIZE:
-                return None
-            record = secondary_header.SecondaryHeader(data)
-            rows = frozen_fields(rows)
-            note = "Open the level to edit its entrance."
-        return Section("entrance", "Entrance and camera", rows, record, note)
-
     def _load_path_edited(self, section: str, key: str, value: int) -> None:
         """A window row committed, or an action was pressed: route it to
         whoever owns that section's document."""
@@ -380,8 +404,6 @@ class LoadPathWindow:
             self._load_path_world_edit(key, value)
         elif section == "level":
             self._load_path_level_edit(key, value)
-        elif section == "entrance":
-            self._load_path_entrance_edit(key, value)
 
     def _load_path_world_edit(self, key: str, value: int) -> None:
         level, cell, reading, world_mode = self._load_path_subject()
@@ -435,18 +457,6 @@ class LoadPathWindow:
             return
         if key == LAYER2_ENTRY and 0 <= value < len(self._load_path_layer2):
             self._repoint_layer2(self._load_path_layer2[value])
-
-    def _load_path_entrance_edit(self, key: str, value: int) -> None:
-        if self._doc is None or len(self._doc.secondary) != secondary_header.SIZE:
-            return
-        record = secondary_header.SecondaryHeader(self._doc.secondary)
-        found = next((one for one in secondary_header.fields() if one.key == key), None)
-        if found is None:
-            return
-        edited = found.applied(record, value)
-        if edited is record:
-            return
-        self._commit(self._doc.with_secondary(edited.data))
 
     def _level_file_followed(self, level: int) -> None:
         """A level number was clicked in the viewer: open that level.

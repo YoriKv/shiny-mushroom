@@ -316,7 +316,11 @@ class EmulatorSupervisor:
             layer2_header,
             layer2_objects,
             pipes,
-        ) = blobs
+        ) = blobs[:14]
+        # The custom tiles' definitions, a blob the worker added last: a
+        # reply without one -- an older worker, a stub -- reads as a
+        # cartridge without the feature rather than as a broken frame.
+        custom_defs = blobs[14] if len(blobs) > 14 else b""
         return LevelSnapshot(
             level=header["level"],
             header=head,
@@ -324,6 +328,7 @@ class EmulatorSupervisor:
             map16_high=high,
             map16_defs=defs,
             pipe_definitions=_split(pipes, PIPE_TABLES),
+            custom_defs=custom_defs,
             vram=vram,
             cgram=cgram,
             sprites=sprites,

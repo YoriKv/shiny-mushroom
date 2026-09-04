@@ -58,11 +58,19 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from shiny_mushroom.build import built_symbols
+from shiny_mushroom.level_palettes import DATA_LABEL_PREFIX, POINTERS_LABEL
 from shiny_mushroom.project import Project
 from smw_tools import asm_codec, asm_regions, asm_room, rom_map
 from smw_tools.bases import RomBase
+from smw_tools.features import LEVEL_GRAPHICS, LUNAR_MAGIC_LEVELS
 from smw_tools.graphics_memory import RUN0, STOCK_FILES
-from smw_tools.levels import MANAGED_RUNS, LevelRegion, has_level_bank, level_regions
+from smw_tools.levels import (
+    LEVEL_BANK_CODE_LABELS,
+    MANAGED_RUNS,
+    LevelRegion,
+    level_regions,
+)
+from smw_tools.lunar_magic_levels import STUBS_LABEL as LUNAR_MAGIC_STUBS_LABEL
 from smw_tools.rom_image import snes_to_pc
 from smw_tools.symbols import SymbolTable, reservations, vacated
 
@@ -245,12 +253,24 @@ class LevelBudgets:
         return self.size - self.used
 
 
+#: The one level-data region the Level Data window's foot leaves out: the
+#: enemy roll-call routine, which carries the thirteen credits screens'
+#: streams behind its own code. It is the ROM's business rather than a level
+#: bank, and a bar for it under the banks reads as a ninth bank the reader
+#: cannot grow a level into. The memory map still draws it.
+ROLLCALL_REGION = "ROUTINE_SMW_GetLayer1And2PointersForEnemyRollcall"
+
+
 def level_budgets(project: Project) -> LevelBudgets:
     """Where ``project``'s level data lives, and how full each run of it is
-    -- the runs the ROM map places, and the packer's run in the level bank
-    where the level memory is expanded."""
+    -- the runs the ROM map places, less :data:`ROLLCALL_REGION`, and the
+    packer's run in the level bank where the level memory is expanded."""
     packed = _packed_runs(project)
-    runs = [one for one in _placed(project, packed) if one.kind == LEVEL_DATA]
+    runs = [
+        one
+        for one in _placed(project, packed)
+        if one.kind == LEVEL_DATA and one.name != ROLLCALL_REGION
+    ]
     runs.extend(_level_bank_run(project, packed))
     return LevelBudgets(runs=tuple(runs), packed=project.level_memory_managed)
 
@@ -284,6 +304,9 @@ def memory_map(project: Project, symbols: SymbolTable | None = None) -> MemoryMa
         over = (
             _pack_banks(project, symbols)
             + _reserved(symbols)
+            # The level bank's head over its reservation, ahead of the tables
+            # so the Lunar Magic regions punch through their own occupant.
+            + _level_bank_head(symbols)
             + _tables(project, symbols)
             + _vacated(project, symbols)
         )
@@ -424,10 +447,10 @@ def _packed_runs(project: Project) -> dict[int, Segment] | None:
     is where the packing left it, and what the banks could not hold at all
     is charged to the last run, which is where the next save is refused.
 
-    Three runs in the stock banks, and a fourth in the level bank where the
-    cartridge has one -- :meth:`~shiny_mushroom.project.Project.level_runs`
-    -- which the ROM map places nothing at: :func:`_level_bank_run` is what
-    draws that one, over the reservation it sits in.
+    Three runs in the stock banks, and a fourth in the level bank --
+    :meth:`~shiny_mushroom.project.Project.level_runs` -- which the ROM map
+    places nothing at: :func:`_level_bank_run` is what draws that one, over
+    the reservation it sits in.
     """
     if not project.level_memory_managed:
         return None
@@ -466,12 +489,9 @@ def _level_bank_run(
     Behind the palettes' blobs and up to the bank's end label, sized by the
     same arithmetic a save is refused by -- ``packed`` is
     :func:`_packed_runs`' answer, priced once for every run. Nothing on a
-    project whose level banks are stock, and nothing on one whose cartridge
-    has no expansion bank for the packing to overflow into: there the last
-    run is bank ``$07``'s, which the ROM map places and ``packed`` has
-    already drawn.
+    project whose level banks are stock.
     """
-    if packed is None or not has_level_bank(project.next_base):
+    if packed is None:
         return []
     run = project.level_runs()[-1]
     if run.size <= 0:
@@ -736,16 +756,117 @@ def _reserved(symbols: SymbolTable) -> list[Segment]:
     Without this an expanded bank would be drawn free from end to end and the
     slack between two slots would read as room anything could take, which is
     the one answer a reservation exists to prevent.
+
+    Named as what it is rather than by its start label: the run's start is
+    the first occupant's address as often as not, and a row wearing the
+    label read as that occupant being the bank's start.
     """
     return [
         Segment(
             kind=OTHER,
-            name=name,
+            name=RESERVATION_NAMES.get(name, name),
             start=start,
             size=end - start,
-            detail="reserved behind a RATS tag for the tables placed in it",
+            detail=f"reserved behind a RATS tag from {name} for what is placed in it",
         )
         for name, start, end in reservations(symbols)
+    ]
+
+
+#: What each reservation is called on the map, by its start label.
+RESERVATION_NAMES = {
+    "SMW_ReservedBankStart": "reserved run",
+    "SMW_LevelBankStart": "level bank reservation",
+    "SMW_GraphicsBankStart": "graphics bank reservation",
+}
+
+#: The level bank's fixed head, occupant by occupant, in the order the bank
+#: emits them (``Config/LevelBank.asm``): the label each begins at, what to
+#: call it, and a word about it. The build's symbol file is the source of
+#: truth for where each landed and where the next begins -- a feature that
+#: is off has no label and simply is not drawn -- so nothing here restates a
+#: block size. The Lunar Magic tables themselves are editable regions, drawn
+#: by :func:`_tables` over the segment their label heads here; their stubs
+#: are the part of that occupant no region covers, so the stubs' first label
+#: heads a segment of their own.
+#: The labels come from the declarations that own them where one exists --
+#: a feature's table, the palettes' pointer label, the code's -- so a rename
+#: there reaches here; the rest are the config's own column-0 labels, held
+#: to the asm by ``test_memory_map.py``.
+LEVEL_BANK_HEAD: tuple[tuple[str, str, str], ...] = (
+    (
+        "SMW_LevelNumberStash_Store",
+        "level number stash",
+        "the loading level's number, stashed for the bank's occupants",
+    ),
+    (
+        LEVEL_GRAPHICS.tables["level_graphics_rows"].label,
+        "level graphics tables",
+        "the per-level graphics rows, the animated files and their stubs",
+    ),
+    (
+        "SMW_LevelCode_LoadRows",
+        "per-level code tables",
+        "the four entry-point tables and the dispatch stubs behind them",
+    ),
+    (
+        LUNAR_MAGIC_LEVELS.tables["lunar_magic_entrance"].label,
+        "Lunar Magic tables",
+        "the four per-level tables, each an editable region drawn over this",
+    ),
+    (
+        LUNAR_MAGIC_STUBS_LABEL,
+        "Lunar Magic stubs",
+        "the hooks' stubs behind the four Lunar Magic tables",
+    ),
+    (
+        POINTERS_LABEL,
+        "custom palette pointers",
+        "one long pointer per level, and the copy stub",
+    ),
+    (
+        DATA_LABEL_PREFIX.rstrip("_"),
+        "custom level palettes",
+        "the 514-byte blobs the dressed levels wear",
+    ),
+    (
+        LEVEL_BANK_CODE_LABELS[0],
+        "project code",
+        "the tool's dialect and library, and the levels', game modes' and "
+        "global routines",
+    ),
+)
+
+#: Where the head stops: the packer's run behind it, drawn by
+#: :func:`_level_bank_run`, opens at this label.
+LEVEL_BANK_STREAMS = LEVEL_BANK_CODE_LABELS[1]
+
+
+def _level_bank_head(symbols: SymbolTable) -> list[Segment]:
+    """The level bank's fixed head, cut occupant by occupant off the build's
+    own labels, so the reservation's remainder is only what nothing claims.
+
+    Each occupant runs to the next label the build has, in the bank's own
+    order, and the last to the streams' label; an occupant whose feature is
+    off has no label and no segment, and a build with none of them draws
+    nothing. The Lunar Magic tables' four regions punch their own rows out
+    of whatever is drawn here, exactly as the tables in the reserved run do.
+    """
+    names = symbols.by_name
+    present = [
+        (names[label].addr, name, detail)
+        for label, name, detail in LEVEL_BANK_HEAD
+        if label in names
+    ]
+    if not present:
+        return []
+    streams = names.get(LEVEL_BANK_STREAMS)
+    ends = [start for start, _, _ in present[1:]]
+    ends.append(streams.addr if streams is not None else present[-1][0])
+    return [
+        Segment(kind=OTHER, name=name, start=start, size=end - start, detail=detail)
+        for (start, name, detail), end in zip(present, ends, strict=True)
+        if end > start
     ]
 
 

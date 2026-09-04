@@ -54,13 +54,17 @@ from shiny_mushroom.level import Geometry
 from shiny_mushroom.metadata import OBJECTS
 from shiny_mushroom.objects import (
     EXTENDED_OBJECT,
+    RECORD_SIZE,
     SCREEN_EXIT,
     SCREEN_JUMP,
     LevelObject,
     ObjectKind,
+    direct_form_of,
+    direct_tile_of,
     encode_objects,
     parse_objects,
     screen_exit_record,
+    whole_direct,
 )
 from shiny_mushroom.sprite_art import CUSTOM_ART_BASE
 from shiny_mushroom.sprites import (
@@ -72,6 +76,7 @@ from shiny_mushroom.sprites import (
     category_of,
     name_of,
 )
+from smw_tools import custom_tiles
 
 #: The nibble a runaway extent must start at, and the smallest it can hold: a
 #: stored zero is 256 there. It is the same floor
@@ -272,7 +277,10 @@ class Entry:
             screen=screen,
             index=0,
             offset=0,
-            data=b"",
+            # A direct-tile entry names its tile past the record's three
+            # bytes, which the encoder writes out after them; every other
+            # object's bytes are the parse of what the encoder writes.
+            data=bytes(3) + self.extra_bytes if self.extra_bytes else b"",
         )
 
     @staticmethod
@@ -304,7 +312,11 @@ class Entry:
             screen=screen,
             index=0,
             offset=0,
-            data=b"",
+            # A direct-tile record's tile and form live past its third
+            # byte, so those travel with a copy; nothing else's bytes do.
+            data=template.data
+            if isinstance(template, LevelObject) and template.direct
+            else b"",
             uid=0,
         )
 
@@ -410,9 +422,13 @@ def object_entries(tileset: int) -> list[Entry]:
             number=number,
             settings=default_settings(tileset, number),
             name=name,
-            category=ObjectKind.STANDARD.value,
+            category=ObjectKind.of(number, 0).value,
         )
         for number, name in sorted(standard.items())
+        # The direct-tile objects are placed from the Custom Tiles tab, by
+        # the tile they name rather than by number (:func:`direct_tile`),
+        # and the reserved user-defined object draws nothing.
+        if not custom_tiles.is_direct(number) and number != custom_tiles.USER_DEFINED
     ]
     entries += [
         Entry(
@@ -426,6 +442,107 @@ def object_entries(tileset: int) -> list[Entry]:
         if settings != SCREEN_JUMP
     ]
     return entries
+
+
+#: What the Custom Tiles tab's entries file under.
+DIRECT_CATEGORY = "direct"
+
+
+def tile_name(tile: int) -> str:
+    """What the Custom Tiles tab calls a single tile."""
+    return f"Tile {hexnum(tile, 3 if tile < 0x200 else 4)}"
+
+
+def region_name(tile: int, width: int, height: int) -> str:
+    """What it calls a rectangle of consecutive tiles from ``tile``."""
+    return f"{width}x{height} tiles from {hexnum(tile, 3 if tile < 0x200 else 4)}"
+
+
+def direct_tile(tile: int, name: str = "") -> Entry:
+    """An entry placing Map16 tile ``tile`` one block by one, grown from
+    there: object ``22`` or ``23`` for a page-0 or page-1 tile, the byte
+    saved, and object ``27``'s single-tile form for any other page."""
+    if not 0 <= tile <= 0x7FFF:
+        raise ValueError(f"no Map16 tile {tile:#x}")
+    label = name or tile_name(tile)
+    if tile < 0x200:
+        return Entry(
+            stream=Stream.OBJECT,
+            number=custom_tiles.DIRECT_PAGE0 | (tile >> 8),
+            settings=0,
+            name=label,
+            category=DIRECT_CATEGORY,
+            extra_bytes=bytes((tile & 0xFF,)),
+        )
+    page = tile >> 8
+    number = (
+        custom_tiles.DIRECT_HIGH_PAGES
+        if page & custom_tiles.HIGH_PAGE_BIT
+        else custom_tiles.DIRECT_LOW_PAGES
+    )
+    return Entry(
+        stream=Stream.OBJECT,
+        number=number,
+        settings=0,
+        name=label,
+        category=DIRECT_CATEGORY,
+        extra_bytes=bytes((page & 0x3F, tile & 0xFF)),
+    )
+
+
+def direct_region(tile: int, width: int, height: int) -> Entry:
+    """An entry placing the ``width`` by ``height`` rectangle of consecutive
+    tiles whose top-left is ``tile`` -- sixteen tiles to a row of the page --
+    as it is: object ``27``'s second form, or ``29``'s past page ``$3F``.
+    Sixteen is as far as either count reaches."""
+    if not 0 <= tile <= 0x7FFF:
+        raise ValueError(f"no Map16 tile {tile:#x}")
+    if not 1 <= width <= 16 or not 1 <= height <= 16:
+        raise ValueError(f"a selection is at most 16 x 16, not {width} x {height}")
+    page = tile >> 8
+    number = (
+        custom_tiles.DIRECT_HIGH_PAGES
+        if page & custom_tiles.HIGH_PAGE_BIT
+        else custom_tiles.DIRECT_LOW_PAGES
+    )
+    return Entry(
+        stream=Stream.OBJECT,
+        number=number,
+        settings=((height - 1) << 4) | (width - 1),
+        name=region_name(tile, width, height),
+        category=DIRECT_CATEGORY,
+        extra_bytes=bytes(((1 << 6) | (page & 0x3F), tile & 0xFF)),
+    )
+
+
+def direct_entry(record: LevelObject) -> Entry:
+    """The Custom Tiles tab's entry for a direct-tile record already in a
+    level -- what the right button picks up over one.
+
+    Built out of the record's own bytes rather than through
+    :func:`direct_tile`, which chooses the object a *fresh* placement of the
+    tile would use: a ``27`` naming a page-0 tile is a record somebody made,
+    and arming the ``22`` that places the same tile a byte cheaper would put
+    a different object in hand from the one under the pointer.
+
+    Named as the grid names its own pick -- by the tile, or by the rectangle
+    for the one form that *is* a rectangle of consecutive tiles.
+    """
+    whole = whole_direct(record)
+    form = direct_form_of(whole)
+    tile = direct_tile_of(whole)
+    if form is not None and not form.sized:
+        name = region_name(tile, (whole.settings & 0x0F) + 1, (whole.settings >> 4) + 1)
+    else:
+        name = tile_name(tile)
+    return Entry(
+        stream=Stream.OBJECT,
+        number=whole.number,
+        settings=whole.settings,
+        name=name,
+        category=DIRECT_CATEGORY,
+        extra_bytes=bytes(whole.data[RECORD_SIZE:]),
+    )
 
 
 #: The category every project sprite files under: the one judgement the

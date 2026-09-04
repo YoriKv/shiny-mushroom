@@ -53,6 +53,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from shiny_mushroom import custom_tiles as custom_tiles_model
 from shiny_mushroom import level_graphics, level_palettes, map16, palettes
 
 # Every `x as x` from `project_files` is published from here on purpose, and
@@ -82,7 +83,7 @@ from smw_tools.bases import (
     RomBase,
 )
 from smw_tools.bases import base as rom_base
-from smw_tools.features import applied
+from smw_tools.features import FEATURES, applied
 from smw_tools.paths import ASSETS_DIR, GAME_DIR, data_dir
 from smw_tools.rom_sizes import ROM_SIZES, STOCK, RomSize
 
@@ -597,10 +598,47 @@ class Project(GraphicsFiles, LevelFiles, MusicFiles, WorldMapFiles):
         project handed back. The one already in hand still names the old size,
         which is what makes "set it, then build the old one" impossible to write
         by accident.
+
+        Refused below what a feature the project asks for needs
+        (:meth:`features_refuse_size`): shrinking is the one resize that
+        takes room away, and the build would only refuse it later, at the
+        reservation.
         """
         _check_rom_size(self.base_id, rom_size_id, of=self.name)
+        refused = self.features_refuse_size(rom_size_id)
+        if refused:
+            raise ProjectError(refused)
         self._write_metadata({"modified": _now(), "rom_size": rom_size_id})
         return replace(self, rom_size_id=rom_size_id)
+
+    def features_refuse_size(self, rom_size_id: str) -> str:
+        """Why a feature this project asks for could not be built into a
+        cartridge of ``rom_size_id``, or ``""`` where every one could.
+
+        A feature that reserves an expansion bank names the smallest
+        cartridge the bank exists in
+        (:attr:`smw_tools.features.Feature.min_rom_size`), and the switch
+        grew the cartridge to it on the way on; the way back down is refused
+        while the feature is on, with the feature named, rather than left to
+        fail the build. What the ROM size menu greys a row out with, and what
+        :meth:`set_rom_size` refuses on.
+        """
+        size = ROM_SIZES[rom_size_id].size
+        needing = [
+            FEATURES[held]
+            for held in self.feature_state
+            if held in FEATURES
+            and FEATURES[held].needs is not None
+            and FEATURES[held].needs.size > size
+        ]
+        if not needing:
+            return ""
+        names = ", ".join(one.name for one in needing)
+        wanted = max((one.needs for one in needing), key=lambda one: one.size)
+        return (
+            f"{names} needs a {wanted.label} cartridge or larger. Turn it off "
+            f"under Project > Features first."
+        )
 
     @property
     @_remembered
@@ -1175,6 +1213,57 @@ class Project(GraphicsFiles, LevelFiles, MusicFiles, WorldMapFiles):
         """Whether this project has saved Map16 tables of its own -- a `stat`
         per file of the set, so remembered (:func:`_remembered`)."""
         return any(held.is_file() for held in self._map16_overlays())
+
+    # -- the custom tiles -----------------------------------------------------
+
+    def custom_tiles(self) -> bytes:
+        """The custom tiles' container the build would include -- this
+        project's copy where it has saved one, the disassembly's otherwise.
+        See :mod:`shiny_mushroom.custom_tiles`."""
+        return self.source(self.base / custom_tiles_model.CONTAINER).read_bytes()
+
+    def save_custom_tiles(self, container: bytes) -> Path | None:
+        """Write the held container into the overlay, and say where -- or
+        ``None`` where nothing moved.
+
+        The container is a fixed-size plain ``incbin``, so :meth:`_save_plain`'s
+        exact-size check is the whole room check, as it is for a Map16
+        table. A container equal to the disassembly's leaves no copy -- it is
+        taken out of the overlay, so the overlay stays the diff -- and one
+        the overlay already holds as saved is left alone.
+        """
+        custom_tiles_model.check(container)
+        relative = custom_tiles_model.CONTAINER
+        held = self.overlaid(self.base / relative)
+        stock = (self.base / relative).read_bytes()
+        if container == stock:
+            if not held.is_file():
+                return None
+            held.unlink()
+            self._write_metadata({"modified": _now()})
+            return held
+        if held.is_file() and held.read_bytes() == container:
+            return None
+        written = self._save_plain(relative, container, len(stock))
+        self._write_metadata({"modified": _now()})
+        return written
+
+    def revert_custom_tiles(self) -> Path | None:
+        """Put the container back to the disassembly's, and say what was
+        removed. Deleting the file is the revert."""
+        held = self.overlaid(self.base / custom_tiles_model.CONTAINER)
+        if not held.is_file():
+            return None
+        held.unlink()
+        self._write_metadata({"modified": _now()})
+        return held
+
+    @property
+    @_remembered
+    def custom_tiles_edited(self) -> bool:
+        """Whether this project has saved a container of its own -- one
+        `stat`, so remembered (:func:`_remembered`)."""
+        return self.overlaid(self.base / custom_tiles_model.CONTAINER).is_file()
 
     @property
     def patches_dir(self) -> Path:

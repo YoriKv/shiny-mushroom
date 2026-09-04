@@ -93,7 +93,7 @@ NOTHING_ARMED_STAMPS = (
 #: The stamp tabs' way into the sheet's own artwork: the offer shows what a
 #: block looks like, and the Tilemap editor is where its cells are drawn.
 EDIT_SHEET = "Edit Sheet in Tilemap Editor"
-EDIT_SHEET_TIP = "Open this stamp sheet in the Tilemap editor"
+EDIT_SHEET_TIP = "Open this stamp sheet in the Tilemap editor."
 #: The Warps/Exits tab's line: it offers no hand, so it says what the mode's
 #: gestures are instead.
 TRANSFERS_HINT = (
@@ -363,7 +363,9 @@ class TilePalette(QWidget):
         # are switched separately. On by default, because what a tile *does*
         # is most of why one is picked over another that looks the same.
         self._marks = QCheckBox("Tile marks")
-        self._marks.setToolTip("Draw each tile's path, warp and level function over it")
+        self._marks.setToolTip(
+            "Draw each tile's path, warp and level function over it."
+        )
         self._marks.setChecked(True)
         self._marks.toggled.connect(self._marks_toggled)
 

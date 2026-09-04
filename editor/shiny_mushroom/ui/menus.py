@@ -1015,7 +1015,7 @@ def build(window: MainWindow) -> Actions:
         QKeySequence.StandardKey.HelpContents,
         window.show_shortcuts,
     )
-    shortcuts.setToolTip("Every keyboard shortcut in one page")
+    shortcuts.setToolTip("Every keyboard shortcut in one page.")
     help_menu.addSeparator()
     action(help_menu, window, f"&About {APP_NAME}", None, window.show_about)
 

@@ -56,9 +56,10 @@ only far enough to say what a container holds: :data:`SLOT_NAMES`,
 from __future__ import annotations
 
 import struct
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from shiny_mushroom.hexnum import hexnum
+from smw_tools.layer3_settings import from_bypass as _layer3_from_bypass
 from smw_tools.level_graphics import (
     BYPASS_BYTES,
     INHERIT,
@@ -66,10 +67,22 @@ from smw_tools.level_graphics import (
     bypass_with_row,
     row_from_bypass,
 )
+from smw_tools.lunar_magic_levels import INFO_BYTES as LUNAR_MAGIC_INFO_BYTES
+from smw_tools.lunar_magic_levels import INFO_FORMAT as LUNAR_MAGIC_INFO_FORMAT
+from smw_tools.lunar_magic_levels import slot_settings as _lunar_magic_settings
+from smw_tools.lunar_magic_levels import (
+    with_container_settings as _with_lunar_magic_settings,
+)
 
 #: What a level container starts with. Checked rather than assumed, because the
 #: alternative to noticing is writing a rebuilt table over something else's file.
+#: Two letters, a byte the tool varies, and the format: 2 is what Lunar Magic
+#: 2.53 wrote -- every container the disassembly ships -- and 3 is what 3.x
+#: writes, with the level-information slot carrying its four extra bytes
+#: (:mod:`smw_tools.lunar_magic_levels`). A blank container starts as 2.
 MAGIC = b"LMS\x02"
+MAGIC_PREFIX = b"LM"
+FORMATS = (2, 3)
 
 #: Where the region table starts, and how wide one entry is. The table's *length*
 #: is not stored: it runs from here to wherever the first region begins, which is
@@ -174,7 +187,11 @@ class Container:
         The table's length is derived from where the first region starts, which
         is the only thing in the file that says how many entries there are.
         """
-        if len(data) < TABLE_START + ENTRY_SIZE or data[:4] != MAGIC:
+        if (
+            len(data) < TABLE_START + ENTRY_SIZE
+            or data[:2] != MAGIC_PREFIX
+            or data[3] not in FORMATS
+        ):
             raise MwlError("not a Lunar Magic level container")
         first, _ = struct.unpack_from("<II", data, TABLE_START)
         if first < TABLE_START + ENTRY_SIZE or first > len(data):
@@ -225,6 +242,61 @@ class Container:
         return info[0] | (info[1] << 8)
 
     @property
+    def format(self) -> int:
+        """The container format, the file's fourth byte: one of :data:`FORMATS`."""
+        return self.prefix[3]
+
+    @property
+    def lunar_magic_settings(self) -> bytes | None:
+        """The four bytes Lunar Magic keeps for the level beyond the stock
+        secondary header, where the container carries them -- a format-3
+        file's level-information slot -- and ``None`` where it does not
+        (:func:`smw_tools.lunar_magic_levels.slot_settings`)."""
+        return _lunar_magic_settings(self.format, self._region(INFO))
+
+    @property
+    def holds_lunar_magic_settings(self) -> bool:
+        """Whether the container has somewhere to keep the four bytes: a
+        format-3 file whose level-information slot is the tool's
+        sixty-four bytes. What :meth:`with_lunar_magic_settings` needs."""
+        return (
+            self.format >= LUNAR_MAGIC_INFO_FORMAT
+            and len(self._region(INFO)) == LUNAR_MAGIC_INFO_BYTES
+        )
+
+    def with_lunar_magic_settings(self, settings: bytes) -> Container:
+        """This container with ``settings`` written where a format-3 file
+        keeps them, every other byte of the slot as it was. Refused for a
+        container that cannot hold them (:attr:`holds_lunar_magic_settings`):
+        a format before 3 reads the slot as no settings whatever is written
+        there, and a slot that is not the tool's sixty-four bytes has no
+        such offsets."""
+        if not self.holds_lunar_magic_settings:
+            raise MwlError(
+                "this container does not keep Lunar Magic settings: it takes "
+                f"a format-{LUNAR_MAGIC_INFO_FORMAT} file with the tool's "
+                f"{LUNAR_MAGIC_INFO_BYTES}-byte level-information slot"
+            )
+        info = self._region(INFO)
+        regions = list(self.regions)
+        regions[INFO] = _with_lunar_magic_settings(info, settings)
+        return replace(self, regions=tuple(regions))
+
+    @property
+    def layer3_settings(self) -> bytes:
+        """The four Layer 3 bytes this container carries, as the cartridge's
+        tables keep them (:func:`smw_tools.layer3_settings.from_bypass`).
+
+        Lunar Magic spreads its own Layer 3 settings across the *high* bytes
+        of the sixteen bypass words, whose low bytes are the graphics files
+        -- so a container that names no file still carries these, and every
+        shipped one reads as a level that says nothing. What the two scroll
+        settings' values mean is the caveat that module states.
+        """
+        region = self._region(EXGFX)
+        return _layer3_from_bypass(region).row
+
+    @property
     def custom_palette(self) -> bool:
         """Whether the level says it uses the palette the container carries.
 
@@ -235,6 +307,17 @@ class Container:
         """
         layer1 = self._region(LAYER1)
         return bool(layer1) and bool(layer1[0] & 1)
+
+    @property
+    def carried_palette(self) -> bytes | None:
+        """The palette the container carries, in Lunar Magic's order -- 256
+        colours then the back area colour, 514 bytes -- or ``None`` for a
+        container whose region is not that shape. Every shipped file
+        carries one, a copy of what the ROM loads; whether the level *wears*
+        it is :attr:`custom_palette`."""
+        region = self._region(PALETTE)
+        payload = region[REGION_HEADER:]
+        return payload if len(payload) == 514 else None
 
     @property
     def secondary_entrances(self) -> int:
@@ -434,6 +517,7 @@ def write_level(
     sprites: bytes,
     layer2: bytes | None = None,
     graphics: bytes | None = None,
+    lunar_magic: bytes | None = None,
 ) -> bytes:
     """``data`` with its Layer 1 and sprite payloads replaced.
 
@@ -449,6 +533,14 @@ def write_level(
 
     ``graphics`` is the level's own graphics row for the ExGFX words
     (:meth:`Container.with_graphics_row`), and ``None`` leaves them alone.
+
+    ``lunar_magic`` is the level's four Lunar Magic settings bytes, written
+    into the level-information slot where the container keeps them
+    (:meth:`Container.with_lunar_magic_settings`) so a file copied out of
+    the project agrees with the cartridge's tables; ``None`` leaves the
+    slot alone, and so does a container that has nowhere to keep them --
+    every shipped container, of format 2 -- since the tables are what the
+    build reads either way.
     """
     container = (
         Container.read(data).replacing(LAYER1, layer1).replacing(SPRITES, sprites)
@@ -457,6 +549,8 @@ def write_level(
         container = container.replacing(LAYER2, layer2)
     if graphics is not None:
         container = container.with_graphics_row(graphics)
+    if lunar_magic is not None and container.holds_lunar_magic_settings:
+        container = container.with_lunar_magic_settings(lunar_magic)
     return container.write()
 
 

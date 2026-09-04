@@ -18,7 +18,7 @@ import shutil
 from collections.abc import Callable
 
 from shiny_mushroom import level_names, secondary_entrances, strings
-from shiny_mushroom.audio import AudioMap, AudioMapError, audio_map
+from shiny_mushroom.audio import AudioMap, AudioMapError, audio_map, audition
 from shiny_mushroom.build import (
     BuildError,
     SharedRoom,
@@ -42,10 +42,11 @@ from shiny_mushroom.ui.strings_window import StringsWindow
 from shiny_mushroom.ui.window.parts import MUSIC, STRINGS, _rebuild_detail
 from smw_tools.asm_codec import AsmRegionError, AsmRegionFull
 from smw_tools.asm_regions import region_for
-from smw_tools.audio import AudioError
+from smw_tools.audio import LEVEL_MUSIC_BLOB, MUSIC_PORT, AudioError
 from smw_tools.features import CUSTOM_MUSIC, STRING_TABLES_RELOCATED, FeatureError
 from smw_tools.music import MusicError
 from smw_tools.paths import asar_binary
+from smw_tools.spc import SpcError
 
 __all__ = ["ProjectWindows"]
 
@@ -441,6 +442,8 @@ class ProjectWindows:
             self._audio.track_asked.connect(self._set_level_music)
             self._audio.import_asked.connect(self._import_music)
             self._audio.preview_asked.connect(self._preview_song)
+            self._audio.music_preview_asked.connect(self._preview_music)
+            self._audio.effect_preview_asked.connect(self._preview_effect)
             self._adopt_shortcuts(self._audio)
         self._audio.show_audio(read)
         self._show_songs()
@@ -489,7 +492,7 @@ class ProjectWindows:
             self._show_songs()
 
     def _show_songs(self) -> None:
-        """Hand the Songs tab what the project carries.
+        """Hand the AddmusicK tab what the project carries.
 
         Read from the overlay rather than from the cartridge, like the two
         editable tables and for the same reason: an import has to show at once,
@@ -658,6 +661,114 @@ class ProjectWindows:
             )
             return
         self._status_message(f"Opened {spc.name} in {emulator.name}", 8000)
+
+    def _preview_music(self, blob: str, value: int) -> None:
+        """Open one of the cartridge's own songs in the external emulator."""
+        self._audition(
+            blob=blob,
+            mailbox=MUSIC_PORT,
+            value=value,
+            name=f"music-{blob}-{value:02X}",
+            title=self._song_named(blob, value),
+        )
+
+    def _preview_effect(self, mailbox: int, value: int) -> None:
+        """Open one sound effect in the external emulator.
+
+        The effects are uploaded once and are the same whichever music bank is
+        resident, so the level bank stands in: an effect plays over whatever
+        the window happens to hold, and here that is silence.
+        """
+        self._audition(
+            blob=LEVEL_MUSIC_BLOB,
+            mailbox=mailbox,
+            value=value,
+            name=f"sfx-{mailbox & 0xFFFF:04X}-{value:02X}",
+            title=self._effect_named(mailbox, value),
+        )
+
+    def _song_named(self, blob: str, value: int) -> str:
+        """What the window calls one music value, for the file's own tag."""
+        read = self._audio.reading if self._audio is not None else None
+        bank = read.bank(blob) if read is not None else None
+        found = (
+            next((one for one in bank.songs if one.value == value), None)
+            if bank is not None
+            else None
+        )
+        return found.name if found is not None else f"Music {hexnum(value, 2)}"
+
+    def _effect_named(self, mailbox: int, value: int) -> str:
+        read = self._audio.reading if self._audio is not None else None
+        found = (
+            next(
+                (one for one in read.sfx if one.port == mailbox and one.value == value),
+                None,
+            )
+            if read is not None
+            else None
+        )
+        return found.name if found is not None else f"Effect {hexnum(value, 2)}"
+
+    def _audition(
+        self, *, blob: str, mailbox: int, value: int, name: str, title: str
+    ) -> None:
+        """Write one audition beside the cartridge and hand it to the emulator.
+
+        The same route the imported songs' Preview takes, and for the same
+        reason: an ``.spc`` is the whole of what a player needs, so nothing is
+        patched, built or waited for. The difference is only where the file
+        comes from -- AddmusicK wrote that one, and this one is composed from
+        the cartridge's own uploads.
+
+        It goes in the build folder because that is what it is made of: a
+        reading of the last build, stale the moment another one lands, and
+        nothing anyone needs to keep.
+        """
+        project = self._project
+        if project is None:
+            return
+        emulator = external_emulator()
+        if emulator is None:
+            self._alert(
+                "No external emulator is set.",
+                detail="A preview opens the song's .spc in the emulator named "
+                "in File > Settings.",
+            )
+            return
+        symbols = self._build_symbols()
+        if symbols is None or self._rom is None:
+            self._alert(
+                "There is no built cartridge to hear.",
+                detail="A preview is composed from the cartridge's own uploads "
+                "-- Project > Rebuild (Ctrl+B) makes one.",
+            )
+            return
+        try:
+            made = audition(
+                self._rom,
+                symbols,
+                blob=blob,
+                mailbox=mailbox,
+                value=value,
+                title=title,
+                game=project.name,
+            )
+            path = project.root / OUTPUT_DIR / f"audition-{name}.spc"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(made)
+        except (AudioMapError, AudioError, SpcError, OSError) as error:
+            self._alert("This could not be auditioned.", detail=str(error))
+            return
+        try:
+            launch(emulator, path)
+        except LaunchError as error:
+            self._alert(
+                f"{emulator.name} could not be started.",
+                detail=f"{error} File > Settings is where the emulator is set.",
+            )
+            return
+        self._status_message(f"Playing {title} in {emulator.name}", 8000)
 
     def _music_saved(self, said: str) -> None:
         """After either audio table is written: show it, and arm Rebuild.

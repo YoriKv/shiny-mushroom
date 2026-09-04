@@ -61,6 +61,7 @@ from PySide6.QtWidgets import (
 )
 
 from shiny_mushroom.catalog import ART_LABELS, Art, CatalogKey, Entry, Stream
+from shiny_mushroom.ui.custom_tiles_page import NO_FEATURE, CustomTilesPage
 from shiny_mushroom.ui.hover_preview import REST_MS, HoverPreview
 from shiny_mushroom.ui.level_palette import NO_LAYER2, LevelPalette
 from shiny_mushroom.ui.tips import wrap_tip
@@ -73,11 +74,15 @@ from shiny_mushroom.ui.tips import wrap_tip
 #: bar's Editing box -- "Layer 1 & Sprites" against "Layer 2" -- name the same
 #: division in the same words.
 #:
-#: The last one carries no stream: the Layer 2 background is a tilemap and not
-#: a record stream, so there is nothing in :class:`~shiny_mushroom.catalog.Stream`
-#: for it to be.
+#: Two of them carry no stream. The Layer 2 background is a tilemap and not a
+#: record stream, so there is nothing in :class:`~shiny_mushroom.catalog.Stream`
+#: for it to be; the Custom Tiles tab does place objects, but from a page and
+#: not from the catalogue, so it is named here as the tab bar's own -- see
+#: :data:`CUSTOM_TAB`. It sits beside Layer 1 because what it places lands
+#: there, and the two are reached one after the other.
 TABS: tuple[tuple[str, Stream | None], ...] = (
     ("Layer 1", Stream.OBJECT),
+    ("Custom Tiles", None),
     ("Sprites", Stream.SPRITE),
     ("Layer 2", None),
 )
@@ -92,10 +97,22 @@ TABS: tuple[tuple[str, Stream | None], ...] = (
 #: gets the catalogue page filled with objects, because on such a level Layer 2
 #: is placed exactly as Layer 1 is. Same tab, same key, same mode -- see
 #: :meth:`CreatePanel.offer_layer2`.
-LAYER2_TAB = 2
+LAYER2_TAB = 3
+
+#: The second tab: a Map16 page's blocks, placed on Layer 1 as Lunar Magic's
+#: direct-tile objects (:mod:`shiny_mushroom.ui.custom_tiles_page`). Its
+#: page is the panel's third; it places in the records' mode, so its entries
+#: arm exactly as the catalogue's do.
+#:
+#: **Greyed on a cartridge without the custom-tiles feature**, which is what
+#: :meth:`CreatePanel.offer_custom` says: the four direct-tile objects come
+#: with the feature, so without it the tab could place nothing at all -- see
+#: :data:`~shiny_mushroom.ui.custom_tiles_page.NO_FEATURE`.
+CUSTOM_TAB = 1
+CUSTOM_PAGE = 2
 
 #: The record streams, in tab order -- the catalogue page's two, without the
-#: background's tab, which has no stream and no catalogue.
+#: tabs that carry no stream and no catalogue.
 STREAMS: tuple[Stream, ...] = tuple(
     stream for _label, stream in TABS if stream is not None
 )
@@ -103,7 +120,7 @@ STREAMS: tuple[Stream, ...] = tuple(
 #: The editing mode each tab places in, as the level bar's Editing row index.
 #: Two tabs meaning one mode is the point: Layer 1 and the sprites are placed
 #: and selected together, which is what makes them one half of a level.
-TAB_EDITING: tuple[int, ...] = (0, 0, 1)
+TAB_EDITING: tuple[int, ...] = (0, 0, 0, 1)
 
 #: The category filter's "no filter" row. It carries the empty string, so
 #: filtering is one comparison with no special case for "everything".
@@ -207,9 +224,13 @@ class CreatePanel(QWidget):
         self._tabs = QTabBar()
         for label, _stream in TABS:
             self._tabs.addTab(label)
-        # Why it is greyed, where a greyed tab is the only thing to ask.
+        # Why each is greyed, where a greyed tab is the only thing to ask.
+        # Both start greyed: neither a Layer 2 nor the custom-tiles feature is
+        # something a panel with no cartridge behind it can offer.
         self._tabs.setTabToolTip(LAYER2_TAB, NO_LAYER2)
         self._tabs.setTabEnabled(LAYER2_TAB, False)
+        self._tabs.setTabToolTip(CUSTOM_TAB, NO_FEATURE)
+        self._tabs.setTabEnabled(CUSTOM_TAB, False)
         #: The record tab to come back to when the editing mode does. Which of
         #: the two was last open is a choice the user made and the Editing box
         #: never touched, so returning to "Layer 1 & Sprites" returns to it.
@@ -280,13 +301,18 @@ class CreatePanel(QWidget):
         #: The background's page of blocks -- the level's third placeable
         #: thing, and the one the window reads and fills directly.
         self.layer2 = LevelPalette()
+        #: A Map16 page's blocks as direct-tile objects -- the fourth, filled
+        #: by the window the same way, and armed as an entry.
+        self.custom = CustomTilesPage()
+        self.custom.armed.connect(self._custom_armed)
 
-        # The tab bar switches the page under it. Two pages and three tabs:
+        # The tab bar switches the page under it. Three pages and four tabs:
         # the search box and the filters belong to both record streams, and
         # rebuilding them for each would be two descriptions of one thing.
         self._pages = QStackedWidget()
         self._pages.addWidget(catalogue)
         self._pages.addWidget(self.layer2)
+        self._pages.addWidget(self.custom)
 
         layout = QVBoxLayout(self)
         layout.addWidget(self._tabs)
@@ -312,6 +338,10 @@ class CreatePanel(QWidget):
         """
         index = max(0, self._tabs.currentIndex())
         if index == LAYER2_TAB and self._layer2_records:
+            return Stream.OBJECT
+        if index == CUSTOM_TAB:
+            # A direct-tile object is an object: the tab places into that
+            # stream, from a page rather than a list.
             return Stream.OBJECT
         return TABS[index][1]
 
@@ -357,9 +387,13 @@ class CreatePanel(QWidget):
         Refused here rather than left to Qt, which switches to a disabled tab
         when it is asked to -- so the panel would show the page a click on it
         cannot reach, and say it had been picked.
+
+        The Custom Tiles tab carries no stream either and is skipped: it is
+        reached by clicking it, never by asking for a stream, and ``None``
+        means Layer 2 to every caller.
         """
         for index, (_label, offered) in enumerate(TABS):
-            if offered is stream:
+            if offered is stream and index != CUSTOM_TAB:
                 self._open(index)
                 return
 
@@ -368,6 +402,12 @@ class CreatePanel(QWidget):
         """Whether the Layer 2 tab can be opened at all. The panel's own
         state, for tests."""
         return self._tabs.isTabEnabled(LAYER2_TAB)
+
+    @property
+    def offers_custom(self) -> bool:
+        """Whether the Custom Tiles tab can be opened at all. The panel's own
+        state, for tests."""
+        return self._tabs.isTabEnabled(CUSTOM_TAB)
 
     def set_editing(self, index: int) -> None:
         """Show the tab that places in editing mode ``index``, without asking.
@@ -379,7 +419,14 @@ class CreatePanel(QWidget):
 
         A greyed tab is refused here as it is in :meth:`show_tab`: a level
         whose Layer 2 is an object stream has no background mode to be put in.
+
+        A tab already placing in ``index``'s mode stays: the Custom Tiles tab
+        places in the records' mode without being a record tab, and being
+        told "mode 0" is not being told to leave it.
         """
+        current = max(0, self._tabs.currentIndex())
+        if TAB_EDITING[current] == index and self._tabs.isTabEnabled(current):
+            return
         self._open(LAYER2_TAB if index == 1 else self._records_tab)
 
     def _open(self, index: int) -> None:
@@ -404,6 +451,50 @@ class CreatePanel(QWidget):
             # back to the window as a mode the user asked for.
             self._show_page(LAYER2_TAB)
 
+    def offer_custom(self, available: bool) -> None:
+        """Arm or grey the Custom Tiles tab -- :meth:`offer_layer2`'s twin for
+        the cartridge's side of the question.
+
+        Greyed means the loaded cartridge does not carry the custom-tiles
+        feature, and so has none of the four objects the tab places with.
+        Greying it while it is open steps back to the record tab last in
+        front: the page behind a greyed tab is one no click could have
+        reached, and leaving it there would offer placements the cartridge
+        cannot draw.
+
+        Both the tab and the record it should return to are read before the
+        greying, because disabling the open tab makes Qt move to whichever
+        neighbour is enabled -- the sprites, from here -- and that move
+        arrives as a tab the user picked and takes :attr:`_records_tab` with
+        it.
+        """
+        open_here = self._tabs.currentIndex() == CUSTOM_TAB
+        records = self._records_tab
+        self._tabs.setTabEnabled(CUSTOM_TAB, available)
+        if not available and open_here:
+            self._open(records)
+
+    def pick_up_custom(self, entry: Entry, tile: int) -> None:
+        """Open the Custom Tiles tab on ``tile`` and put ``entry`` in hand:
+        the eyedropper over a direct-tile object already in the level.
+
+        Through the page's own pick-up, so the grid, the hint line and the
+        panel's hand all say what a pick by hand would say. Refused where
+        the tab is greyed, exactly as :meth:`show_tab` refuses: a cartridge
+        without the feature cannot place one of these.
+        """
+        if not self.offers_custom:
+            return
+        self._open(CUSTOM_TAB)
+        self.custom.pick_up(entry, tile)
+
+    def _custom_armed(self, entry: Entry) -> None:
+        """The Custom Tiles page armed an entry: it is the panel's hand now,
+        said on the one signal every placement arrives on."""
+        self._armed = entry
+        self._list.clearSelection()
+        self.armed.emit(entry)
+
     def _tab_changed(self, index: int) -> None:
         """The open tab moved: show its page, and say what it places.
 
@@ -412,7 +503,7 @@ class CreatePanel(QWidget):
         one question the window has to answer and answering it twice for the
         same mode costs a comparison it already makes.
         """
-        if index != LAYER2_TAB:
+        if index not in (LAYER2_TAB, CUSTOM_TAB):
             self._records_tab = index
         self._show_page(index)
         self.editing_picked.emit(TAB_EDITING[max(0, index)])
@@ -424,6 +515,9 @@ class CreatePanel(QWidget):
         :data:`LAYER2_TAB` -- so which page a tab shows is a question about the
         level as well as about the tab.
         """
+        if index == CUSTOM_TAB:
+            self._pages.setCurrentIndex(CUSTOM_PAGE)
+            return
         catalogue = index != LAYER2_TAB or self._layer2_records
         if catalogue:
             self._refill()
@@ -510,6 +604,7 @@ class CreatePanel(QWidget):
         self._armed = None
         self._list.clearSelection()
         self._list.setCurrentItem(None)
+        self.custom.disarm()
         self._show_state()
 
     def focus_search(self) -> None:

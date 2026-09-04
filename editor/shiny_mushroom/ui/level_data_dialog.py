@@ -204,6 +204,9 @@ class LevelDataDialog(QDialog):
 
     #: The Add button, asking the window to run the add flow.
     add_requested = Signal()
+    #: Import .mwl... was pressed: files from outside, each pointed at the
+    #: level it records and dressed in the palette beside it.
+    import_requested = Signal()
 
     #: The Rename button, carrying the one selected added file's name.
     rename_requested = Signal(str)
@@ -385,6 +388,16 @@ class LevelDataDialog(QDialog):
         )
         add.clicked.connect(self.add_requested)
         actions.addWidget(add)
+        import_files = QPushButton("&Import .mwl...", page)
+        import_files.setToolTip(
+            wrap_tip(
+                "Bring .mwl files in from elsewhere: each is added, the level "
+                "number it records is pointed at it, and a .pal file beside it "
+                "-- or the palette the file carries -- becomes that level's own."
+            )
+        )
+        import_files.clicked.connect(self.import_requested)
+        actions.addWidget(import_files)
         self._rename = QPushButton("Re&name...", page)
         self._rename.setToolTip(
             wrap_tip(

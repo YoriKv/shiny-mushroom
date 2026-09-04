@@ -552,7 +552,7 @@ class Testing:
             return (
                 "Showing a cartridge built before the disassembly moved",
                 "The disassembly has changed since this cartridge was built, "
-                "so this is the older build running. Project > Rebuild (F5) "
+                "so this is the older build running. Project > Rebuild (Ctrl+B) "
                 "builds it against the source in hand.",
             )
         return "", ""

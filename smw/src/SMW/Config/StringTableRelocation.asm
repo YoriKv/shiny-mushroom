@@ -13,9 +13,9 @@ includeonce
 ;# have whatever the rest of it has left, and leaves a labelled hole where
 ;# each set was.
 ;#
-;# This is the last of that run's three occupants, so the text lands behind
-;# the translevel remap table and the relocated overworld tables, each of
-;# which is there or is not. Last is the place for it: the text is the
+;# This is the last of that run's four occupants, so the text lands behind
+;# the translevel remap table, the relocated overworld tables and the custom
+;# tiles, each of which is there or is not. Last is the place for it: the text is the
 ;# occupant whose length a release decides -- the Japanese cartridge is
 ;# refused outright, and the international ones word a message as they please
 ;# -- and behind it there is nothing for that to move.

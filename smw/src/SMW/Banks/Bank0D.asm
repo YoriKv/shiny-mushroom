@@ -699,18 +699,18 @@ GrasslandPtrs:
 	dl SMW_StandardObj1F_SkinnyVerticalPipeBoneLog_Main	; Vert. Pipe/Bone/Log
 	dl SMW_StandardObj20_SkinnyHorizontalPipeBoneLog_Main	; Horiz. Pipe/Bone/Log
 	dl SMW_StandardObj21_WideScaleGroundLedge_Main	; Long ground ledge
-	dl SMW_StandardObj22_Unused_Main					;\ LM: Sets this to $0DF08A
-	dl SMW_StandardObj23_Unused_Main					;| Sets this to $0DF08A
-	dl SMW_StandardObj24_Unused_Main					;| Sets this to $0DF08E
-	dl SMW_StandardObj25_Unused_Main					;| Sets this to $0DF0E0
-	dl SMW_StandardObj26_Unused_Main					;| Sets this to $0DF0F0
-	dl SMW_StandardObj27_Unused_Main					;| Sets this to $0DF130
-	dl SMW_StandardObj28_Unused_Main					;| Sets this to $0DF150
-	dl SMW_StandardObj29_Unused_Main					;| Sets this to $0DF160
-	dl SMW_StandardObj2A_Unused_Main					;/ Sets this to $0DFF50
+	dl SMW_StandardObj22_DirectTilePage0_Main					; LM: direct Map16, page 0 ($0DF08A); Config/CustomTiles.asm
+	dl SMW_StandardObj23_DirectTilePage1_Main					; LM: direct Map16, page 1 ($0DF08E); Config/CustomTiles.asm
+	dl SMW_StandardObj24_Unused_Main					; LM: old GFX list bypass ($0DF0E0)
+	dl SMW_StandardObj25_Unused_Main					; LM: old GFX list bypass ($0DF0F0)
+	dl SMW_StandardObj26_MusicBypass_Main					; LM: music bypass; Config/HeaderBypasses.asm
+	dl SMW_StandardObj27_DirectTiles_Main					; LM: direct Map16, pages 00-3F ($0DF150); Config/CustomTiles.asm
+	dl SMW_StandardObj28_TimeLimitBypass_Main					; LM: time limit bypass; Config/HeaderBypasses.asm
+	dl SMW_StandardObj29_DirectTilesHighPages_Main					; LM: direct Map16, pages 40-7F ($0DFF50); Config/CustomTiles.asm
+	dl SMW_StandardObj2A_Unused_Main
 	dl SMW_StandardObj2B_Unused_Main
 	dl SMW_StandardObj2C_Unused_Main
-	dl SMW_StandardObj2D_Unused_Main
+	dl SMW_StandardObj2D_UserDefined_Main
 	dl SMW_GrasslandObj2E_Unused_Main	;\
 	dl SMW_GrasslandObj2F_Unused_Main	;/ These could've been tileset specific, but Nintendo didn't have that many ideas for them.
 	dl SMW_GrasslandObj30_IcyVerticalPipe_Main	; Ice blue vertical pipe
@@ -783,18 +783,18 @@ CastlePtrs:
 	dl SMW_StandardObj1F_SkinnyVerticalPipeBoneLog_Main	; Vert. Pipe/Bone/Log
 	dl SMW_StandardObj20_SkinnyHorizontalPipeBoneLog_Main	; Horiz. Pipe/Bone/Log
 	dl SMW_StandardObj21_WideScaleGroundLedge_Main	; Long ground ledge
-	dl SMW_StandardObj22_Unused_Main					;\ LM: Sets this to $0DF08A
-	dl SMW_StandardObj23_Unused_Main					;| Sets this to $0DF08A
-	dl SMW_StandardObj24_Unused_Main					;| Sets this to $0DF08E
-	dl SMW_StandardObj25_Unused_Main					;| Sets this to $0DF0E0
-	dl SMW_StandardObj26_Unused_Main					;| Sets this to $0DF0F0
-	dl SMW_StandardObj27_Unused_Main					;| Sets this to $0DF130
-	dl SMW_StandardObj28_Unused_Main					;| Sets this to $0DF150
-	dl SMW_StandardObj29_Unused_Main					;| Sets this to $0DF160
-	dl SMW_StandardObj2A_Unused_Main					;/ Sets this to $0DFF50
+	dl SMW_StandardObj22_DirectTilePage0_Main					; LM: direct Map16, page 0 ($0DF08A); Config/CustomTiles.asm
+	dl SMW_StandardObj23_DirectTilePage1_Main					; LM: direct Map16, page 1 ($0DF08E); Config/CustomTiles.asm
+	dl SMW_StandardObj24_Unused_Main					; LM: old GFX list bypass ($0DF0E0)
+	dl SMW_StandardObj25_Unused_Main					; LM: old GFX list bypass ($0DF0F0)
+	dl SMW_StandardObj26_MusicBypass_Main					; LM: music bypass; Config/HeaderBypasses.asm
+	dl SMW_StandardObj27_DirectTiles_Main					; LM: direct Map16, pages 00-3F ($0DF150); Config/CustomTiles.asm
+	dl SMW_StandardObj28_TimeLimitBypass_Main					; LM: time limit bypass; Config/HeaderBypasses.asm
+	dl SMW_StandardObj29_DirectTilesHighPages_Main					; LM: direct Map16, pages 40-7F ($0DFF50); Config/CustomTiles.asm
+	dl SMW_StandardObj2A_Unused_Main
 	dl SMW_StandardObj2B_Unused_Main
 	dl SMW_StandardObj2C_Unused_Main
-	dl SMW_StandardObj2D_Unused_Main
+	dl SMW_StandardObj2D_UserDefined_Main
 	dl SMW_CastleObj2E_Unused_Main	;\
 	dl SMW_CastleObj2F_Unused_Main	; |
 	dl SMW_CastleObj30_Unused_Main	; |
@@ -867,18 +867,18 @@ RopePtrs:
 	dl SMW_StandardObj1F_SkinnyVerticalPipeBoneLog_Main	; Vert. Pipe/Bone/Log
 	dl SMW_StandardObj20_SkinnyHorizontalPipeBoneLog_Main	; Horiz. Pipe/Bone/Log
 	dl SMW_StandardObj21_WideScaleGroundLedge_Main	; Long ground ledge
-	dl SMW_StandardObj22_Unused_Main					;\ LM: Sets this to $0DF08A
-	dl SMW_StandardObj23_Unused_Main					;| Sets this to $0DF08A
-	dl SMW_StandardObj24_Unused_Main					;| Sets this to $0DF08E
-	dl SMW_StandardObj25_Unused_Main					;| Sets this to $0DF0E0
-	dl SMW_StandardObj26_Unused_Main					;| Sets this to $0DF0F0
-	dl SMW_StandardObj27_Unused_Main					;| Sets this to $0DF130
-	dl SMW_StandardObj28_Unused_Main					;| Sets this to $0DF150
-	dl SMW_StandardObj29_Unused_Main					;| Sets this to $0DF160
-	dl SMW_StandardObj2A_Unused_Main					;/ Sets this to $0DFF50
+	dl SMW_StandardObj22_DirectTilePage0_Main					; LM: direct Map16, page 0 ($0DF08A); Config/CustomTiles.asm
+	dl SMW_StandardObj23_DirectTilePage1_Main					; LM: direct Map16, page 1 ($0DF08E); Config/CustomTiles.asm
+	dl SMW_StandardObj24_Unused_Main					; LM: old GFX list bypass ($0DF0E0)
+	dl SMW_StandardObj25_Unused_Main					; LM: old GFX list bypass ($0DF0F0)
+	dl SMW_StandardObj26_MusicBypass_Main					; LM: music bypass; Config/HeaderBypasses.asm
+	dl SMW_StandardObj27_DirectTiles_Main					; LM: direct Map16, pages 00-3F ($0DF150); Config/CustomTiles.asm
+	dl SMW_StandardObj28_TimeLimitBypass_Main					; LM: time limit bypass; Config/HeaderBypasses.asm
+	dl SMW_StandardObj29_DirectTilesHighPages_Main					; LM: direct Map16, pages 40-7F ($0DFF50); Config/CustomTiles.asm
+	dl SMW_StandardObj2A_Unused_Main
 	dl SMW_StandardObj2B_Unused_Main
 	dl SMW_StandardObj2C_Unused_Main
-	dl SMW_StandardObj2D_Unused_Main
+	dl SMW_StandardObj2D_UserDefined_Main
 	dl SMW_RopeObj2E_Unused_Main	;\
 	dl SMW_RopeObj2F_Unused_Main	; |
 	dl SMW_RopeObj30_Unused_Main	; | These could've been tileset specific, but Nintendo didn't have that many ideas for them.
@@ -951,18 +951,18 @@ UndergroundPtrs:
 	dl SMW_StandardObj1F_SkinnyVerticalPipeBoneLog_Main	; Vert. Pipe/Bone/Log
 	dl SMW_StandardObj20_SkinnyHorizontalPipeBoneLog_Main	; Horiz. Pipe/Bone/Log
 	dl SMW_StandardObj21_WideScaleGroundLedge_Main	; Long ground ledge
-	dl SMW_StandardObj22_Unused_Main					;\ LM: Sets this to $0DF08A
-	dl SMW_StandardObj23_Unused_Main					;| Sets this to $0DF08A
-	dl SMW_StandardObj24_Unused_Main					;| Sets this to $0DF08E
-	dl SMW_StandardObj25_Unused_Main					;| Sets this to $0DF0E0
-	dl SMW_StandardObj26_Unused_Main					;| Sets this to $0DF0F0
-	dl SMW_StandardObj27_Unused_Main					;| Sets this to $0DF130
-	dl SMW_StandardObj28_Unused_Main					;| Sets this to $0DF150
-	dl SMW_StandardObj29_Unused_Main					;| Sets this to $0DF160
-	dl SMW_StandardObj2A_Unused_Main					;/ Sets this to $0DFF50
+	dl SMW_StandardObj22_DirectTilePage0_Main					; LM: direct Map16, page 0 ($0DF08A); Config/CustomTiles.asm
+	dl SMW_StandardObj23_DirectTilePage1_Main					; LM: direct Map16, page 1 ($0DF08E); Config/CustomTiles.asm
+	dl SMW_StandardObj24_Unused_Main					; LM: old GFX list bypass ($0DF0E0)
+	dl SMW_StandardObj25_Unused_Main					; LM: old GFX list bypass ($0DF0F0)
+	dl SMW_StandardObj26_MusicBypass_Main					; LM: music bypass; Config/HeaderBypasses.asm
+	dl SMW_StandardObj27_DirectTiles_Main					; LM: direct Map16, pages 00-3F ($0DF150); Config/CustomTiles.asm
+	dl SMW_StandardObj28_TimeLimitBypass_Main					; LM: time limit bypass; Config/HeaderBypasses.asm
+	dl SMW_StandardObj29_DirectTilesHighPages_Main					; LM: direct Map16, pages 40-7F ($0DFF50); Config/CustomTiles.asm
+	dl SMW_StandardObj2A_Unused_Main
 	dl SMW_StandardObj2B_Unused_Main
 	dl SMW_StandardObj2C_Unused_Main
-	dl SMW_StandardObj2D_Unused_Main
+	dl SMW_StandardObj2D_UserDefined_Main
 	dl SMW_UndergroundObj2E_Unused_Main	;\
 	dl SMW_UndergroundObj2F_Unused_Main	; |
 	dl SMW_UndergroundObj30_Unused_Main	; |
@@ -1035,18 +1035,18 @@ GhostHousePtrs:
 	dl SMW_StandardObj1F_SkinnyVerticalPipeBoneLog_Main	; Vert. Pipe/Bone/Log
 	dl SMW_StandardObj20_SkinnyHorizontalPipeBoneLog_Main	; Horiz. Pipe/Bone/Log
 	dl SMW_StandardObj21_WideScaleGroundLedge_Main	; Long ground ledge
-	dl SMW_StandardObj22_Unused_Main					;\ LM: Sets this to $0DF08A
-	dl SMW_StandardObj23_Unused_Main					;| Sets this to $0DF08A
-	dl SMW_StandardObj24_Unused_Main					;| Sets this to $0DF08E
-	dl SMW_StandardObj25_Unused_Main					;| Sets this to $0DF0E0
-	dl SMW_StandardObj26_Unused_Main					;| Sets this to $0DF0F0
-	dl SMW_StandardObj27_Unused_Main					;| Sets this to $0DF130
-	dl SMW_StandardObj28_Unused_Main					;| Sets this to $0DF150
-	dl SMW_StandardObj29_Unused_Main					;| Sets this to $0DF160
-	dl SMW_StandardObj2A_Unused_Main					;/ Sets this to $0DFF50
+	dl SMW_StandardObj22_DirectTilePage0_Main					; LM: direct Map16, page 0 ($0DF08A); Config/CustomTiles.asm
+	dl SMW_StandardObj23_DirectTilePage1_Main					; LM: direct Map16, page 1 ($0DF08E); Config/CustomTiles.asm
+	dl SMW_StandardObj24_Unused_Main					; LM: old GFX list bypass ($0DF0E0)
+	dl SMW_StandardObj25_Unused_Main					; LM: old GFX list bypass ($0DF0F0)
+	dl SMW_StandardObj26_MusicBypass_Main					; LM: music bypass; Config/HeaderBypasses.asm
+	dl SMW_StandardObj27_DirectTiles_Main					; LM: direct Map16, pages 00-3F ($0DF150); Config/CustomTiles.asm
+	dl SMW_StandardObj28_TimeLimitBypass_Main					; LM: time limit bypass; Config/HeaderBypasses.asm
+	dl SMW_StandardObj29_DirectTilesHighPages_Main					; LM: direct Map16, pages 40-7F ($0DFF50); Config/CustomTiles.asm
+	dl SMW_StandardObj2A_Unused_Main
 	dl SMW_StandardObj2B_Unused_Main
 	dl SMW_StandardObj2C_Unused_Main
-	dl SMW_StandardObj2D_Unused_Main
+	dl SMW_StandardObj2D_UserDefined_Main
 	dl SMW_GhostHouseObj2E_HorizontalLineOfSpikes_Main	; Thin horizontal upward spikes
 	dl SMW_GhostHouseObj2F_LogBackground_Main
 	dl SMW_GhostHouseObj30_GrassLedge1_Main
@@ -5616,18 +5616,41 @@ namespace off
 	%SetDuplicateOrNullPointer(SMW_StandardObj18_WaterWithAnimatedSurface_Main, SMW_StandardObj19_WaterWithNormalSurface_Main)
 	%SetDuplicateOrNullPointer(SMW_StandardObj18_WaterWithAnimatedSurface_Main, SMW_StandardObj1A_CastleLavaWithAnimatedSurface_Main)
 	%SetDuplicateOrNullPointer(SMW_StandardObj18_WaterWithAnimatedSurface_Main, SMW_StandardObj1B_ClimbingNetWithTopEdge_Main)
-	%SetDuplicateOrNullPointer(SMW_StandardObj18_WaterWithAnimatedSurface_Main, SMW_StandardObj22_Unused_Main)
-	%SetDuplicateOrNullPointer(SMW_StandardObj18_WaterWithAnimatedSurface_Main, SMW_StandardObj23_Unused_Main)
+; Objects 22, 23, 27, 29 and 2D are the five numbers Lunar Magic gives its
+; direct Map16 objects and its reserved user-defined one. On the stock
+; cartridge they are aliases of the water object like the rest of the
+; span; under Define_SMW_CustomTiles the same five labels are the custom
+; tiles' own routines, defined where that block is placed
+; (Config/CustomTiles.asm), so the dispatch tables name them either way.
+if !Define_SMW_CustomTiles == !FALSE
+	%SetDuplicateOrNullPointer(SMW_StandardObj18_WaterWithAnimatedSurface_Main, SMW_StandardObj22_DirectTilePage0_Main)
+	%SetDuplicateOrNullPointer(SMW_StandardObj18_WaterWithAnimatedSurface_Main, SMW_StandardObj23_DirectTilePage1_Main)
+endif
 	%SetDuplicateOrNullPointer(SMW_StandardObj18_WaterWithAnimatedSurface_Main, SMW_StandardObj24_Unused_Main)
 	%SetDuplicateOrNullPointer(SMW_StandardObj18_WaterWithAnimatedSurface_Main, SMW_StandardObj25_Unused_Main)
-	%SetDuplicateOrNullPointer(SMW_StandardObj18_WaterWithAnimatedSurface_Main, SMW_StandardObj26_Unused_Main)
-	%SetDuplicateOrNullPointer(SMW_StandardObj18_WaterWithAnimatedSurface_Main, SMW_StandardObj27_Unused_Main)
-	%SetDuplicateOrNullPointer(SMW_StandardObj18_WaterWithAnimatedSurface_Main, SMW_StandardObj28_Unused_Main)
-	%SetDuplicateOrNullPointer(SMW_StandardObj18_WaterWithAnimatedSurface_Main, SMW_StandardObj29_Unused_Main)
+; Objects 26 and 28 are the two numbers Lunar Magic gives its music and time
+; limit bypasses. On the stock cartridge they are aliases of the water object
+; like the rest of the span; under Define_SMW_HeaderBypasses the same two
+; labels are the bypasses' own routines, defined where that block is placed
+; (Config/HeaderBypasses.asm), so the dispatch tables name them either way.
+if !Define_SMW_HeaderBypasses == !FALSE
+	%SetDuplicateOrNullPointer(SMW_StandardObj18_WaterWithAnimatedSurface_Main, SMW_StandardObj26_MusicBypass_Main)
+endif
+if !Define_SMW_CustomTiles == !FALSE
+	%SetDuplicateOrNullPointer(SMW_StandardObj18_WaterWithAnimatedSurface_Main, SMW_StandardObj27_DirectTiles_Main)
+endif
+if !Define_SMW_HeaderBypasses == !FALSE
+	%SetDuplicateOrNullPointer(SMW_StandardObj18_WaterWithAnimatedSurface_Main, SMW_StandardObj28_TimeLimitBypass_Main)
+endif
+if !Define_SMW_CustomTiles == !FALSE
+	%SetDuplicateOrNullPointer(SMW_StandardObj18_WaterWithAnimatedSurface_Main, SMW_StandardObj29_DirectTilesHighPages_Main)
+endif
 	%SetDuplicateOrNullPointer(SMW_StandardObj18_WaterWithAnimatedSurface_Main, SMW_StandardObj2A_Unused_Main)
 	%SetDuplicateOrNullPointer(SMW_StandardObj18_WaterWithAnimatedSurface_Main, SMW_StandardObj2B_Unused_Main)
 	%SetDuplicateOrNullPointer(SMW_StandardObj18_WaterWithAnimatedSurface_Main, SMW_StandardObj2C_Unused_Main)
-	%SetDuplicateOrNullPointer(SMW_StandardObj18_WaterWithAnimatedSurface_Main, SMW_StandardObj2D_Unused_Main)
+if !Define_SMW_CustomTiles == !FALSE
+	%SetDuplicateOrNullPointer(SMW_StandardObj18_WaterWithAnimatedSurface_Main, SMW_StandardObj2D_UserDefined_Main)
+endif
 	%SetDuplicateOrNullPointer(SMW_StandardObj18_WaterWithAnimatedSurface_Main, SMW_GrasslandObj2E_Unused_Main)
 	%SetDuplicateOrNullPointer(SMW_StandardObj18_WaterWithAnimatedSurface_Main, SMW_GrasslandObj2F_Unused_Main)
 	%SetDuplicateOrNullPointer(SMW_StandardObj18_WaterWithAnimatedSurface_Main, SMW_CastleObj2E_Unused_Main)

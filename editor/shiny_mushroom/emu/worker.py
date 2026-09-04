@@ -331,6 +331,9 @@ class _Session:
             # cuts are. Not derivable there -- they are four bank $0D tables
             # the capture followed the cartridge's own pointers to.
             b"".join(snapshot.pipe_definitions),
+            # The custom tiles' definitions, one flat table off the cartridge
+            # where it carries the feature and empty where it does not.
+            snapshot.custom_defs,
         ]
         return header, blobs
 

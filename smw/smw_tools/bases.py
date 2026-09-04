@@ -737,12 +737,10 @@ class RomBase:
     #:
     #: A declaration says what a base *can* be built at; this says what it was,
     #: and it is a fact about the cartridge for the same reason every other
-    #: fact here is. A feature that uses an expansion bank where the cartridge
-    #: has one and does without where it has not reads differently at 512 KB
-    #: and at 1 MB (:data:`~features.MANAGED_LEVEL_MEMORY`), so anything asking
-    #: where its tables are needs the size as well as the base -- and would
-    #: otherwise have to be handed the two separately, which is a pair a caller
-    #: can get half right. :func:`~features.applied` is what sets it.
+    #: fact here is: a reader holding the base holds the whole cartridge,
+    #: rather than being handed the base and the size separately, which is a
+    #: pair a caller can get half right. :func:`~features.applied` is what
+    #: sets it.
     built_at: str | None = None
 
     @property
@@ -755,11 +753,6 @@ class RomBase:
         """The size the cartridge in hand is: :attr:`built_at`, or
         :attr:`stock_size` where nobody has said."""
         return self.built_at or self.stock_size
-
-    @property
-    def size_bytes(self) -> int:
-        """How long the cartridge in hand is -- :attr:`size_id` in bytes."""
-        return ROM_SIZES[self.size_id].size
 
     @property
     def source_defines(self) -> tuple[tuple[str, str], ...]:

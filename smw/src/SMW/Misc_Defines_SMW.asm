@@ -6,18 +6,22 @@ incsrc "Config/ExpansionBanks.asm"
 ; one: each asserts what it emitted against the figure declared there, and
 ; the run behind it is read past the same figure.
 incsrc "Config/PackedRuns.asm"
-; The three features that share one reserved run, then the run itself: it
-; asks which of them are on, so it is read after all three and before anything
+; The features that share one reserved run, then the run itself: it asks
+; which of them are on, so it is read after all of them and before anything
 ; that asks whether the run is wanted.
 incsrc "Config/OverworldTableRelocation.asm"
 incsrc "Config/TranslevelRemap.asm"
 incsrc "Config/StringTableRelocation.asm"
+incsrc "Config/CustomTiles.asm"
+incsrc "Config/HeaderBypasses.asm"
 incsrc "Config/ReservedBank.asm"
 ; The features that share the level bank, then the level number stash
 ; three of them read -- it asks which are on, so it is read after all of
 ; them -- and then the bank itself, which asks the same and is read last.
 incsrc "Config/LevelGraphics.asm"
 incsrc "Config/LevelCode.asm"
+incsrc "Config/LunarMagicLevels.asm"
+incsrc "Config/Layer3Settings.asm"
 ; Per-game-mode code, which shares the level bank's tail with the levels'
 ; own but declares no block: its stubs are variable-size and behind the
 ; packed head, and its only cost in the game's own banks is one jump.

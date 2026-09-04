@@ -81,6 +81,7 @@ from shiny_mushroom import (
     secondary_entrances,
     source_files,
 )
+from shiny_mushroom import custom_tiles as custom_tiles_model
 from shiny_mushroom.addresses import DEFAULT_ADDRESSES, Addresses
 from shiny_mushroom.build import (
     BuildError,
@@ -93,7 +94,14 @@ from shiny_mushroom.build import (
     symbol_file,
     world_map_room,
 )
-from shiny_mushroom.catalog import CatalogKey, Entry, key_of
+from shiny_mushroom.catalog import (
+    DIRECT_CATEGORY,
+    CatalogKey,
+    Entry,
+    direct_entry,
+    key_of,
+)
+from shiny_mushroom.custom_tiles import CustomTilesError
 from shiny_mushroom.edit import (
     History,
     Level,
@@ -162,6 +170,7 @@ from shiny_mushroom.objects import (
     OPEN_DESTINATION,
     LevelObject,
     carried_footprints,
+    direct_tile_of,
     parse_objects,
     screen_exits,
 )
@@ -197,6 +206,7 @@ from shiny_mushroom.rom_patches import (
     layer2_background_base,
     level_graphics_row,
     levels_sharing_layer2,
+    lunar_magic_bytes,
     secondary_header_bytes,
     vertical_level,
     vram_with_graphics,
@@ -312,7 +322,7 @@ from shiny_mushroom.ui.settings_dialog import SettingsDialog, external_emulator
 from shiny_mushroom.ui.source_files_dialog import SourceFilesDialog
 from shiny_mushroom.ui.strings_window import StringsWindow
 from shiny_mushroom.ui.theme import THEME_KEY, Theme, apply_theme
-from shiny_mushroom.ui.tile_palette import PaletteTab
+from shiny_mushroom.ui.tile_palette import STAMP_TABS, PaletteTab
 from shiny_mushroom.ui.toolbars import ModeToolbars
 from shiny_mushroom.ui.view_bar import LEVEL_BUTTONS, WORLD_BUTTONS, ViewBar
 from shiny_mushroom.ui.view_options import ViewOptions
@@ -342,6 +352,7 @@ from shiny_mushroom.ui.world_bar import (
     WorldBar,
     edit_row_of,
 )
+from shiny_mushroom.ui.world_reveal import WHOLE, RevealFilter
 from shiny_mushroom.ui.world_tables import WorldTables
 from shiny_mushroom.ui.zoom_bar import ZoomBar
 from smw_tools import graphics as codec
@@ -921,9 +932,8 @@ class MainWindow(
         # them resolves through; see :mod:`smw_tools.features`.
         self._features: tuple[str, ...] = ()
         # And how long that cartridge is, as a rom_sizes id. Beside the
-        # features because it is the same kind of fact about it -- a feature
-        # that uses an expansion bank where the cartridge has one is read
-        # somewhere else where it has not. See `_use_base`.
+        # features because it is the same kind of fact about it. See
+        # `_use_base`.
         self._rom_size: str | None = None
         # How many entries each of the world map's tables holds on it -- the
         # stock format until a cartridge with a feature that grew one is open.
@@ -1043,6 +1053,13 @@ class MainWindow(
         # zooms, and the canvas itself stays a picture of a fixed size.
         self.view = CanvasView(self.canvas)
         self.setCentralWidget(self.view)
+        # The one thing that floats over the picture: the world map's reveal
+        # cap, up only while the Events row is being edited. A child of the
+        # viewport rather than of the canvas, so it stays in the corner
+        # being looked at while the map pans and zooms under it -- see
+        # `_sync_reveal_filter`, which is the whole of when it is there.
+        self.reveal_filter = RevealFilter(self.view.viewport())
+        self.reveal_filter.capped.connect(self._reveal_capped)
         # The arrows and the rest of the bare editing keys are taken off the
         # view before it scrolls on them -- see eventFilter. Watched on the view
         # rather than on the application, so those are only ever asked about
@@ -1123,6 +1140,7 @@ class MainWindow(
         self.palette_dock.reset_asked.connect(self._reset_color)
         self.palette_dock.reset_all_asked.connect(self._reset_colors)
         self.palette_dock.custom_toggled.connect(self._custom_palette_toggled)
+        self.palette_dock.import_asked.connect(self._import_level_palette)
         self.palette_dock.save_asked.connect(self.save_palettes)
         # Closing the panel settles unsaved colours first -- see
         # :meth:`_may_close_palettes`.
@@ -1793,6 +1811,58 @@ class MainWindow(
             return secondary_header_bytes(self._rom, level, where=self._addresses)
         return b""
 
+    def _lunar_magic_for_dialog(self) -> bytes | None:
+        """The document's four Lunar Magic bytes for the header dialog, or
+        ``None`` where there is nothing to edit: a document with no bytes,
+        or a project whose built cartridge no longer keeps the tables --
+        the section would edit bytes no save could land."""
+        held = self._doc.lunar_magic or None
+        if (
+            held is not None
+            and self._project is not None
+            and not self._project.has_lunar_magic_settings
+        ):
+            return None
+        return held
+
+    def _layer3_for_dialog(self) -> bytes | None:
+        """The document's four Layer 3 bytes for the header dialog, or
+        ``None`` where there is nothing to edit -- the Lunar Magic section's
+        rule, for the same reason."""
+        held = self._doc.layer3 or None
+        if (
+            held is not None
+            and self._project is not None
+            and not self._project.has_layer3_settings
+        ):
+            return None
+        return held
+
+    def _layer3_bytes(self, level: int) -> bytes:
+        """``level``'s four Layer 3 settings bytes, for the document: the
+        project's rows, and empty where there is no project or its cartridge
+        keeps no such tables."""
+        if self._project is not None:
+            try:
+                return self._project.layer3_settings(level)
+            except (AsmRegionError, ProjectError, OSError):
+                pass
+        return b""
+
+    def _lunar_magic_bytes(self, level: int) -> bytes:
+        """``level``'s four Lunar Magic settings bytes, for the document:
+        the project's rows first, the image where there is no project, and
+        empty on a cartridge whose base keeps no such tables -- which is
+        what a document with nothing to edit there carries."""
+        if self._project is not None:
+            try:
+                return self._project.lunar_magic_settings(level)
+            except (AsmRegionError, ProjectError, OSError):
+                pass
+        if self._rom is not None and self._addressable:
+            return lunar_magic_bytes(self._rom, level, where=self._addresses)
+        return b""
+
     def _level_graphics_bytes(self, level: int) -> bytes:
         """``level``'s own graphics row, for the document.
 
@@ -1847,9 +1917,7 @@ class MainWindow(
         # its own record, not the patch manifest -- a patch enabled since is a
         # claim about the next build, and this one is reading this ROM.
         self._features = project.features if ours and project else ()
-        # And how long it is, which travels with them for the same reason: a
-        # feature that uses an expansion bank where the cartridge has one is
-        # read at one address on a 1 MB cartridge and another on a 512 KB one.
+        # And how long it is, which travels with them for the same reason.
         # The build's record where the ROM is ours, and the file's own length
         # otherwise -- a cartridge opened by hand still has a length.
         self._rom_size = (
@@ -1901,6 +1969,17 @@ class MainWindow(
             else None,
             self._role_counts,
         )
+        # And whether the create panel's Custom Tiles tab can be opened at
+        # all, which is this same reading: the four direct-tile objects come
+        # with the feature, so a cartridge without it has nothing that tab
+        # could place. Here, where the cartridge is taken, rather than off a
+        # level's capture -- the tab is a fact about the cartridge, the
+        # Tilemap editor's Custom tiles sheet reads it from exactly here
+        # (:meth:`_custom_container`), and two readings of one fact drift:
+        # the capture's arrives only down the paths that open a document,
+        # and a tab greyed on a cartridge that carries the feature is a tab
+        # nothing later turns back on.
+        self.create.offer_custom(self._addresses.custom_tiles_defs is not None)
 
     def load_file(self, path: Path) -> None:
         """Read ``path`` and render it onto the canvas.
@@ -2059,7 +2138,7 @@ class MainWindow(
             self._alert(
                 "There is no project to export.",
                 detail="An export is a copy of a project's built cartridge; "
-                "Project > New Project makes one.",
+                "File > New Project makes one.",
             )
             return
         if not self._may_export():
@@ -2680,6 +2759,8 @@ class MainWindow(
                 layer2_objects=self._snapshot.layer2_objects,
                 layer2_header=self._snapshot.layer2_header,
                 secondary=self._secondary_header_bytes(self._snapshot.level),
+                lunar_magic=self._lunar_magic_bytes(self._snapshot.level),
+                layer3=self._layer3_bytes(self._snapshot.level),
                 graphics=self._level_graphics_bytes(self._snapshot.level),
                 # The built cartridge's own reading of the second extra bit:
                 # the snapshot came off that build, so the flag follows what
@@ -2826,6 +2907,16 @@ class MainWindow(
             # refresh (every arrow-key repeat) leaves it alone.
             self._layer2_chrome_stale = False
             self._reoffer_background()
+        elif self._tables_moved(previous):
+            # The Tilemap editor's edit reaches the level as this reload, and
+            # what it moved is what the libraries beside the canvas are drawn
+            # from -- the Custom Tiles page above all, which is those tables
+            # and nothing else. Noted where the level is not on screen, as
+            # `_capture_changed` notes its own.
+            if self._level_has_the_canvas:
+                self._redraw_offers()
+            else:
+                self._offers_stale = True
         self._sync_level_editing_offer()
         # What can be placed into this level, and what it already holds.
         self._catalog.offer()
@@ -3974,6 +4065,15 @@ class MainWindow(
             return None
         column, row = self._placing_at
         extent = self._placing.preview(column, row, self._doc.shape)
+        if self._placing.category == DIRECT_CATEGORY:
+            # A direct-tile entry needs no probe: what it places is the
+            # tiles it names, drawn as the level draws them.
+            art = self._direct_art(self._placing)
+            if art is not None:
+                return Placing(
+                    column, row, extent[2], extent[3], art=art, offset=(0, 0)
+                )
+            return Placing(*extent)
         # The row's picture, or the reshaped hand's own once it has been
         # probed -- the first ask sends the probe, and the answer repaints.
         found = self._catalog.thumb_for(self._placing)
@@ -3996,6 +4096,37 @@ class MainWindow(
             art=found.image,
             offset=(found.dx, found.dy),
         )
+
+    def _direct_art(self, entry: Entry) -> QImage | None:
+        """A direct-tile entry's ghost: the tile, or the grabbed rectangle
+        of consecutive tiles, drawn from the capture as the level would show
+        them. ``None`` with no capture to draw from."""
+        snapshot = self._snapshot
+        if snapshot is None or self._doc is None:
+            return None
+        record = entry.at(0, 0, self._doc.shape)
+        if not isinstance(record, LevelObject):
+            return None
+        fields = {field.key: field for field in record.fields(0, self._doc.shape)}
+        if "tile" not in fields:
+            return None
+        base = fields["tile"].read(record)
+        width, height = record.width, record.height
+        blocks = Blocks(snapshot, pipes=pipe_tables(snapshot), ghosts=True)
+        image = QImage(
+            width * BLOCK, height * BLOCK, QImage.Format.Format_ARGB32_Premultiplied
+        )
+        image.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(image)
+        for dy in range(height):
+            for dx in range(width):
+                number = base + dy * 16 + dx if entry.settings else base
+                tile = raster_to_image(
+                    Raster(BLOCK, BLOCK, b"".join(blocks.rows(number & 0x7FFF)))
+                )
+                painter.drawImage(dx * BLOCK, dy * BLOCK, tile)
+        painter.end()
+        return image
 
     def _holds_ghost_art(self, entry: Entry) -> bool:
         """Whether the picture already on screen still stands for ``entry``.
@@ -4158,6 +4289,10 @@ class MainWindow(
             self.offers.raise_()
         else:
             self.offers.turn_to(self.create)
+        # The reveal cap floats over the canvas the three of them share, so
+        # the environment coming to the front is what says whether it is
+        # there at all.
+        self._sync_reveal_filter()
 
     def _reoffer_background(self) -> None:
         """Re-read the Layer 2 page this level offers, and fall back off the
@@ -4182,6 +4317,7 @@ class MainWindow(
         """
         self._offers_stale = False
         snapshot = self._snapshot
+        self._offer_custom_tiles()
         if (
             snapshot is None
             or not snapshot.layer2_background
@@ -4192,6 +4328,62 @@ class MainWindow(
         self.level_palette.set_tiles(
             [raster_to_image(raster) for raster in background_thumbnails(snapshot)],
             first=background_tiles(snapshot).start,
+        )
+
+    def _tables_moved(self, previous: LevelSnapshot | None) -> bool:
+        """Whether this snapshot draws its blocks from different Map16 tables
+        than the one it replaces.
+
+        What a Tilemap-editor edit does to an open level. A colour or a
+        graphics edit comes through :meth:`_capture_changed`, which knows it
+        happened; a table edit is known only by the reload the save asks for,
+        and the offer pages -- the Custom Tiles grid, the Layer 2 palette --
+        are drawn from exactly these bytes. Compared rather than flagged, so
+        an ordinary refresh, one per arrow-key repeat, redraws nothing.
+        """
+        snapshot = self._snapshot
+        if previous is None or snapshot is None:
+            return False
+        return (
+            snapshot.map16_defs != previous.map16_defs
+            or snapshot.custom_defs != previous.custom_defs
+            or snapshot.pipe_definitions != previous.pipe_definitions
+        )
+
+    def _offer_custom_tiles(self) -> None:
+        """Fill the create panel's Custom Tiles page: the stock two pages and
+        the custom pages the cartridge holds -- every block drawn as this
+        level shows it, through the same renderer the canvas uses, the held
+        Map16 and custom definitions included.
+
+        A cartridge without the feature is offered nothing: the four
+        direct-tile objects are the feature's own, so even a page-0 tile has
+        no object to be placed as, and drawing two pages of thumbnails for a
+        tab no click can open is work for a page nobody sees. Whether the tab
+        opens at all is not decided here -- it is the cartridge's answer and
+        is given where the cartridge is taken (:meth:`_use_base`).
+        """
+        snapshot = self._snapshot
+        if snapshot is None or not snapshot.custom_defs:
+            self.create.custom.set_pages({})
+            return
+        blocks = Blocks(snapshot, pipes=pipe_tables(snapshot), ghosts=True)
+        pages = [0, 1] + list(
+            range(
+                custom_tiles_model.FIRST_PAGE,
+                custom_tiles_model.FIRST_PAGE + custom_tiles_model.PAGES,
+            )
+        )
+        self.create.custom.set_pages(
+            {
+                page: [
+                    raster_to_image(
+                        Raster(BLOCK, BLOCK, b"".join(blocks.rows(page * 256 + n)))
+                    )
+                    for n in range(256)
+                ]
+                for page in pages
+            }
         )
 
     def _bg_armed(self, payload: BackgroundTile | GridStamp) -> None:
@@ -4842,6 +5034,9 @@ class MainWindow(
             # entrance, the camera, the Layer 3 background -- so a change to
             # it is a change to the picture.
             or after.secondary != before.secondary
+            # ...as is a change to the Lunar Magic bytes, which the same load
+            # reads for Layer 2's scroll.
+            or after.lunar_magic != before.lunar_magic
         )
 
     def _refresh_picture(self) -> None:
@@ -4913,6 +5108,7 @@ class MainWindow(
             self._build_symbols(),
             self._status_message,
             map16=self._map16.held_tables,
+            custom=self._map16.held_container,
             note=lambda parts: self._note_skipped(POINTER_PARTS, parts),
         )
 
@@ -5556,6 +5752,8 @@ class MainWindow(
         record = next(
             (found for found in stack if found.uid in self._selection), stack[0]
         )
+        if isinstance(record, LevelObject) and record.direct:
+            return self._pick_up_direct(record)
         key = key_of(record)
         entry = next(
             (found for found in self.create.catalog(key[0]) if found.key == key),
@@ -5570,6 +5768,27 @@ class MainWindow(
         # Through the panel's own arming, so the highlight, the hint line and
         # the ghost all follow as they do for a row picked by hand.
         self.create.arm(replace(entry, template=record))
+        return True
+
+    def _pick_up_direct(self, record: LevelObject) -> bool:
+        """The eyedropper over a direct-tile object: the Custom Tiles tab,
+        turned to the tile the record names and holding it as it stands.
+
+        Its own path because that tab offers no list to look an entry up in:
+        an entry there is made from a tile
+        (:func:`~shiny_mushroom.catalog.direct_entry`), so the pick-up builds
+        the one the record came from rather than searching the object
+        catalogue, which leaves these four objects out on purpose.
+        """
+        if not self.create.offers_custom:
+            self.statusBar().showMessage(
+                "The Create panel does not offer this one", EDIT_REFUSED_MS
+            )
+            return False
+        entry = direct_entry(record)
+        self.create.pick_up_custom(
+            replace(entry, template=record), direct_tile_of(record)
+        )
         return True
 
     # -- the canvas's gestures, forwarded by mode -----------------------------
@@ -5765,7 +5984,35 @@ class MainWindow(
         # tables also follow the Event box's focus, which arrives through this
         # same hook.
         self.world_tables.refresh()
+        self._sync_reveal_filter()
         self._refresh_load_path()
+
+    def _sync_reveal_filter(self) -> None:
+        """Put the reveal cap over the map, or take it away.
+
+        Up only while the Events row is the one being edited -- the reveals
+        it counts are the entry table's rows, which is what that row edits --
+        and alive only with an event focused, since an animation is one
+        event's and the all-events view has no single one to step. Off the
+        world map entirely it is gone: the level and the Map16 environment
+        are looked at through the same viewport.
+        """
+        on = self._mode is EditorMode.WORLD and self.tile_palette.tab in STAMP_TABS
+        self.reveal_filter.setVisible(on)
+        if not on:
+            return
+        event = self._world.focus_event
+        events = self._world.document.events if self._world.ready else ()
+        rows = len(events[event]) if event is not None and event < len(events) else 0
+        step = self._world.preview_step
+        self.reveal_filter.follow(rows, WHOLE if step is None else step + 1)
+        self.reveal_filter.place()
+
+    def _reveal_capped(self, cap: int) -> None:
+        """The panel's pick: freeze the focused event's animation just after
+        that reveal, or -- the cap put down -- show it whole again."""
+        if self._world.ready:
+            self._world.preview_event_step(None if cap == WHOLE else cap - 1)
 
     def _go_to_submap(self, submap: int) -> None:
         """The world bar's pick: frame the submap, palette following.
@@ -5802,6 +6049,9 @@ class MainWindow(
         """
         assert isinstance(tab, PaletteTab)
         self.world_bar.set_layer(tab)
+        # And the reveal cap over the picture, which is the Events row's own
+        # chrome: the tab is what puts it up and takes it away.
+        self._sync_reveal_filter()
         row = edit_row_of(tab)
         for editing in self.menu_actions.world_editing.actions():
             editing.setChecked(editing.data() == row)
@@ -6204,7 +6454,9 @@ class MainWindow(
                     8000,
                 )
                 tileset = 0
-            self._map16.show(tables, self._map16_snapshot, tileset)
+            self._map16.show(
+                tables, self._map16_snapshot, tileset, self._custom_container()
+            )
         self._map16_changed()
         # The dock's row-colour strip follows the mode: the panel refeeds it
         # now that the sheet holds the canvas.
@@ -6258,10 +6510,11 @@ class MainWindow(
         self.map16_bar.set_edit_rows(self._map16.edit_rows)
         self.map16_bar.set_editing(GRAINS.index(self._map16.grain))
         self.map16_bar.offer_stamp_sheets(self._world.ready)
+        self.map16_bar.offer_custom_sheet(self._map16.custom_ready)
         self.map16_bar.setEnabled(self._map16.ready)
         for row in self.menu_actions.map16_editing.actions():
             row.setChecked(row.data() == GRAINS.index(self._map16.grain))
-        if self._map16.tables_edited:
+        if self._map16.tables_edited or self._map16.custom_edited:
             # The tables the emulator is handed carry the held document, so
             # the level's picture is owed a redraw for an edit and not only
             # for a save -- spent on the way out, whose canvas it is.
@@ -6390,6 +6643,70 @@ class MainWindow(
         self.statusBar().showMessage("Saved the Map16 tables", 4000)
         self._map16_changed()
         return True
+
+    def _custom_container(self) -> bytes | None:
+        """The project's custom tiles for the Tilemap editor, or ``None``
+        where the cartridge on screen was not built with the feature -- the
+        sheet is offered for a cartridge that draws it, not for a switch
+        that is waiting on a build."""
+        if self._project is None or self._addresses.custom_tiles_defs is None:
+            return None
+        try:
+            return self._project.custom_tiles()
+        except (ProjectError, OSError) as error:
+            self.statusBar().showMessage(
+                f"The custom tiles could not be read: {error}", 8000
+            )
+            return None
+
+    def _may_lose_custom_tiles(self, detail: str) -> bool:
+        """Offer to save the custom tiles, like every other document's
+        question."""
+        answer = self._ask_to_save("The custom tiles have unsaved changes.", detail)
+        if answer is Choice.CANCEL:
+            return False
+        return True if answer is Choice.DISCARD else self.save_custom_tiles()
+
+    def save_custom_tiles(self) -> bool:
+        """Write the custom tiles' container into the project, reporting
+        success."""
+        if not self._have_somewhere_to_save():
+            return False
+        container = self._map16.held_container
+        if container is None or self._project is None:
+            return False
+        try:
+            self._project.save_custom_tiles(container)
+        except (CustomTilesError, ProjectError, OSError) as error:
+            self._alert("The custom tiles could not be saved.", detail=str(error))
+            return False
+        self._map16.custom_saved()
+        self._map16_reload_owed = True
+        self.statusBar().showMessage("Saved the custom tiles", 4000)
+        self._map16_changed()
+        return True
+
+    def revert_custom_tiles(self) -> None:
+        """Take the saved container back out of the project, and reload."""
+        if self._project is None or not self._map16.custom_ready:
+            return
+        if not self._confirm(
+            "Revert the custom tiles?",
+            "The saved container is taken out of the project, every edit in "
+            "hand is lost, and so is the undo history. The pages reload as "
+            "the disassembly ships them.",
+        ):
+            return
+        try:
+            self._project.revert_custom_tiles()
+            container = self._project.custom_tiles()
+        except (CustomTilesError, ProjectError, OSError) as error:
+            self._alert("The custom tiles could not be reverted.", detail=str(error))
+            return
+        self._map16.show_custom(container)
+        self._map16_reload_owed = True
+        self.statusBar().showMessage("Custom tiles put back", 4000)
+        self._map16_changed()
 
     def revert_map16_tables(self) -> None:
         """Take every saved Map16 file back out of the project, and reload."""
@@ -6627,6 +6944,8 @@ class MainWindow(
             if self._map16.on_stamps:
                 # The sheet is the world map's document, and so is its save.
                 return self.save_world_map()
+            if self._map16.on_custom:
+                return self.save_custom_tiles()
             return self.save_map16_tables()
         return self.save_level()
 
@@ -6644,7 +6963,9 @@ class MainWindow(
         if self._mode is EditorMode.WORLD:
             return
         if self._mode is EditorMode.MAP16:
-            if not self._map16.on_stamps:
+            if self._map16.on_custom:
+                self.revert_custom_tiles()
+            elif not self._map16.on_stamps:
                 self.revert_map16_tables()
             return
         self.revert_level()
@@ -7030,6 +7351,18 @@ class MainWindow(
             )
             self.menu_actions.revert.setEnabled(False)
             return
+        if self._mode is EditorMode.MAP16 and self._map16.on_custom:
+            self.menu_actions.save.setText("&Save Custom Tiles")
+            self.menu_actions.revert.setText("Re&vert Custom Tiles")
+            self.menu_actions.save.setEnabled(
+                self._project is not None and self._map16.ready
+            )
+            self.menu_actions.revert.setEnabled(
+                self._project is not None
+                and self._map16.ready
+                and (self._project.custom_tiles_edited or self._map16.custom_edited)
+            )
+            return
         if self._mode is EditorMode.MAP16:
             self.menu_actions.save.setText("&Save Map16 Tables")
             self.menu_actions.revert.setText("Re&vert Map16 Tables")
@@ -7193,11 +7526,11 @@ class MainWindow(
             row.setChecked(size_id == project.rom_size_id)
             row.setData(size_id)
             group.addAction(row)
-            # A cartridge the saved levels would not fit is a build that
-            # fails, so it is greyed out with the reason on it rather than
-            # offered: the growable levels overflow into an expansion bank,
-            # and shrinking past it is the one resize that takes room away.
-            refused = project.levels_refuse_size(size_id)
+            # A cartridge below what a feature the project has needs is a
+            # build that fails, so it is greyed out with the reason on it
+            # rather than offered: shrinking is the one resize that takes
+            # room away.
+            refused = project.features_refuse_size(size_id)
             if refused:
                 row.setEnabled(False)
                 row.setToolTip(refused)
@@ -7217,7 +7550,7 @@ class MainWindow(
         # The click has already moved the check mark, so every path out from
         # here rebuilds the rows rather than leaving one lit that is not what
         # the project builds.
-        refused = project.levels_refuse_size(rom_size_id)
+        refused = project.features_refuse_size(rom_size_id)
         if refused:
             self._alert("The ROM size could not be changed.", detail=refused)
             self.fill_rom_size_menu()
@@ -7703,10 +8036,33 @@ class MainWindow(
         # carries one, with the runs computed only when a row actually changed
         # -- a byte-identical save prices nothing and needs no build.
         secondary = self._doc.secondary or None
+        # And the Lunar Magic bytes, on a cartridge that keeps them. A build
+        # since the document was read may have dropped the tables -- the
+        # feature unticked, then Export ROM -- and then the bytes describe a
+        # cartridge this is not: they are left out, as the graphics row is
+        # on a cartridge without its feature, rather than refusing the save.
+        lunar_magic = self._doc.lunar_magic or None
+        if lunar_magic is not None and not self._project.has_lunar_magic_settings:
+            lunar_magic = None
+        # The Layer 3 settings on the same terms, and for the same reason.
+        layer3 = self._doc.layer3 or None
+        if layer3 is not None and not self._project.has_layer3_settings:
+            layer3 = None
         try:
             runs: dict[str, Run] | None = None
-            if secondary is not None and secondary != self._project.secondary_header(
-                self._level
+            if (
+                (
+                    secondary is not None
+                    and secondary != self._project.secondary_header(self._level)
+                )
+                or (
+                    lunar_magic is not None
+                    and lunar_magic != self._project.lunar_magic_settings(self._level)
+                )
+                or (
+                    layer3 is not None
+                    and layer3 != self._project.layer3_settings(self._level)
+                )
             ):
                 runs = asm_runs(self._project)
             written = self._project.save_level(
@@ -7716,6 +8072,8 @@ class MainWindow(
                 background=background,
                 layer2=layer2,
                 secondary=secondary,
+                lunar_magic=lunar_magic,
+                layer3=layer3,
                 asm_runs=runs,
                 # The graphics row rides along too, always: an empty row
                 # deletes the level's file, which is what a row set back to
@@ -7999,8 +8357,7 @@ class MainWindow(
             return True
         self._alert(
             "There is no project open to save into.",
-            detail="Project > New Project makes one; the work stays in "
-            "memory until then.",
+            detail="File > New Project makes one; the work stays in memory until then.",
         )
         return False
 
@@ -8080,6 +8437,13 @@ class MainWindow(
             self._project is not None
             and self._map16.tables_edited
             and not self._may_lose_map16("Discarding reverts to the last save.")
+        ):
+            return False
+        # And the custom tiles, which are their own document.
+        if (
+            self._project is not None
+            and self._map16.custom_edited
+            and not self._may_lose_custom_tiles("Discarding reverts to the last save.")
         ):
             return False
         # And the secondary entrances, which ask the same way.
@@ -8678,6 +9042,12 @@ class MainWindow(
         the held document instead of committing first, and the step the reload
         commits carries both -- see :meth:`_repoint_layer2`.
 
+        The dialog's two record sections -- the secondary header and the
+        Lunar Magic settings -- come back the same way, each only where it
+        moved, and go into the same document before the one commit: the
+        entrance is read by the game's own load, so the reload the commit
+        asks for shows it.
+
         The level's own graphics row is a dialog of its own
         (:meth:`edit_level_graphics`): it is not the game's level record, and
         the cartridge only has room for it under a feature.
@@ -8712,6 +9082,9 @@ class MainWindow(
                 gap=self._layer2_gap_for_level,
                 preview=self.preview_header,
                 tracks=self._music_setting_names(),
+                secondary=self._doc.secondary or None,
+                lunar_magic=self._lunar_magic_for_dialog(),
+                layer3=self._layer3_for_dialog(),
             )
         finally:
             # The picture goes back to the document's header whichever way the
@@ -8722,20 +9095,28 @@ class MainWindow(
             self.preview_header(None)
         if result is None:
             return
-        edited, repointed = result
+        edited, repointed = result.header, result.layer2
+        # The entrance, the Lunar Magic bytes and the Layer 3 settings ride
+        # with the header as one edit: the dialog handed back only what moved.
+        doc = self._doc
+        if result.secondary is not None:
+            doc = doc.with_secondary(result.secondary)
+        if result.lunar_magic is not None:
+            doc = doc.with_lunar_magic(result.lunar_magic)
+        if result.layer3 is not None:
+            doc = doc.with_layer3(result.layer3)
         if repointed is not None:
             # One accept, one undo step. The header bytes are not committed on
             # their own: they ride into the repoint's reload as part of the
             # held document, so the step the reload commits carries both and
             # one undo takes the whole dialog back.
-            doc = self._doc
             if edited != doc.header:
                 changed = doc.with_header(edited, self._shape_for(edited))
                 if changed is not None:
                     doc = changed
             self._repoint_layer2(repointed, carrying=doc)
             return
-        changed = self._doc
+        changed = doc
         if edited != changed.header:
             changed = changed.with_header(edited, self._shape_for(edited))
         if changed is not None and changed is not self._doc and self._commit(changed):
@@ -10330,7 +10711,7 @@ class MainWindow(
         them = "them" if len(moved) > 1 else "it"
         self.statusBar().showMessage(
             f"{'; '.join(map(str, moved))} changed on disk -- Project > Rebuild "
-            f"(F5) puts {them} in the cartridge"
+            f"(Ctrl+B) puts {them} in the cartridge"
             + ("." if sources else f"; a test run already carries {them}."),
             8000,
         )
@@ -10365,7 +10746,7 @@ class MainWindow(
         self.statusBar().showMessage(
             f"The disassembly has changed since {project.name}'s cartridge was "
             f"built ({_plural(len(stale), 'file')}, starting with {stale[0]}) "
-            f"-- Project > Rebuild (F5) builds it against the source in hand.",
+            f"-- Project > Rebuild (Ctrl+B) builds it against the source in hand.",
             8000,
         )
 

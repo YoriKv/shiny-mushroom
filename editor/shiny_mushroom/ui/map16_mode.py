@@ -47,8 +47,14 @@ from shiny_mushroom.map16 import TILESET_COUNT, Map16Tables
 from shiny_mushroom.tile_clipboard import GridStamp, TileClipboard, relative
 from shiny_mushroom.ui.canvas import Canvas, Overlay
 from shiny_mushroom.ui.canvas_view import CanvasView
+from shiny_mushroom.ui.custom_tiles_sheet import NO_CUSTOM_TILES, CustomTilesSheet
 from shiny_mushroom.ui.gestures import grab_stamp, snapped_box
-from shiny_mushroom.ui.map16_bar import SHEET_2X2, SHEET_6X6, edit_rows_for
+from shiny_mushroom.ui.map16_bar import (
+    SHEET_2X2,
+    SHEET_6X6,
+    SHEET_CUSTOM,
+    edit_rows_for,
+)
 from shiny_mushroom.ui.map16_panel import Map16Panel
 from shiny_mushroom.ui.map16_picture import PickerCache
 from shiny_mushroom.ui.map16_render import ANIMATED_CHARS
@@ -127,7 +133,11 @@ class Map16Mode(QObject):
         self._changed = changed
         self._world = world
 
+        self._snapshot_for: Callable[[int], LevelSnapshot | None] | None = None
         self._tables = TablesSheet()
+        #: The project's custom tiles, shown where the cartridge carries the
+        #: feature and the project's container was read.
+        self._custom = CustomTilesSheet()
         self._stamp_sheets = {
             SHEET_2X2: StampSheet(world, small=True),
             SHEET_6X6: StampSheet(world, small=False),
@@ -183,6 +193,24 @@ class Map16Mode(QObject):
     def on_stamps(self) -> bool:
         """Whether the canvas shows one of the world map's stamp sheets."""
         return isinstance(self._sheet, StampSheet)
+
+    @property
+    def on_custom(self) -> bool:
+        """Whether the canvas shows the custom tiles' sheet."""
+        return self._sheet is self._custom
+
+    @property
+    def custom_ready(self) -> bool:
+        """Whether the custom tiles' sheet can be shown at all: the
+        cartridge carries the feature and the project's container was
+        read."""
+        return self._custom.shown
+
+    @property
+    def custom_edited(self) -> bool:
+        """Whether the custom tiles differ from their last save -- asked
+        about apart from the tables, since they are saved apart."""
+        return self._custom.edited
 
     @property
     def ready(self) -> bool:
@@ -241,11 +269,19 @@ class Map16Mode(QObject):
         tables: Map16Tables,
         snapshot_for: Callable[[int], LevelSnapshot | None],
         tileset: int,
+        container: bytes | None = None,
     ) -> None:
         """Stand the mode up over ``tables``, drawing with what
         ``snapshot_for`` answers per tileset. One document per project: a
-        second entry reuses :meth:`activate` instead."""
+        second entry reuses :meth:`activate` instead. ``container`` is the
+        project's custom tiles where the cartridge carries the feature, and
+        ``None`` greys that sheet."""
+        self._snapshot_for = snapshot_for
         self._tables.show(tables, snapshot_for, tileset)
+        if container is None:
+            self._custom.forget()
+        else:
+            self._custom.show(container, snapshot_for, self._tables.tileset)
         self._sheet = self._tables
         self._sheet_index = self._tables.tileset
         self.selection = frozenset()
@@ -256,7 +292,9 @@ class Map16Mode(QObject):
 
     def forget(self) -> None:
         """Drop everything: the project is going, or already gone."""
+        self._snapshot_for = None
         self._tables.forget()
+        self._custom.forget()
         self._sheet = self._tables
         self._sheet_index = 0
         self.selection = frozenset()
@@ -338,6 +376,14 @@ class Map16Mode(QObject):
                 self._status(NO_WORLD_MAP)
                 self._changed()
                 return False
+        elif index == SHEET_CUSTOM:
+            wanted = self._custom
+            if not self._custom.shown:
+                self._status(NO_CUSTOM_TILES)
+                self._changed()
+                return False
+            # Drawn with the tileset the tables were last shown in.
+            self._custom.set_tileset(self._tables.tileset)
         elif 0 <= index < TILESET_COUNT:
             wanted = self._tables
             self._tables.set_tileset(index)
@@ -696,6 +742,30 @@ class Map16Mode(QObject):
         stays -- and the project's tables now hold what the document does.
         A stamp sheet's save is the world map's, and says so there."""
         self._tables.saved()
+        self._changed()
+
+    def custom_saved(self) -> None:
+        """A save wrote the custom tiles: the same, for that document."""
+        self._custom.saved()
+        self._changed()
+
+    @property
+    def held_container(self) -> bytes | None:
+        """The custom tiles as the document holds them, or ``None`` where
+        the sheet was never shown -- what a preview and a test run have to
+        agree with, saved or not."""
+        return self._custom.document if self._custom.shown else None
+
+    def show_custom(self, container: bytes) -> None:
+        """Put ``container`` under the custom tiles' sheet afresh -- a
+        revert's re-read -- with its history and the hand dropped."""
+        if self._snapshot_for is None:
+            return
+        self.stop_placing()
+        self._custom.show(container, self._snapshot_for, self._tables.tileset)
+        if self.on_custom:
+            self.selection = frozenset()
+            self.activate()
         self._changed()
 
     @property

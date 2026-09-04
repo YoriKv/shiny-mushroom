@@ -21,6 +21,7 @@ feed. Project > Rebuild is what makes the edit audible.
 from __future__ import annotations
 
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -229,6 +230,89 @@ class MusicFiles:
             if path.is_file() and path.suffix.lower() in MUSIC_SUFFIXES
         ]
         return sorted(found, key=lambda path: str(path.relative_to(folder)).lower())
+
+    def make_music_folder(self) -> Path:
+        """Make ``music/`` exist, empty if need be -- what switching the
+        feature on does, so the folder a package goes in is there to find
+        before anybody has one."""
+        self.music_folder.mkdir(parents=True, exist_ok=True)
+        return self.music_folder
+
+    def sample_folders(self, mml: Path) -> list[Path]:
+        """The sample folders one package names beside itself, present or
+        not: ``#path "name"`` is how an MML says where its own waveforms
+        are, and the folder is a sibling of the file."""
+        return music.sample_folders_named(mml)
+
+    def add_music_package(self, mml: Path) -> list[Path]:
+        """Copy one package into ``music/`` from wherever it is: the MML
+        file and every sample folder it names beside itself, untouched --
+        the shape AddmusicK is handed and the shape the community's packages
+        arrive in. Says what landed, relative to the music folder.
+
+        A package already there by that name is refused rather than
+        overwritten, and so is one whose stem another package already has:
+        songs are handed to the tool by name, so two of one name are one
+        the compile refuses anyway, better refused here.
+        """
+        if mml.suffix.lower() not in MUSIC_SUFFIXES:
+            kinds = " or ".join(MUSIC_SUFFIXES)
+            raise ProjectError(
+                f"{mml.name} is not an MML file: a song is a {kinds} file with "
+                f"its samples in a folder beside it."
+            )
+        if not mml.is_file():
+            raise ProjectError(f"{mml} is not a file")
+        folder = self.music_folder
+        target = folder / mml.name
+        if target.exists():
+            raise ProjectError(f"{MUSIC_DIR / mml.name} already exists.")
+        clash = next(
+            (one for one in self.music_packages() if one.stem == mml.stem), None
+        )
+        if clash is not None:
+            raise ProjectError(
+                f"{clash.relative_to(folder)} is already a package named "
+                f"{mml.stem}. Songs are handed to AddmusicK and given values by "
+                f"name, so rename one of them first."
+            )
+        folder.mkdir(parents=True, exist_ok=True)
+        landed = []
+        shutil.copy2(mml, target)
+        landed.append(target.relative_to(folder))
+        for samples in self.sample_folders(mml):
+            if not samples.is_dir():
+                continue
+            copied = folder / samples.name
+            shutil.copytree(samples, copied, dirs_exist_ok=True)
+            landed.append(copied.relative_to(folder))
+        self._write_metadata({"modified": _now()})
+        return landed
+
+    def remove_music_package(self, relative: Path) -> list[Path]:
+        """Delete one package from ``music/``: the MML and every sample
+        folder it names that no other package names too. What the last
+        compile put in the overlay stays until the next Import, which is
+        what reads the folder again."""
+        folder = self.music_folder
+        mml = folder / relative
+        if not mml.is_file():
+            return []
+        kept = {
+            one.resolve()
+            for other in self.music_packages()
+            if other != mml
+            for one in self.sample_folders(other)
+        }
+        taken = []
+        for samples in self.sample_folders(mml):
+            if samples.is_dir() and samples.resolve() not in kept:
+                shutil.rmtree(samples)
+                taken.append(samples)
+        mml.unlink()
+        taken.append(mml)
+        self._write_metadata({"modified": _now()})
+        return taken
 
     def import_music(
         self, tool: Path, cartridge: Path, work: Path, asar: Path | None = None

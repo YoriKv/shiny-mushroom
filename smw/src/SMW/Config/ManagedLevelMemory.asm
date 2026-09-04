@@ -12,30 +12,20 @@ includeonce
 ;#
 ;# Setting !Define_SMW_ManagedLevelMemory to !TRUE makes the two banks a
 ;# sequence instead. Every stream the seven macros insert is emitted back to
-;# back in ROM-map order into runs -- the whole of bank $06, bank $07 up to
-;# the sprite routines at $07F000, bank $07's tail past them, and, on a
-;# cartridge that has one, the level bank (Config/LevelBank.asm): the
-;# expansion bank the custom level palettes share, from wherever their blobs
-;# ended to the fixed tail below -- and the padding between the stock
-;# placements is emitted nowhere, so the runs are exactly the level data plus
-;# that padding. A stream that grows pushes every stream after it along, asar
-;# recomputes every pointer-table row from the labels, and a stream that
-;# reaches the end of a run is placed at the start of the next: the same
-;# thing the relocated overworld tables do, one level up, with the bank
-;# boundary as the only line that needs saying. Nothing reaches the level
-;# bank until banks $06 and $07 are full. Whatever a run has left when the
-;# packing moves past it is filled with $FF, which is what the shipped
-;# padding is on the releases that have any and what a reader looking for
-;# free space recognises.
-;#
-;# **The expansion bank is room, not a requirement.** A 512 KB cartridge has
-;# no bank to reserve, so the packing is the three stock runs alone: the
-;# 8,991 bytes of padding those banks hold become fungible across every
-;# level, which is the whole of what the feature buys there, and a level
-;# that outgrows them says so rather than overflowing. What the bank adds
-;# where the cartridge has one is a fourth run and nothing else --
-;# !Define_SMW_LevelBankExists is the question, asked once in
-;# Config/LevelBank.asm and read here.
+;# back in ROM-map order into four runs -- the whole of bank $06, bank $07
+;# up to the sprite routines at $07F000, bank $07's tail past them, and the
+;# level bank (Config/LevelBank.asm): the expansion bank the custom level
+;# palettes share, from wherever their blobs ended to the bank's end -- and
+;# the padding between the stock placements is emitted nowhere, so the runs
+;# are exactly the level data plus that padding. A stream that grows pushes
+;# every stream after it along, asar recomputes every pointer-table row from
+;# the labels, and a stream that reaches the end of a run is placed at the
+;# start of the next: the same thing the relocated overworld tables do, one
+;# level up, with the bank boundary as the only line that needs saying.
+;# Nothing reaches the level bank until banks $06 and $07 are full. Whatever
+;# a run has left when the packing moves past it is filled with $FF, which is
+;# what the shipped padding is on the releases that have any and what a
+;# reader looking for free space recognises.
 ;#
 ;# Two facts about the loader decide what may land where, and the feature
 ;# hooks both, each with a JSL of exactly the size of the instructions it
@@ -59,11 +49,9 @@ includeonce
 ;#
 ;# The tail is fixed, and that is not tidiness: the sprite-bank table is
 ;# the $200 bytes below the end of bank $07 with its stub directly before,
-;# the same slot on every cartridge and every base. It has to be one address
-;# the whole toolchain can name without a symbol, and bank $07 is the only
-;# run every build of this feature has -- an expansion bank is room the
-;# packing overflows into where the cartridge has one, so a tail kept there
-;# would have no address at 512 KB at all. The sprite memory index a base
+;# the same slot on every base. It has to be one address the whole toolchain
+;# can name without a symbol, and bank $07 is one of the game's own banks,
+;# where the level bank moves with the base's reservation. The sprite memory index a base
 ;# sets (Config/SpriteMemoryIndex.asm) is written by following the pointer
 ;# table with the loader's bank $07 literal, and under this define its walk
 ;# reads the bank off this table instead -- by address, since the finalize
@@ -102,11 +90,9 @@ includeonce
 ;# and %SMW_InsertLevelData inserts each as the empty level under its own
 ;# label. Both fragments the editor regenerates; both ship empty.
 ;#
-;# The define needs no cartridge in particular. Where one is 1 MB or larger
-;# the level bank is reserved and packed into; where it is not, nothing is
-;# reserved and nothing is asked for -- the two occupants that share the
-;# bank and cannot do without it are the ones whose reservation refuses
-;# (Config/LevelBank.asm).
+;# The define needs a cartridge the level bank exists in, 1 MB or larger,
+;# which the bank's reservation says rather than letting the image quietly
+;# double (Config/LevelBank.asm).
 ;#############################################################################################################
 
 ; Off unless a build asks for it, guarded so --define wins:
@@ -131,8 +117,7 @@ incsrc "levels/deleted-levels.asm"
 ;# the end of the bank. Every ROM map places the same three boundaries.
 ;# Run 3 is the level bank's, from where the bank's own sequence ended --
 ;# behind the palettes' blobs and the project's code -- to the bank's end
-;# label: Config/LevelBank.asm states both, and there is no run 3 on a
-;# cartridge without that bank.
+;# label: Config/LevelBank.asm states both.
 ;#
 ;# What the packing fills of run 2 stops at the tail this file fixes at the
 ;# top of bank $07 -- !Loc_SMW_ManagedLevelRun2_PackedEnd, the run's end for
@@ -154,11 +139,9 @@ incsrc "levels/deleted-levels.asm"
 !Define_SMW_ManagedLevelTail		#= $0200+!Define_SMW_ManagedLevelStubBytes
 
 ; Where the tail goes, and what run 2 therefore ends at. The top of bank
-; $07, on every cartridge and every base: the tail has to be at one address
-; the whole toolchain can name without a symbol, and bank $07 is the only
-; run every build of this feature has -- an expansion bank is room the
-; packing overflows into where the cartridge has one, so a tail kept there
-; would have no address at 512 KB at all.
+; $07, on every base: the tail has to be at one address the whole toolchain
+; can name without a symbol, and the level bank moves with the base's
+; reservation where bank $07 does not.
 !Loc_SMW_ManagedLevelTail_At	#= !Loc_SMW_ManagedLevelRun2_End-!Define_SMW_ManagedLevelTail
 !Loc_SMW_ManagedLevelRun2_PackedEnd	#= !Loc_SMW_ManagedLevelTail_At
 
@@ -196,14 +179,11 @@ endif
 endmacro
 
 ; Move the packing to the next run, giving the rest of this one to the
-; cartridge as $FF. Four runs on a cartridge with a level bank and three
-; without, so a stream is offered at most three moves before the banks are
-; full, and the error says so by name rather than leaving asar to report a
-; position. The fourth opens where the level bank's own sequence ended --
-; behind the palettes' blobs and the project's code, or at the run's head
-; when none of them is on -- and ends at the bank's end; where there is no
-; such bank the packing has run 2's tail as its last bytes and the error
-; names the cartridge as a way out.
+; cartridge as $FF. Four runs, so a stream is offered at most three moves
+; before the banks are full, and the error says so by name rather than
+; leaving asar to report a position. The fourth opens where the level bank's
+; own sequence ended -- behind the palettes' blobs and the project's code, or
+; at the run's head when none of them is on -- and ends at the bank's end.
 macro SMW_ManagedLevelAdvance()
 	if pc() < !SMW_ManagedLevelEnd
 		fillbyte $FF : fill !SMW_ManagedLevelEnd-pc()
@@ -215,13 +195,11 @@ macro SMW_ManagedLevelAdvance()
 	elseif !SMW_ManagedLevelRun == 2
 		!SMW_ManagedLevelNext #= !Loc_SMW_ManagedLevelRun2_Start
 		!SMW_ManagedLevelEnd #= !Loc_SMW_ManagedLevelRun2_PackedEnd
-	elseif !SMW_ManagedLevelRun == 3 && !Define_SMW_LevelBankExists == !TRUE
+	elseif !SMW_ManagedLevelRun == 3
 		!SMW_ManagedLevelNext #= !SMW_LevelBank_StreamsAt
 		!SMW_ManagedLevelEnd #= !Loc_SMW_LevelBank_RunEnd
-	elseif !Define_SMW_LevelBankExists == !TRUE
-		error "The level banks are full: the level streams no longer fit banks $06 and $07 and the level bank end to end. Take bytes out of a level."
 	else
-		error "The level banks are full: the level streams no longer fit banks $06 and $07 end to end. Take bytes out of a level, or assemble with --rom-size 1mb or larger to give them an expansion bank to overflow into."
+		error "The level banks are full: the level streams no longer fit banks $06 and $07 and the level bank end to end. Take bytes out of a level."
 	endif
 	org !SMW_ManagedLevelNext
 endmacro
@@ -254,7 +232,7 @@ macro SMW_ManagedLevelFit(Size)
 		%SMW_ManagedLevelAdvance()
 		%SMW_ManagedLevelNeedsMove(<Size>)
 	endif
-	assert !SMW_ManagedLevelMove == !FALSE, "The level banks are full: a level stream fits no run of banks $06 and $07, or of the level bank where the cartridge has one. Take bytes out of a level."
+	assert !SMW_ManagedLevelMove == !FALSE, "The level banks are full: a level stream fits no run of banks $06 and $07 or the level bank. Take bytes out of a level."
 endmacro
 
 ; The first run's head: the Chocolate Island 2 hook and its bank table.

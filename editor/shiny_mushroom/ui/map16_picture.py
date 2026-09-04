@@ -61,7 +61,7 @@ def _run_rects() -> tuple[QRect, ...]:
 TILESET_RUN_RECTS: tuple[QRect, ...] = _run_rects()
 
 
-def _hatch_unused(painter: QPainter, rect: QRect) -> None:
+def hatch_unused(painter: QPainter, rect: QRect) -> None:
     painter.fillRect(rect, _UNUSED_FILL)
     painter.fillRect(rect, QBrush(_UNUSED_LINES, Qt.BrushStyle.BDiagPattern))
 
@@ -92,7 +92,7 @@ class Map16Picture:
         self._image = sheet_image(viewed)
         painter = QPainter(self._image)
         for tile in unused:
-            _hatch_unused(painter, _block_rect(tile))
+            hatch_unused(painter, _block_rect(tile))
         painter.end()
         return self._image
 
@@ -109,7 +109,7 @@ class Map16Picture:
             blit_block(self._image, viewed, tile)
             if tile in unused:
                 painter = QPainter(self._image)
-                _hatch_unused(painter, _block_rect(tile))
+                hatch_unused(painter, _block_rect(tile))
                 painter.end()
         return self._image
 

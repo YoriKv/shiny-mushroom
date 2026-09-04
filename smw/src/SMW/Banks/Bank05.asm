@@ -1452,10 +1452,17 @@ L2VertScrollSettings:			; Info: Layer 2 vertical scroll setting...
 	db $02				; Variable
 	db $01				; Constant
 #LM300Hijack_CustomL2VerticalScroll:	; LM: (3.00+)
+if !Define_SMW_LunarMagicLevels == !TRUE
+	db $04				; Medium 2, 1:4 (Config/LunarMagicLevels.asm)
+	db $05				; Medium 3, 1:8
+	db $06				; Medium 4, 1:16
+	db $07				; Slow 2, 1:64
+else
 	db $00				; None/Variable 2
 	db $00				; None/Variable 3
 	db $00				; None/Variable 4
 	db $00				; None/Slow 2
+endif
 	db $00				; None
 	db $00				; None
 	db $00				; None
@@ -1476,10 +1483,17 @@ L2HorzScrollSettings:
 	db $01				; Constant
 	db $00				; None
 #LM300Hijack_CustomL2HorizontalScroll:	; LM: (3.00+)
+if !Define_SMW_LunarMagicLevels == !TRUE
+	db $02				; Variable, the four pairs' horizontal half (Config/LunarMagicLevels.asm)
+	db $02				; Variable
+	db $02				; Variable
+	db $02				; Variable
+else
 	db $00				; None/Variable
 	db $00				; None/Variable
 	db $00				; None/Variable
 	db $00				; None/Variable
+endif
 	db $00				; None
 	db $00				; None
 	db $00				; None
@@ -1944,8 +1958,13 @@ CODE_05DA12:
 	LDA.b #$01
 	STA.w !RAM_SMW_Flag_Layer1VerticalScrollLevelSetting
 CODE_05DA17:
+if !Define_SMW_LunarMagicLevels == !TRUE
+	JSL.l SMW_LunarMagicLevels_ScrollSettings	;\ A level with settings of its own writes them over
+	NOP						;/ the pair (Config/LunarMagicLevels.asm)
+else
 	SEP.b #$30			; AXY->8
 	LDA.w !RAM_SMW_Overworld_LevelNumberLo				;\ Optimization: Junk code.
+endif
 	CMP.b #$52							;| All this does is force the special world levels to have no-yoshi intros, except all of them disable the intros anyway in the header settings. 
 	BCC.b CODE_05DA24						;|
 	LDX.b #$03							;|
@@ -3743,8 +3762,13 @@ Layer1:
 	LDA.b !RAM_SMW_Misc_ScratchRAM00
 	ASL
 	TAY
+if !Define_SMW_CustomTiles == !TRUE
+	JSL.l SMW_CustomTiles_Definition		;> The definition of a tile on any page (Config/CustomTiles.asm)
+	NOP
+else
 	LDA.w !RAM_SMW_Pointer_Map16Tiles,y
 	STA.b !RAM_SMW_Misc_ScratchRAM0A
+endif
 	LDY.w #$0000
 	LDA.b [!RAM_SMW_Misc_ScratchRAM0A],y
 	STA.w !RAM_SMW_Blocks_Layer1TilesToUploadBuffer,x
@@ -3868,8 +3892,13 @@ Layer1:
 	LDA.b !RAM_SMW_Misc_ScratchRAM00
 	ASL
 	TAY
+if !Define_SMW_CustomTiles == !TRUE
+	JSL.l SMW_CustomTiles_Definition		;> The definition of a tile on any page (Config/CustomTiles.asm)
+	NOP
+else
 	LDA.w !RAM_SMW_Pointer_Map16Tiles,y
 	STA.b !RAM_SMW_Misc_ScratchRAM0A
+endif
 	LDY.w #$0000
 	LDA.b [!RAM_SMW_Misc_ScratchRAM0A],y
 	STA.w !RAM_SMW_Blocks_Layer1TilesToUploadBuffer,x
@@ -3995,8 +4024,13 @@ Layer2:
 	LDA.b !RAM_SMW_Misc_ScratchRAM00
 	ASL
 	TAY
+if !Define_SMW_CustomTiles == !TRUE
+	JSL.l SMW_CustomTiles_Definition		;> The definition of a tile on any page (Config/CustomTiles.asm)
+	NOP
+else
 	LDA.w !RAM_SMW_Pointer_Map16Tiles,y
 	STA.b !RAM_SMW_Misc_ScratchRAM0A
+endif
 	LDY.w #$0000
 	LDA.b [!RAM_SMW_Misc_ScratchRAM0A],y
 	ORA.b !RAM_SMW_Misc_ScratchRAM03
@@ -4131,8 +4165,13 @@ Layer2:
 	LDA.b !RAM_SMW_Misc_ScratchRAM00
 	ASL
 	TAY
+if !Define_SMW_CustomTiles == !TRUE
+	JSL.l SMW_CustomTiles_Definition		;> The definition of a tile on any page (Config/CustomTiles.asm)
+	NOP
+else
 	LDA.w !RAM_SMW_Pointer_Map16Tiles,y
 	STA.b !RAM_SMW_Misc_ScratchRAM0A
+endif
 	LDY.w #$0000
 	LDA.b [!RAM_SMW_Misc_ScratchRAM0A],y
 	ORA.b !RAM_SMW_Misc_ScratchRAM03
@@ -4698,8 +4737,13 @@ TideMaxYPos:
 	db $30,$A0
 
 Main:
+if !Define_SMW_Layer3Settings == !TRUE
+	JML.l SMW_Layer3Settings_Scroll	;\ A level that places Layer 3 itself does
+	NOP				;/ so here (Config/Layer3Settings.asm)
+else
 	LDA.w !RAM_SMW_Flag_Layer3TideLevel
 	BEQ.b CODE_05C414
+endif
 	JMP.w Layer3Tide
 
 CODE_05C414:
@@ -4930,8 +4974,14 @@ Ptrs05BC87:
 	dw SMW_Layer1SpecialScrolling0E_DoNothing_Main	; 0E - Layer 2 sink/rise
 
 Layer2:
+if !Define_SMW_LunarMagicLevels == !TRUE
+	JML.l SMW_LunarMagicLevels_AutoScroll	;\ A self-scrolling Layer 2 setting steps here when the
+	NOP					;/ layer is interactive (Config/LunarMagicLevels.asm)
+else
 	LDA.b #$04
 	STA.w !RAM_SMW_ScrollSpr_LayerIndex
+endif
+.Continue:
 	LDA.w !RAM_SMW_L2ScrollSpr_SpriteID
 	BEQ.b Return
 	LDY.w !RAM_SMW_Flag_SpritesLocked

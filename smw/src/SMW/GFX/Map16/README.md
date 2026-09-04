@@ -19,6 +19,7 @@ left, lower **left**, upper right, lower right, in `TTTTTTTT YXPCCCTT` format.
 | `SlopedPipeTiles.bin` | `1C4`-`1C7`, `1EC`-`1EF` | tilesets 0 and 7 only |
 | `VariableColorPipes.bin`, `YellowPipes.bin`, `PurplePipes.bin` | scroll-swapped pipe blocks | every tileset |
 | `Backgrounds.bin` | 512 background tiles | Layer 2 backgrounds |
+| `CustomTiles.map16` | pages `$02`-`$05` and their acts-like words | `Config/CustomTiles.asm`, under its define |
 
 **A tile number alone does not name a file.** `073`-`0FF`, `107`-`110` and
 `153`-`16D` are tileset-specific and everything else is shared, so the same
@@ -46,4 +47,14 @@ directory was split from, byte for byte, which `smw/tests/test_map16.py` pins.
 The container is 651,760 bytes against these files' 15,272: the rest is an
 acts-like table the vanilla engine has no concept of, ten redundant copies of
 the resolved tileset views, and 251 empty pages. All of it is reconstructed from
-constants, which is why it is not committed.
+constants, which is why the vanilla one is not committed.
+
+**`CustomTiles.map16` is a container, and it is committed.** It is the one
+file the custom tiles feature reads: pages `$02`-`$05` and their acts-like
+words are `incbin`'d out of it by offset, and a project overlays the whole file
+— which is what lets Lunar Magic's own Map16 editor open the same bytes. The
+tree's copy is the stock tables on pages `$00` and `$01`, the custom pages
+empty, and every custom acts-like word Lunar Magic's default;
+`smw_tools.custom_tiles.shipped_container` makes it and
+`smw/tests/test_custom_tiles.py` pins it, so a table edit is carried into the
+container by regenerating it. The stock pages in it are read by nothing.

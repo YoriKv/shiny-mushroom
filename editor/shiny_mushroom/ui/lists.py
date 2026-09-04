@@ -111,12 +111,10 @@ class TileGrid(RowScrollList):
         self.setUniformItemSizes(True)
         self.setSpacing(0)
         self._grab = RightGrab()
-        # The picture is the cell, so the selection is drawn as the panels'
-        # ring round it (`ui/ring.py`) rather than as the widget style's
-        # fill, which is taken away here.
-        colours = self.palette()
-        colours.setColor(QPalette.ColorRole.Highlight, Qt.GlobalColor.transparent)
-        self.setPalette(colours)
+        #: The style's own highlight, kept so the fill can come back: a page
+        #: laid out as rows is drawn by the stock delegate, which paints its
+        #: text in the highlighted-text colour and needs the fill under it.
+        self._highlight = self.palette().color(QPalette.ColorRole.Highlight)
         #: The region a right drag last grabbed, as the first and last item
         #: index it covered: ringed while it is in hand, so the panel shows
         #: all of what was taken rather than the one cell last clicked.
@@ -132,7 +130,19 @@ class TileGrid(RowScrollList):
         With ``grid`` off there is no cell size and the items size themselves,
         which is what a palette wants on a page that reads as rows of named
         things rather than as a grid of pictures.
+
+        A grid's picture is the whole cell, so its selection is the panels'
+        ring round it (:mod:`shiny_mushroom.ui.ring`) and the style's fill is
+        taken away; rows carry text and keep the fill, without which the
+        stock delegate's highlighted text is drawn on the plain background
+        and disappears.
         """
+        colours = self.palette()
+        colours.setColor(
+            QPalette.ColorRole.Highlight,
+            Qt.GlobalColor.transparent if grid else self._highlight,
+        )
+        self.setPalette(colours)
         self.setIconSize(QSize(size, size))
         self.setGridSize(QSize(size, size) if grid else QSize())
         self.verticalScrollBar().setSingleStep(size)

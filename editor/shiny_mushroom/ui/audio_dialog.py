@@ -59,7 +59,7 @@ MUSIC_TAB = "&Music"
 SFX_TAB = "Sound &Effects"
 ARAM_TAB = "&ARAM"
 MAPPING_TAB = "Ma&pping"
-SONGS_TAB = "&Songs"
+SONGS_TAB = "&AddmusicK"
 
 MUSIC_HINT = (
     "Every song a music bank can play, and the value written to $1DFB to ask "
@@ -90,8 +90,8 @@ SONGS_NOTE_NONE = (
 
 SONGS_NOTE_NO_TOOL = (
     "AddmusicK is not set, so nothing can be compiled. File > Settings is "
-    "where to point at your own copy. Songs already imported keep working "
-    "without it -- it is needed to add one, not to have one."
+    "where to point at your own copy. Importing a song needs it; playing one "
+    "already imported does not."
 )
 
 SONGS_NOTE_FEATURE_OFF = (
@@ -110,9 +110,20 @@ SONG_COLUMNS = (
     "Free ARAM",
 )
 
-#: Where an imported row keeps the music value it stands for, so a pick can
-#: say which song without re-parsing the cell's text.
+#: Where a row keeps what it stands for, so a pick can say which song or
+#: effect without re-parsing the cell's text. Every table that offers Preview
+#: puts its music value here, and the effect table adds the mailbox that asks
+#: for it.
 VALUE_ROLE = Qt.ItemDataRole.UserRole
+PORT_ROLE = Qt.ItemDataRole.UserRole + 1
+
+#: What both Preview buttons say they do. An audition is the cartridge's own
+#: ARAM with one value handed to the engine, so it needs no rebuild -- and it
+#: is the *built* cartridge, so an edit not yet built is not in it.
+PREVIEW_TIP = (
+    "Hear this now, in the external emulator named in File > Settings. "
+    "Plays what the cartridge was last built with."
+)
 
 _SONG_NOTES = {
     "Value": "What the game writes to the music mailbox to ask for this song.",
@@ -125,8 +136,7 @@ _SONG_NOTES = {
     "Echo": "What its echo buffer takes of the sound chip's memory.",
     "Free ARAM": "What the sound chip has left with this song resident -- the "
     "budget a song plays inside alone, and the number that runs out first. "
-    "From the compile's own report; a song imported before reports were kept "
-    "shows nothing until the next Import.",
+    "A dash until the song is compiled again.",
 }
 
 MAPPING_HINT = (
@@ -164,8 +174,8 @@ _MUSIC_NOTES = {
     "Channels": "Which of the eight DSP voices any of its phrases uses.",
     "Plays": (
         "Which song the value resolves to, through the bank's pointer table. "
-        "The name beside it is the *value's*, from the define that states it -- "
-        "repoint a value and the two stop agreeing, which is the edit showing."
+        "The name beside it is the value's own, so a repointed value and its "
+        "name stop agreeing."
     ),
     "Reaches": (
         "How many bytes of the bank the song touches. Songs share phrases and "
@@ -346,6 +356,13 @@ class AudioDialog(QDialog):
     import_asked = Signal()
     #: One imported song should be heard: the music value it answers to.
     preview_asked = Signal(int)
+    #: One of the cartridge's own songs should be heard: which bank is resident,
+    #: and the music value that asks for it. The bank is part of the ask because
+    #: a value means a different song under each of the three.
+    music_preview_asked = Signal(str, int)
+    #: One sound effect should be heard: the mailbox that asks for it, and the
+    #: value written there.
+    effect_preview_asked = Signal(int, int)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -427,17 +444,36 @@ class AudioDialog(QDialog):
         cells = PickedCells(self._songs, self._song_choices, self._song_current)
         cells.committed.connect(self._song_picked)
         self._songs.setItemDelegate(cells)
+        self._songs.itemSelectionChanged.connect(self._song_selected)
+        self._songs.itemDoubleClicked.connect(self._song_double_clicked)
         self._bank_note = QLabel("", self)
         self._bank_note.setWordWrap(True)
         style_note(self._bank_note)
-        return self._page(MUSIC_HINT, row, self._songs, self._bank_note)
+        self._song_preview = self._preview_button(self._music_preview_picked)
+        return self._page(
+            MUSIC_HINT,
+            row,
+            self._songs,
+            self._bank_note,
+            self._buttons(self._song_preview),
+        )
 
     def _build_sfx(self) -> QWidget:
         self._effects = self._table(SFX_COLUMNS, _SFX_NOTES)
+        self._effects.itemSelectionChanged.connect(self._effect_selected)
+        self._effects.itemDoubleClicked.connect(
+            lambda _item: self._effect_preview_picked()
+        )
         self._sfx_note = QLabel("", self)
         self._sfx_note.setWordWrap(True)
         style_note(self._sfx_note)
-        return self._page(SFX_HINT, self._effects, self._sfx_note)
+        self._effect_preview = self._preview_button(self._effect_preview_picked)
+        return self._page(
+            SFX_HINT,
+            self._effects,
+            self._sfx_note,
+            self._buttons(self._effect_preview),
+        )
 
     def _build_aram(self) -> QWidget:
         page = QWidget(self)
@@ -478,9 +514,8 @@ class AudioDialog(QDialog):
         self._preview = QPushButton("&Preview", self)
         self._preview.setToolTip(
             wrap_tip(
-                "Hear the selected song now: its compile wrote a playable "
-                ".spc, which opens in the external emulator named in File > "
-                "Settings. No rebuild is needed."
+                "Hear the selected song now, in the external emulator named "
+                "in File > Settings. No rebuild is needed."
             )
         )
         self._preview.setEnabled(False)
@@ -521,6 +556,11 @@ class AudioDialog(QDialog):
 
     # -- filling ---------------------------------------------------------------
 
+    @property
+    def reading(self) -> AudioMap | None:
+        """The reading on show, or ``None`` before one has been given."""
+        return self._map
+
     def show_audio(self, read: AudioMap) -> None:
         """Show one reading of the project's cartridge."""
         self._map = read
@@ -546,6 +586,7 @@ class AudioDialog(QDialog):
         bank = self._map.bank(blob) if blob else None
         if bank is None:
             self._songs.setRowCount(0)
+            self._song_selected()
             self._bank_note.setText("")
             return
         self._songs.setRowCount(len(bank.songs))
@@ -565,7 +606,9 @@ class AudioDialog(QDialog):
                     f"{song.size:,}",
                 ),
             )
+            self._songs.item(row, 0).setData(VALUE_ROLE, song.value)
         self._songs.resizeColumnsToContents()
+        self._song_selected()
         self._bank_note.setText(_bank_note(bank))
 
     def _fill_sfx(self, read: AudioMap) -> None:
@@ -583,7 +626,11 @@ class AudioDialog(QDialog):
                     "same bytes as an earlier value" if effect.cloned else "",
                 ),
             )
+            cell = self._effects.item(row, 0)
+            cell.setData(VALUE_ROLE, effect.value)
+            cell.setData(PORT_ROLE, effect.port)
         self._effects.resizeColumnsToContents()
+        self._effect_selected()
         distinct = len({(one.port, one.pointer) for one in read.sfx})
         self._sfx_note.setText(
             f"{len(read.sfx)} entries over {distinct} distinct streams -- the "
@@ -758,6 +805,65 @@ class AudioDialog(QDialog):
         value = self._import_value()
         if value is not None:
             self.preview_asked.emit(value)
+
+    def _preview_button(self, picked: object) -> QPushButton:
+        """A Preview button in the one shape all three tabs use.
+
+        Disabled until a row is picked, because what it would play is the
+        selection and there is nothing honest to do without one.
+        """
+        button = QPushButton("&Preview", self)
+        button.setToolTip(wrap_tip(PREVIEW_TIP))
+        button.setEnabled(False)
+        button.clicked.connect(picked)
+        return button
+
+    def _buttons(self, *held: QWidget) -> QWidget:
+        """A row of buttons, left-aligned under whatever it follows."""
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        for one in held:
+            row.addWidget(one)
+        row.addStretch(1)
+        holder = QWidget(self)
+        holder.setLayout(row)
+        return holder
+
+    def _song_selected(self) -> None:
+        self._song_preview.setEnabled(self._picked(self._songs) is not None)
+
+    def _effect_selected(self) -> None:
+        self._effect_preview.setEnabled(self._picked(self._effects) is not None)
+
+    def _song_double_clicked(self, item: QTableWidgetItem) -> None:
+        """A double-click plays the row -- except in the column that edits.
+
+        The song table's *Plays* cell opens a picker on a double-click, so
+        answering the same gesture with a preview would fight the edit for it.
+        """
+        if item.column() != PLAYS_COLUMN:
+            self._music_preview_picked()
+
+    def _picked(self, table: QTableWidget) -> int | None:
+        """The music value the selected row of ``table`` stands for."""
+        row = table.currentRow()
+        item = table.item(row, 0) if row >= 0 else None
+        held = item.data(VALUE_ROLE) if item is not None else None
+        return int(held) if held is not None else None
+
+    def _music_preview_picked(self) -> None:
+        value = self._picked(self._songs)
+        blob = self._bank_pick.currentData()
+        if value is not None and blob:
+            self.music_preview_asked.emit(str(blob), value)
+
+    def _effect_preview_picked(self) -> None:
+        value = self._picked(self._effects)
+        row = self._effects.currentRow()
+        item = self._effects.item(row, 0) if row >= 0 else None
+        port = item.data(PORT_ROLE) if item is not None else None
+        if value is not None and port is not None:
+            self.effect_preview_asked.emit(int(port), value)
 
     def _cells(self, table: QTableWidget, row: int, values: Sequence[str]) -> None:
         for column, value in enumerate(values):

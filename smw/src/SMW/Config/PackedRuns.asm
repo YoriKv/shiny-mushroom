@@ -41,6 +41,15 @@ includeonce
 ; rewords, so this is the shipped length and nothing asserts it.
 !Define_SMW_Block_RelocatedOverworldTables	#= $0B02
 
+; The four custom pages, their acts-like words, the undefined tile and
+; the stubs (Config/CustomTiles.asm). Fixed, and one size on every
+; cartridge; asserted at the placement.
+!Define_SMW_Block_CustomTiles			#= $29EA
+
+; The two bypass objects and their return stub (Config/HeaderBypasses.asm).
+; Fixed, and one size on every cartridge; asserted at the placement.
+!Define_SMW_Block_HeaderBypasses		#= $0069
+
 ; The three stubs, the line positions, the name offset tables and both sets
 ; of text (Config/StringTableRelocation.asm). The shipped length again, and
 ; the one figure here a release decides -- the arcade wording measures $0EE3
@@ -68,13 +77,23 @@ includeonce
 
 ; The $200 rows of eight bytes, the $200 animated files and the read stubs
 ; (Config/LevelGraphics.asm). Fixed, and one size on every cartridge.
-!Define_SMW_Block_LevelGraphics			#= $12D3
+!Define_SMW_Block_LevelGraphics			#= $12E0
 
 ; Four $200-row tables of two bytes -- one per entry point -- and the
 ; dispatch and entry stubs behind them (Config/LevelCode.asm), from this
 ; occupant's head to the first level's own routine. Fixed, and one size on
 ; every cartridge.
 !Define_SMW_Block_LevelCode			#= $1099
+
+; The four $200-row tables and the stubs (Config/LunarMagicLevels.asm), from
+; this occupant's head to the first byte the palettes may have. Fixed, and
+; one size on every cartridge.
+!Define_SMW_Block_LunarMagicLevels		#= $0B8F
+
+; The four $200-row tables and the stubs (Config/Layer3Settings.asm), from
+; this occupant's head to the first byte the palettes may have. Fixed, and
+; one size on every cartridge.
+!Define_SMW_Block_Layer3Settings		#= $09BB
 
 ; The $200 long pointers and the stubs (Config/LevelCustomPalettes.asm), from
 ; this occupant's head to the first blob. Fixed, and one size on every

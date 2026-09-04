@@ -101,7 +101,7 @@ class WorldBar(QToolBar):
         # instead of delivering.
         self._auto = QCheckBox("Auto-select map")
         self._auto.setToolTip(
-            "Clicking a tile, sprite or stamp switches to the map it is on"
+            "Clicking a tile, sprite or stamp switches to the map it is on."
         )
         self._auto.setChecked(True)
         self._auto.clicked.connect(

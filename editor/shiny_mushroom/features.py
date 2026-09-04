@@ -47,11 +47,15 @@ from smw_tools import asm_codec, asm_regions, asm_room, graphics_memory, packed
 from smw_tools.bases import RomBase
 from smw_tools.bases import base as rom_base
 from smw_tools.features import (
+    CUSTOM_MUSIC,
     CUSTOM_SPRITES,
+    CUSTOM_TILES,
     FEATURES,
+    LAYER3_SETTINGS,
     LEVEL_BANK_HEAD,
     LEVEL_CUSTOM_PALETTES,
     LEVEL_GRAPHICS,
+    LUNAR_MAGIC_LEVELS,
     MANAGED_GRAPHICS_MEMORY,
     MANAGED_LEVEL_MEMORY,
     RESERVED_RUN,
@@ -62,7 +66,7 @@ from smw_tools.features import (
     build_defines,
     feature,
 )
-from smw_tools.levels import has_level_bank, managed_regions
+from smw_tools.levels import managed_regions
 from smw_tools.rom_sizes import ROM_SIZES
 from smw_tools.symbols import SymbolTable
 
@@ -621,6 +625,27 @@ class _LevelPalettesLifecycle(FeatureLifecycle):
         return held
 
 
+class _CustomTilesLifecycle(FeatureLifecycle):
+    """Custom tiles: the project's container is what the feature builds in,
+    so the switch stays down while the project has saved one. The block is
+    nobody's asm region -- the container is incbin'd whole -- so the
+    default's fit check reads nothing, and the question is the file's."""
+
+    def disable_limits(self, project: Project) -> tuple[Limit, ...]:
+        held = super().disable_limits(project)
+        if held:
+            return held
+        if project.custom_tiles_edited:
+            held += (
+                Limit(
+                    "The project has custom tiles of its own, which this "
+                    "feature builds in.",
+                    "Revert the custom tiles in the Tilemap editor and save first.",
+                ),
+            )
+        return held
+
+
 class _LevelGraphicsLifecycle(FeatureLifecycle):
     """Per-level graphics: the saved rows are what the feature builds in, so
     the switch stays down while any level carries one -- the palettes'
@@ -653,6 +678,76 @@ class _LevelGraphicsLifecycle(FeatureLifecycle):
         return held
 
 
+class _LunarMagicLevelsLifecycle(FeatureLifecycle):
+    """Lunar Magic level compatibility: the saved settings are what the
+    feature builds in, so the switch stays down while any level carries a
+    row of its own -- the graphics' rule, for the graphics' reason: the four
+    regions are the feature's own, withheld from a cartridge without it, so
+    the default fit check reads nothing of them."""
+
+    def disable_limits(self, project: Project) -> tuple[Limit, ...]:
+        held = super().disable_limits(project)
+        if held:
+            return held
+        from shiny_mushroom.lunar_magic import DEFAULT, REGION_IDS
+
+        try:
+            tables = [project.asm_rows(region_id)[0] for region_id in REGION_IDS]
+        except (asm_codec.AsmRegionError, ProjectError, OSError):
+            tables = []
+        levels = [
+            level
+            for level in range(min((len(rows) for rows in tables), default=0))
+            if bytes(rows[level] for rows in tables) != DEFAULT
+        ]
+        if levels:
+            listed = ", ".join(hexnum(level, 3) for level in sorted(levels))
+            held += (
+                Limit(
+                    f"{len(levels)} level(s) carry Lunar Magic settings this "
+                    f"feature builds in: {listed}.",
+                    "Set each level's Lunar Magic settings back to the "
+                    "defaults -- or revert the levels/properties/lunar-magic-* "
+                    "fragments from Source Files -- and save first.",
+                ),
+            )
+        return held
+
+
+class _Layer3SettingsLifecycle(FeatureLifecycle):
+    """Per-level Layer 3: the saved settings are what the feature builds in,
+    so the switch stays down while any level carries a row of its own -- the
+    Lunar Magic tables' rule, for the same reason."""
+
+    def disable_limits(self, project: Project) -> tuple[Limit, ...]:
+        held = super().disable_limits(project)
+        if held:
+            return held
+        from shiny_mushroom.layer3 import DEFAULT, REGION_IDS
+
+        try:
+            tables = [project.asm_rows(region_id)[0] for region_id in REGION_IDS]
+        except (asm_codec.AsmRegionError, ProjectError, OSError):
+            tables = []
+        levels = [
+            level
+            for level in range(min((len(rows) for rows in tables), default=0))
+            if bytes(rows[level] for rows in tables) != DEFAULT
+        ]
+        if levels:
+            listed = ", ".join(hexnum(level, 3) for level in sorted(levels))
+            held += (
+                Limit(
+                    f"{len(levels)} level(s) place Layer 3 themselves, which "
+                    f"this feature builds in: {listed}.",
+                    "Set each level's Layer 3 settings back to the defaults "
+                    "-- or revert the levels/properties/layer3-* fragments "
+                    "from Source Files -- and save first.",
+                ),
+            )
+        return held
+
+
 class _ManagedLevelMemoryLifecycle(FeatureLifecycle):
     """Growable levels: the level banks are one budget with the feature on
     and seven with it off, and the saved levels have to fit whichever the
@@ -664,14 +759,9 @@ class _ManagedLevelMemoryLifecycle(FeatureLifecycle):
     And the level files the project adds are what the feature packs, so the
     switch stays down while there are any.
 
-    **The cartridge is not a requirement here**, which is what separates this
-    from the level bank's other two occupants: the packing uses that bank
-    where the project builds one and packs into what banks ``$06`` and
-    ``$07`` leave where it does not, so the switch moves at 512 KB and the
-    size stays the project's own decision (:meth:`Project.rom_size_id`,
-    ``Level > ...`` and the ROM size menu). What the size *does* decide is
-    how much room the switch buys, which is why both halves price against
-    the project's own runs rather than a fixed set.
+    The cartridge is the default's business: the feature reserves the level
+    bank, so the switch grows a 512 KB cartridge to 1 MB the way the bank's
+    other occupants do (:meth:`FeatureLifecycle.on_enable`).
     """
 
     def enable_limits(self, project: Project) -> tuple[Limit, ...]:
@@ -686,9 +776,8 @@ class _ManagedLevelMemoryLifecycle(FeatureLifecycle):
             held += (
                 Limit(
                     f"The saved levels need {packing.over:,} bytes more than "
-                    f"{_runs_named(project)} hold end to end.",
-                    "Take that much back out of the levels first, or build a "
-                    "larger cartridge for them to overflow into.",
+                    f"banks $06 and $07 and the level bank hold end to end.",
+                    "Take that much back out of the levels first.",
                 ),
             )
         return held
@@ -812,7 +901,17 @@ class _CustomSpritesLifecycle(FeatureLifecycle):
     the switch stays down while the project carries any -- the per-level
     graphics' rule, for the same reason: the files are no asm region the
     default fit check could read, and a build without the feature would
-    assemble none of them into anything a level could still spawn."""
+    assemble none of them into anything a level could still spawn.
+
+    On the way on the sprite folders are made, empty, so the place a sprite
+    goes is there to find before anybody has written one."""
+
+    def on_enable(self, project: Project) -> Switched:
+        from shiny_mushroom import project_sprites
+
+        done = super().on_enable(project)
+        project_sprites.make_folders(done.project)
+        return done
 
     def disable_limits(self, project: Project) -> tuple[Limit, ...]:
         held = super().disable_limits(project)
@@ -841,7 +940,16 @@ class _UberasmSupportLifecycle(FeatureLifecycle):
     the switch stays down while the project carries any -- the custom
     sprites' rule, for the same reason: the files are no asm region the
     default fit check could read, and a build without the feature would
-    assemble none of them into anything that still runs."""
+    assemble none of them into anything that still runs.
+
+    On the way on the code folders are made, empty, the sprites' rule."""
+
+    def on_enable(self, project: Project) -> Switched:
+        from shiny_mushroom import project_code
+
+        done = super().on_enable(project)
+        project_code.make_folders(done.project)
+        return done
 
     def disable_limits(self, project: Project) -> tuple[Limit, ...]:
         held = super().disable_limits(project)
@@ -864,10 +972,26 @@ class _UberasmSupportLifecycle(FeatureLifecycle):
         return held
 
 
+class _CustomMusicLifecycle(FeatureLifecycle):
+    """Custom music: nothing of its own to refuse -- the songs are data the
+    overlay keeps whether the feature is on or not -- but on the way on the
+    ``music/`` folder is made, empty, so the place a package goes is there
+    to find."""
+
+    def on_enable(self, project: Project) -> Switched:
+        done = super().on_enable(project)
+        done.project.make_music_folder()
+        return done
+
+
 LIFECYCLES: dict[str, FeatureLifecycle] = {
+    CUSTOM_MUSIC.id: _CustomMusicLifecycle(CUSTOM_MUSIC.id),
     CUSTOM_SPRITES.id: _CustomSpritesLifecycle(CUSTOM_SPRITES.id),
+    CUSTOM_TILES.id: _CustomTilesLifecycle(CUSTOM_TILES.id),
     LEVEL_CUSTOM_PALETTES.id: _LevelPalettesLifecycle(LEVEL_CUSTOM_PALETTES.id),
     LEVEL_GRAPHICS.id: _LevelGraphicsLifecycle(LEVEL_GRAPHICS.id),
+    LUNAR_MAGIC_LEVELS.id: _LunarMagicLevelsLifecycle(LUNAR_MAGIC_LEVELS.id),
+    LAYER3_SETTINGS.id: _Layer3SettingsLifecycle(LAYER3_SETTINGS.id),
     MANAGED_LEVEL_MEMORY.id: _ManagedLevelMemoryLifecycle(MANAGED_LEVEL_MEMORY.id),
     MANAGED_GRAPHICS_MEMORY.id: _ManagedGraphicsMemoryLifecycle(
         MANAGED_GRAPHICS_MEMORY.id
@@ -977,16 +1101,6 @@ def disable(project: Project, feature_id: str) -> Switched:
 
 
 # -- small shared readings -----------------------------------------------------
-
-
-def _runs_named(project: Project) -> str:
-    """What the packer had to fit this project's levels into, in words: the
-    game's own level banks, and the expansion bank behind them where the
-    cartridge has one."""
-    stock = "banks $06 and $07"
-    if not has_level_bank(project.next_base):
-        return stock
-    return f"{stock} and the level bank"
 
 
 def _fits(rom_size_id: str, wanted: str) -> bool:

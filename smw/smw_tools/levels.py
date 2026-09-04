@@ -68,18 +68,12 @@ the macro**, against the gap to whatever the map places next. See
 
 **Unless the level banks are managed**, which is the ``managed-level-memory``
 feature (``Config/ManagedLevelMemory.asm``): then the seven level macros of
-banks ``$06`` and ``$07`` emit their streams end to end into runs --
-:data:`PACKING_RUNS`, and the level bank behind them on a cartridge that has
-one (:func:`runs_for`) -- a stream that would run past the end of one moving
-to the next, and what bounds an edit is the whole of them. :func:`pack` is
-that packer's arithmetic, run over the same insertions in the same order, so
-a save can be priced exactly where a build would refuse it.
-
-**How many runs there are is the cartridge's answer, not the feature's.** The
-expansion bank is room the packing overflows into where the cartridge is
-1 MB or larger and does without where it is not (:func:`has_level_bank`), so
-everything here takes the base and reads the size off it rather than being
-handed one and not the other.
+banks ``$06`` and ``$07`` emit their streams end to end into four runs --
+:data:`PACKING_RUNS`, and the level bank behind them (:func:`runs_for`) -- a
+stream that would run past the end of one moving to the next, and what bounds
+an edit is the whole of them. :func:`pack` is that packer's arithmetic, run
+over the same insertions in the same order, so a save can be priced exactly
+where a build would refuse it.
 """
 
 # Nine of the 437 insertions name a target other than ``SMW_U`` and so resolve to
@@ -694,9 +688,9 @@ LEVEL_BANK_END = 0xFFFF
 #: :data:`PACKING_RUNS` says.
 #:
 #: In one of the game's own banks and not in the level bank, because the
-#: level bank is room this feature may not have: the sprite-memory rewrite
-#: and the editor both name the table by address, and an address that exists
-#: only on a 1 MB cartridge is no address at all on a 512 KB one.
+#: sprite-memory rewrite and the editor both name the table by address, and
+#: the level bank moves with the base's reservation where bank ``$07`` is
+#: the same everywhere.
 #: The stub's own size is read from the file that emits it and asserts it
 #: (:mod:`smw_tools.asm_defines`): where the last run ends follows from it.
 TAIL_STUB_BYTES = define("Define_SMW_ManagedLevelStubBytes")
@@ -704,10 +698,8 @@ TAIL_BYTES = LEVEL_COUNT + TAIL_STUB_BYTES
 SPRITE_BANKS_AT = MANAGED_RUNS[-1].end - LEVEL_COUNT
 
 #: The runs the packing actually fills in the game's own banks:
-#: :data:`MANAGED_RUNS` with the tail taken off the last of them. One triple
-#: rather than the cartridge's, since the tail is at the top of bank ``$07``
-#: whatever the cartridge is; what the cartridge decides is only whether
-#: there is a fourth run behind these -- :func:`runs_for`.
+#: :data:`MANAGED_RUNS` with the tail taken off the last of them. The level
+#: bank is the fourth run behind these -- :func:`runs_for`.
 PACKING_RUNS = (
     *MANAGED_RUNS[:-1],
     LevelRun(MANAGED_RUNS[-1].start, MANAGED_RUNS[-1].end - TAIL_BYTES),
@@ -760,20 +752,6 @@ def level_bank(base: RomBase) -> int:
     return base.reservation_bank + LEVEL_BANK_OFFSET
 
 
-def has_level_bank(base: RomBase) -> bool:
-    """Whether ``base``'s cartridge is long enough to hold :func:`level_bank`.
-
-    The same arithmetic ``%SMW_ExpansionBankExists`` makes with
-    ``!MaxROMSize``, and it is a question at all because the packing does
-    without that bank rather than requiring it: the feature is built at any
-    size and the bank is a fourth run where the cartridge has one. Which
-    size the cartridge is comes off the base
-    (:attr:`~smw_tools.bases.RomBase.size_id`), so nobody has to be handed
-    the two separately.
-    """
-    return base.size_bytes >= (level_bank(base) + 1) * 0x8000
-
-
 #: The two labels ``%SMW_PlaceLevelBank`` drops around the project's own code
 #: in the level bank -- the tool's dialect and library, the levels', the game
 #: modes' and the global routines -- so a build's symbol file says how long
@@ -803,8 +781,8 @@ def level_bank_run(base: RomBase, ahead: int = 0) -> LevelRun:
     From the run's head to whatever ends it -- the bank's end label, or the
     managed level banks' fixed tail where ``base`` packs its levels -- less
     the level number stash the bank lays at that head for whichever of its
-    three readers it has, less what the level graphics and the per-level code
-    take at the front where ``base`` carries them
+    readers it has, less what the level graphics, the per-level code and the
+    Lunar Magic tables take at the front where ``base`` carries them
     (their block is one fixed size, :data:`level_graphics.BLOCK_BYTES`), and
     less ``ahead`` bytes behind that: what the custom level palettes put
     there -- their pointer table, their stubs and every blob a dressed level
@@ -816,10 +794,20 @@ def level_bank_run(base: RomBase, ahead: int = 0) -> LevelRun:
     """
     from . import level_graphics
     from .asm_defines import block
-    from .features import LEVEL_CUSTOM_PALETTES, LEVEL_GRAPHICS, UBERASM_SUPPORT
+    from .features import (
+        LEVEL_CUSTOM_PALETTES,
+        LEVEL_GRAPHICS,
+        LUNAR_MAGIC_LEVELS,
+        UBERASM_SUPPORT,
+    )
 
     held = set(base.features)
-    readers = {LEVEL_GRAPHICS.id, UBERASM_SUPPORT.id, LEVEL_CUSTOM_PALETTES.id}
+    readers = {
+        LEVEL_GRAPHICS.id,
+        UBERASM_SUPPORT.id,
+        LUNAR_MAGIC_LEVELS.id,
+        LEVEL_CUSTOM_PALETTES.id,
+    }
     base_address = level_bank(base) << 16
     end = base_address | LEVEL_BANK_END
     start = base_address | LEVEL_BANK_RUN
@@ -829,20 +817,15 @@ def level_bank_run(base: RomBase, ahead: int = 0) -> LevelRun:
         start += level_graphics.BLOCK_BYTES
     if UBERASM_SUPPORT.id in held:
         start += UBERASM_SUPPORT.block_bytes
+    if LUNAR_MAGIC_LEVELS.id in held:
+        start += LUNAR_MAGIC_LEVELS.block_bytes
     return LevelRun(start=start + ahead, end=end)
 
 
 def runs_for(base: RomBase, ahead: int = 0) -> tuple[LevelRun, ...]:
-    """The runs ``base``'s packer fills, in order: the stock ones
-    (:data:`PACKING_RUNS`), and the level bank behind them where the cartridge
-    has one -- :func:`level_bank_run`, with ``ahead`` bytes of palettes in
-    front.
-
-    Three runs or four, and which is the cartridge's answer rather than the
-    feature's: the bank is room the packing uses where it is there.
-    """
-    if not has_level_bank(base):
-        return PACKING_RUNS
+    """The runs ``base``'s packer fills, in order: the three stock ones
+    (:data:`PACKING_RUNS`), and the level bank behind them --
+    :func:`level_bank_run`, with ``ahead`` bytes of palettes in front."""
     return (*PACKING_RUNS, level_bank_run(base, ahead))
 
 

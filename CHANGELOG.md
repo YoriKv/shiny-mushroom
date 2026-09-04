@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.2.1 - 2026-09-04
+
+- More MWL file support
+
 ## v0.2.0 - 2026-09-02
 
 - Graphics editing pipeline for editing tiles in the visual context of the level

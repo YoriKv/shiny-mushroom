@@ -18,6 +18,8 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QDialog, QFileDialog, QInputDialog
 
+from shiny_mushroom import level_palettes
+from shiny_mushroom.build import BuildError, asm_runs
 from shiny_mushroom.hexnum import hexnum
 from shiny_mushroom.layer2_table import Layer2Entry, Layer2TableError
 from shiny_mushroom.level_data import LevelData, level_label_rows, level_number_rows
@@ -28,11 +30,20 @@ from shiny_mushroom.level_files import (
 )
 from shiny_mushroom.level_pointers import LevelPointersError, StreamTarget
 from shiny_mushroom.memory_map import LevelBudgets, level_budgets
-from shiny_mushroom.mwl import blank_container
+from shiny_mushroom.mwl import Container, MwlError, blank_container
+from shiny_mushroom.palettes import PaletteError
 from shiny_mushroom.project import Project, ProjectError
-from shiny_mushroom.ui.add_level_file_dialog import BLANK, COPY, AddLevelFileDialog
+from shiny_mushroom.ui.add_level_file_dialog import (
+    BLANK,
+    COPY,
+    IMPORT_TITLE,
+    AddLevelFileDialog,
+    ImportLevelDialog,
+    usable_name,
+)
 from shiny_mushroom.ui.level_data_dialog import LevelDataDialog
 from shiny_mushroom.ui.remap_level_dialog import RemapLevelDialog
+from smw_tools.asm_codec import AsmRegionError
 from smw_tools.features import MANAGED_LEVEL_MEMORY
 from smw_tools.levels import LEVELS_DIR, undecorated
 from smw_tools.paths import GAME_DIR
@@ -62,6 +73,7 @@ class LevelTree:
             self._level_data.layer2_edited.connect(self.edit_level_layer2)
             self._level_data.remap_requested.connect(self.remap_level)
             self._level_data.add_requested.connect(self.add_level_file)
+            self._level_data.import_requested.connect(self.import_level_files)
             self._level_data.rename_requested.connect(self.rename_level_file)
             self._level_data.recorded_level_edited.connect(self.record_level_number)
             self._level_data.delete_requested.connect(self.delete_level_files)
@@ -377,6 +389,183 @@ class LevelTree:
             f"{written.stem}.mwl added. Remap a level number at it to open it.",
             8000,
         )
+
+    def import_level_files(self) -> None:
+        """Bring ``.mwl`` files in from outside, whole: each is added, the
+        level number it records is pointed at it, and the palette beside it
+        becomes that level's own.
+
+        What a Lunar Magic export is: ``105.mwl`` recording level ``$105``,
+        and ``105.pal`` beside it where the palette was exported too. A
+        container that carries a palette of its own -- the bit Lunar Magic
+        sets when the level uses it -- dresses the level in that where no
+        ``.pal`` sits beside the file. The dialog per file lets the name and
+        the number be changed and the pointing declined.
+        """
+        project = self._project
+        if project is None:
+            return
+        chosen, _filter = QFileDialog.getOpenFileNames(
+            self, IMPORT_TITLE, "", "Lunar Magic levels (*.mwl)"
+        )
+        for path in map(Path, chosen):
+            if not self._import_level_file(path):
+                return
+
+    def _import_level_file(self, path: Path) -> bool:
+        """One file of :meth:`import_level_files`; ``False`` to stop the
+        batch, on a cancel or a refusal."""
+        project = self._project
+        if project is None:
+            return False
+        try:
+            data = path.read_bytes()
+            container = Container.read(data)
+        except (OSError, MwlError) as error:
+            self._alert(f"{path.name} could not be read.", detail=str(error))
+            return False
+        shipped = {held.stem for held in (project.base / LEVELS_DIR).glob("*.mwl")}
+        offered = tuple(
+            sorted(shipped | set(project.added_level_files()), key=str.lower)
+        )
+        recorded = container.recorded_level
+        if recorded is not None and not 0 <= recorded < 0x200:
+            recorded = None
+        beside = path.with_suffix(".pal")
+        blob: bytes | None = None
+        try:
+            if beside.is_file():
+                blob = level_palettes.read_pal(beside.read_bytes())
+                palette = f"{beside.name} beside it becomes the level's own palette."
+            elif container.custom_palette and container.carried_palette is not None:
+                blob = level_palettes.from_container(container.carried_palette)
+                palette = "The palette the file carries becomes the level's own."
+            else:
+                palette = (
+                    "No palette comes with it: the level wears the shared colours."
+                )
+        except PaletteError as error:
+            self._alert(f"{beside.name} could not be read.", detail=str(error))
+            return False
+        dialog = ImportLevelDialog(
+            offered,
+            usable_name(path.stem, offered),
+            recorded,
+            palette,
+            self._level_data or self,
+        )
+        if dialog.exec() != QDialog.DialogCode.Accepted.value:
+            return False
+        name, level = dialog.chosen_name, dialog.chosen_level
+        return self._land_level_file(
+            name,
+            data,
+            level,
+            blob,
+            path.name,
+            container.lunar_magic_settings,
+            container.layer3_settings,
+        )
+
+    def _land_level_file(
+        self,
+        name: str,
+        data: bytes,
+        level: int | None,
+        blob: bytes | None,
+        source: str,
+        settings: bytes | None = None,
+        layer3: bytes | None = None,
+    ) -> bool:
+        """Add the container, point ``level`` at it, dress the level in
+        ``blob`` and give it ``settings`` -- the four bytes a Lunar Magic
+        container carries beyond the secondary header, where the project's
+        cartridge keeps them -- the whole of what importing one file does,
+        past the asking. Each step needs the feature that carries it and
+        offers the switch the way the tick and Add a File do; the settings
+        alone ask for nothing, landing only where the built cartridge already
+        keeps the tables, since a container always carries some and a level
+        that has not picked a scroll setting of its own is not a reason to
+        grow the cartridge."""
+        viewing = self._level_data is not None and self._level_data.isVisible()
+        if not self._want_feature(MANAGED_LEVEL_MEMORY.id):
+            return False
+        project = self._project
+        try:
+            written = project.add_level_file(name, data)
+        except (ProjectError, OSError) as error:
+            self._alert(f"{source} could not be added.", detail=str(error))
+            return False
+        said = f"{written.stem}.mwl added"
+        if level is not None:
+            layer1 = next(
+                (t for t in project.layer1_targets() if t.container == written.stem),
+                None,
+            )
+            sprites = next(
+                (t for t in project.sprite_targets() if t.container == written.stem),
+                None,
+            )
+            # The settings land before the pointers move: the pointer edit
+            # reloads the level if it is the one on the canvas, and that
+            # load reads the tables as they stand.
+            settled = settings is not None and self._settle_lunar_magic(level, settings)
+            placed = layer3 is not None and self._settle_layer3(level, layer3)
+            self.edit_level_pointers(level, layer1, sprites)
+            said += f", read by level {hexnum(level, 3)}"
+            if blob is not None and self._dress_level(level, blob):
+                said += ", wearing its palette"
+            if settled:
+                said += ", with its Lunar Magic settings"
+            if placed:
+                said += ", placing Layer 3 its own way"
+        else:
+            said += ". Remap a level number at it to open it"
+        if viewing and not (self._level_data and self._level_data.isVisible()):
+            self.view_level_data()
+        else:
+            self._refresh_level_data()
+        self.statusBar().showMessage(said + ".", 8000)
+        return True
+
+    def _settle_lunar_magic(self, level: int, settings: bytes) -> bool:
+        """Write a container's four Lunar Magic bytes into the project's
+        tables for ``level``, where the cartridge keeps them, and say whether
+        anything landed. Not offered the feature: see :meth:`_land_level_file`."""
+        project = self._project
+        if project is None or not project.has_lunar_magic_settings:
+            return False
+        try:
+            if project.lunar_magic_settings(level) == settings:
+                return False
+            project.save_lunar_magic_settings(level, settings, asm_runs(project))
+        except (AsmRegionError, BuildError, ProjectError, OSError) as error:
+            self._alert(
+                f"Level {hexnum(level, 3)}'s Lunar Magic settings were not written.",
+                detail=str(error),
+            )
+            return False
+        return True
+
+    def _settle_layer3(self, level: int, settings: bytes) -> bool:
+        """Write a container's four Layer 3 bytes into the project's tables
+        for ``level``, where the cartridge keeps them, and say whether
+        anything landed -- :meth:`_settle_lunar_magic`'s rule, for the same
+        reason."""
+        project = self._project
+        if project is None or not project.has_layer3_settings:
+            return False
+        try:
+            if project.layer3_settings(level) == settings:
+                return False
+            project.save_layer3_settings(level, settings, asm_runs(project))
+        except (AsmRegionError, BuildError, ProjectError, OSError) as error:
+            self._alert(
+                f"Level {hexnum(level, 3)}'s Layer 3 settings were not written.",
+                detail=str(error),
+            )
+            return False
+        return True
 
     def delete_level_files(self, names: list) -> None:
         """Take the named containers' level data out of the build, through

@@ -514,6 +514,24 @@ def _named(project: Project, relative: Path | None) -> str:
     return ""
 
 
+#: The folders a project's sprites go in: one per kind, the library and the
+#: shared routines.
+FOLDERS = (*KIND_FOLDERS.values(), LIBRARY, ROUTINES)
+
+
+def make_folders(project: Project) -> tuple[Path, ...]:
+    """Make every sprite folder exist, empty if need be -- what switching
+    the feature on does (:func:`shiny_mushroom.project_code.make_folders`'s
+    rule). Says which were made, relative to the overlay."""
+    made = []
+    for folder in FOLDERS:
+        held = project.overlay / project.base.name / folder
+        if not held.is_dir():
+            held.mkdir(parents=True, exist_ok=True)
+            made.append(held.relative_to(project.overlay))
+    return tuple(made)
+
+
 def carried(project: Project) -> tuple[Path, ...]:
     """Every sprite file the project holds -- code, metadata and library --
     which is what keeps the feature's switch down while there are any."""

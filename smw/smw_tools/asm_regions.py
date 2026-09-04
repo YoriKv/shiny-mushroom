@@ -824,6 +824,80 @@ REGIONS: tuple[AsmRegion, ...] = (
         widths=(1,),
         counts=(0x200,),
     ),
+    # The four tables the lunar-magic-levels feature adds to the secondary
+    # header: one byte per level each, in the same shape as the four above,
+    # and only on a cartridge built with the feature (`feature=`) -- the
+    # stock game has no such tables, the fragments are emitted only under the
+    # define, and their roles are declared by the feature. The placement
+    # asserts each fragment's run is exactly its $200 rows.
+    *(
+        FixedTables(
+            id=region_id,
+            path=path,
+            namespace="SMW_LunarMagicLevels",
+            owner="levels",
+            sections=(role,),
+            widths=(1,),
+            counts=(0x200,),
+            feature="lunar-magic-levels",
+        )
+        for region_id, path, role in zip(
+            (
+                "levels.lunar_magic_entrance",
+                "levels.lunar_magic_scroll",
+                "levels.lunar_magic_entrance_y",
+                "levels.lunar_magic_background",
+            ),
+            (
+                Path("levels/properties/lunar-magic-entrance.asm"),
+                Path("levels/properties/lunar-magic-scroll.asm"),
+                Path("levels/properties/lunar-magic-entrance-y.asm"),
+                Path("levels/properties/lunar-magic-background.asm"),
+            ),
+            (
+                "lunar_magic_entrance",
+                "lunar_magic_scroll",
+                "lunar_magic_entrance_y",
+                "lunar_magic_background",
+            ),
+            strict=True,
+        )
+    ),
+    # The four tables the layer3-settings feature adds: one byte per level
+    # each, the same shape again, and only on a cartridge built with it.
+    *(
+        FixedTables(
+            id=region_id,
+            path=path,
+            namespace="SMW_Layer3Settings",
+            owner="levels",
+            sections=(role,),
+            widths=(1,),
+            counts=(0x200,),
+            feature="layer3-settings",
+        )
+        for region_id, path, role in zip(
+            (
+                "levels.layer3_horizontal",
+                "levels.layer3_vertical",
+                "levels.layer3_offset_x",
+                "levels.layer3_offset_y",
+            ),
+            (
+                Path("levels/properties/layer3-horizontal.asm"),
+                Path("levels/properties/layer3-vertical.asm"),
+                Path("levels/properties/layer3-offset-x.asm"),
+                Path("levels/properties/layer3-offset-y.asm"),
+            ),
+            (
+                "layer3_horizontal",
+                "layer3_vertical",
+                "layer3_offset_x",
+                "layer3_offset_y",
+            ),
+            strict=True,
+        )
+    ),
     EventStamps(
         id="overworld.layer2_events",
         path=TABLES_DIR / "layer2-events.asm",

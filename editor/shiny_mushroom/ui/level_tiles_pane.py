@@ -60,8 +60,8 @@ TITLE = "Level Tiles"
 #: What the page is for, said once above the picture.
 HINT = (
     "Pick an area of Layer 1, or the whole of Layer 2, and its tiles are "
-    "shown as they are drawn. Export, import, copy and paste edit the "
-    "pixels; each tile goes back into the graphics file it came from."
+    "shown as they are drawn. Paint them here or through a PNG; each tile "
+    "goes back into the graphics file it came from."
 )
 
 #: Said in place of a picture until an area is picked, and how to pick one.

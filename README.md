@@ -2,7 +2,7 @@
 
 **Shiny Mushroom** is a cross-platform Super Mario World romhack editor.
 
-If you run into issues or have questions. Submit a github issue or reach out to me
+If you run into issues or have questions. Submit a github issue or reach out to me (Epi)
 on Discord through the https://romhack.ing/ Discord server.
 
 Shiny Mushroom is built on Python + Qt (PySide6) and runs on Windows, macOS, and Linux.

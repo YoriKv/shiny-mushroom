@@ -63,6 +63,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from shiny_mushroom.hexnum import hexnum
+from smw_tools.custom_tiles import DEFINITION_BYTES as CUSTOM_DEFINITION_BYTES
 
 if TYPE_CHECKING:
     from shiny_mushroom.overworld_snapshot import OverworldSnapshot
@@ -1763,6 +1764,7 @@ class SmwLevelLoader(SpriteProbe, OverworldCapture, CartSession):
             map16_high=ram.slice(MAP16_HIGH, MAP16_SIZE),
             map16_defs=self._map16_definitions(ram, rom),
             pipe_definitions=self._pipe_definitions(rom),
+            custom_defs=self._custom_definitions(rom),
             vram=self.core.read_all(MemoryType.SNES_VIDEO_RAM),
             cgram=self.core.read_all(MemoryType.SNES_CG_RAM),
             sprites=stream,
@@ -1832,6 +1834,16 @@ class SmwLevelLoader(SpriteProbe, OverworldCapture, CartSession):
             base = self.addresses.offset(MAP16_BANK | pointer)
             definitions.append(rom[base : base + MAP16_DEF_SIZE])
         return b"".join(definitions)
+
+    def _custom_definitions(self, rom: bytes) -> bytes:
+        """The custom tiles' definition table, off a cartridge that carries
+        the feature -- one slice, since the table is flat -- and nothing off
+        one that does not."""
+        at = self.addresses.custom_tiles_defs
+        if at is None:
+            return b""
+        offset = self.addresses.offset(at)
+        return rom[offset : offset + CUSTOM_DEFINITION_BYTES]
 
     def _pipe_definitions(self, rom: bytes) -> tuple[bytes, ...]:
         """The four pipe tables, followed from the cartridge's own pointers.

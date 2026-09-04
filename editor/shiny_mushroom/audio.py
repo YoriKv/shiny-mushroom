@@ -44,7 +44,7 @@ from shiny_mushroom.music_tables import (
 )
 from shiny_mushroom.project import Project
 from shiny_mushroom.rom_patches import layer1_base
-from smw_tools import audio
+from smw_tools import audio, spc
 from smw_tools.rom_image import pc_to_snes, snes_to_pc
 from smw_tools.symbols import SymbolTable
 
@@ -521,3 +521,72 @@ def audio_map(
         songs_offered={blob: project.song_choices(blob) for blob in audio.MUSIC_BLOBS},
         tracks_offered=tracks,
     )
+
+
+# -- auditioning ---------------------------------------------------------------
+
+
+def audition(
+    rom: bytes,
+    symbols: SymbolTable,
+    *,
+    blob: str,
+    mailbox: int,
+    value: int,
+    title: str = "",
+    game: str = "",
+) -> bytes:
+    """One song or one effect as a playable ``.spc``, with no rebuild.
+
+    The cartridge already carries everything a player needs: the engine, the
+    samples and one music bank compose into the ARAM a console would be holding
+    (:func:`~smw_tools.audio.compose`), and handing the engine the value the
+    game would have written to ``mailbox`` is the whole of asking for a song.
+    So an audition is that image with one byte in a port latch -- not a
+    recording, and not a build.
+
+    ``blob`` is which music bank is resident, which decides what a music value
+    means and is read from the window's own picker; an effect is the same on
+    every bank and takes the level bank. ``mailbox`` is the 65816 address the
+    game would write to, one of :data:`~smw_tools.audio.APU_PORTS`.
+
+    Raises :class:`AudioMapError` where the cartridge cannot be read this way,
+    which is the same reading :func:`audio_map` makes and fails the same.
+    """
+    port = audio.APU_PORTS.get(mailbox)
+    if port is None:
+        raise AudioMapError(f"${mailbox:06X} is not one of the sound mailboxes")
+    if blob not in audio.MUSIC_BLOBS:
+        raise AudioMapError(f"{blob} is not a music bank")
+    streams = _streams(rom, _blob_offsets(symbols))
+    resident = audio.compose(
+        rom, [*_boot(streams), streams[audio.SAMPLES_BLOB], streams[blob]]
+    )
+    try:
+        primed = audio.primed(resident, {port: value})
+    except audio.AudioError as error:
+        raise AudioMapError(str(error)) from error
+    return spc.state(
+        primed,
+        pc=_entry(streams, blob),
+        title=title,
+        game=game,
+        comment="Auditioned by Shiny Mushroom",
+    )
+
+
+def _entry(streams: Mapping[str, audio.UploadStream], blob: str) -> int:
+    """Where the SPC700 is sent once ``blob``'s upload finishes.
+
+    The terminator of the last stream a cartridge uploads carries it, so this is
+    the engine's own entry point rather than anything declared here. A stream
+    that was never terminated cannot say, which is a cartridge whose uploads
+    this cannot follow.
+    """
+    entry = streams[blob].entry
+    if entry is None:
+        raise AudioMapError(
+            f"{BLOB_NAMES[blob]}'s upload has no terminator, so nothing says "
+            f"where the SPC700 starts"
+        )
+    return entry

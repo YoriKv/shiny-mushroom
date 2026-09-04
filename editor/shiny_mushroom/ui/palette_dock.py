@@ -73,6 +73,12 @@ CUSTOM_TIP = (
     "go back to the shared ones."
 )
 
+#: On the button beside the tick.
+IMPORT_TIP = (
+    "Give this level its own palette from a file: Lunar Magic's .pal, the "
+    "palette an .mwl carries, a .tpl or a CGRAM dump."
+)
+
 NOTHING_SELECTED = "Pick a colour. Double-click or press Return to change it."
 
 #: What the first tab is called. Which of the two it wears is the window's to
@@ -130,6 +136,11 @@ class PaletteDock(QDockWidget):
     #: like the palette it writes.
     save_asked = Signal()
 
+    #: Import... beside the tick was pressed: dress the level in a palette
+    #: file from outside. Reading the file and what it means are the
+    #: window's, like the tick.
+    import_asked = Signal()
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__("Palettes", parent)
         self.setObjectName(OBJECT_NAME)
@@ -154,6 +165,10 @@ class PaletteDock(QDockWidget):
             lambda: self.custom_toggled.emit(self._custom.isChecked())
         )
         self._custom.setVisible(False)
+        self._import = QPushButton("&Import...")
+        self._import.setToolTip(wrap_tip(IMPORT_TIP))
+        self._import.clicked.connect(self.import_asked)
+        self._import.setVisible(False)
 
         self._sets: list[SwatchGrid] = []
         self._set_shape: tuple[tuple[str, int], ...] = ()
@@ -244,9 +259,14 @@ class PaletteDock(QDockWidget):
         row.addSpacing(10)
         row.addLayout(beside)
         row.addStretch(1)
+        tick = QHBoxLayout()
+        tick.setContentsMargins(0, 0, 0, 0)
+        tick.addWidget(self._custom)
+        tick.addWidget(self._import)
+        tick.addStretch(1)
         body = QVBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
-        body.addWidget(self._custom)
+        body.addLayout(tick)
         body.addLayout(row, 1)
         page = QWidget()
         page.setLayout(body)
@@ -287,6 +307,7 @@ class PaletteDock(QDockWidget):
         """
         self._custom_state = state
         self._custom.setVisible(state is not None)
+        self._import.setVisible(state is not None)
         self._custom.setChecked(bool(state))
         self._update_warning()
 

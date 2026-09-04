@@ -63,10 +63,10 @@ EMULATOR_FILTER = (
 ADDMUSICK_KEY = "music/addmusick"
 
 ADDMUSICK_NOTE = (
-    "Audio > Songs compiles a project's music with AddmusicK, which is not "
-    "part of this editor. Point at the folder the tool was unpacked into, or "
-    "at the executable inside it. Songs already imported keep working without "
-    "it -- it is needed to add one, not to have one."
+    "Project > Audio > AddmusicK compiles a project's music with AddmusicK, which "
+    "is not part of this editor. Point at the folder the tool was unpacked "
+    "into, or at the executable inside it. Importing a song needs it; playing "
+    "one already imported does not."
 )
 
 #: What a file chooser offers. The tool is a folder as much as a program --

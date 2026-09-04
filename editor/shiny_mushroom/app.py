@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
@@ -21,43 +20,15 @@ from shiny_mushroom.ui.theme import THEME_KEY, Theme, apply_theme
 # identity rather than inheriting this one (shiny_mushroom.ui.settings.settings).
 
 
-# -- development mode --------------------------------------------------------
+def cart_argument(arguments: list[str]) -> Path | None:
+    """The image named on the command line, or ``None``.
 
-#: Set by the committed run configuration in ``.run/``. Its presence is what
-#: makes a launch a development one.
-#:
-#: Deliberately ours rather than sniffed for. PyCharm does export
-#: ``PYCHARM_HOSTED``, but that is an undocumented JetBrains variable that can
-#: change under us and says nothing about intent; a flag in a file that is
-#: committed alongside the code is shared with everyone who opens the project
-#: and means exactly one thing.
-DEV_ENV = "SHINY_MUSHROOM_DEV"
-
-#: Relative to the repository root, and gitignored -- the cart is the user's own
-#: dump.
-DEV_ROM = Path("smw/reference/Super Mario World (USA).sfc")
-
-
-def development() -> bool:
-    """Whether this launch is a development one.
-
-    The nearest thing this project has to ``#if DEBUG``. Python's own
-    ``__debug__`` is the only true compile-time switch it has, and it is the
-    wrong one here: it is true in a released build as well, because nothing
-    runs the editor under ``-O``.
+    Qt strips its own arguments (``-style``, ``-platform``, ...) in the
+    ``QApplication`` constructor, so what reaches here is genuinely ours --
+    and anything still starting with a dash is an option nobody claimed
+    rather than a path.
     """
-    return bool(os.environ.get(DEV_ENV))
-
-
-def dev_rom(root: Path | None = None) -> Path | None:
-    """A cart to open on launch, or ``None`` outside development.
-
-    Launching and opening the same file every time is the whole of the inner
-    loop, so a development launch skips it.
-    """
-    if not development():
-        return None
-    return (root or Path(__file__).resolve().parents[2]) / DEV_ROM
+    return next((Path(one) for one in arguments if not one.startswith("-")), None)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -96,18 +67,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     window.show()
 
-    # Qt strips its own arguments (-style, -platform, ...) in the QApplication
-    # constructor, so what is left here is genuinely ours.
-    opened = next(
-        (a for a in app.arguments()[1:] if not a.startswith("-")),
-        None,
-    )
-    # **Nothing is loaded here in the ordinary case.** Opening the project has
-    # already opened its cartridge -- the one it builds from the disassembly, the
-    # extracted assets and its own overlay -- which is the ROM the editor edits.
-    # An explicit path still wins, for looking at some other image; a development
-    # launch keeps its shortcut for the same reason.
-    cart = Path(opened) if opened else dev_rom()
+    # **Nothing is loaded here in the ordinary case.** Setup has already opened
+    # the project's cartridge -- the one it builds from the disassembly, the
+    # extracted assets and its own overlay -- which is the ROM the editor
+    # edits, and the only image whose features it can read: a cartridge opened
+    # over it is read through the stock declarations, so every capability the
+    # project builds in reads as absent (`MainWindow._use_base`). A path named
+    # on the command line still wins, because asking for an image by name is
+    # asking for it.
+    cart = cart_argument(app.arguments()[1:])
     if cart is not None:
         window.load_file(cart)
 

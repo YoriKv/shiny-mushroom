@@ -61,6 +61,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
+from shiny_mushroom import features
 from shiny_mushroom.project import Project, projects
 from smw_tools.bases import DEFAULT_BASE, DEFAULT_TARGET, RomBase
 from smw_tools.extract import (
@@ -96,6 +97,10 @@ TARGET = DEFAULT_TARGET
 #: runs. And it is this path's decision rather than
 #: :meth:`~shiny_mushroom.project.Project.create`'s, which makes a project
 #: folder that asks for nothing.
+#:
+#: Switched on through :func:`shiny_mushroom.features.enable`, so the switch
+#: does what it does for anyone: the feature reserves the level bank, and a
+#: new project is a 1 MB cartridge from the first moment.
 NEW_PROJECT_FEATURES: tuple[str, ...] = (MANAGED_LEVEL_MEMORY.id,)
 
 #: Where the asset extractor's own scripts live, relative to the game folder.
@@ -306,7 +311,8 @@ def start_project(
     that looks like it works and does not, with the failure surfacing as a
     build that cannot find a file rather than as the missing step it is.
 
-    The project it makes asks its build for :data:`NEW_PROJECT_FEATURES`.
+    The project it makes asks its build for :data:`NEW_PROJECT_FEATURES`,
+    each switched on the way the Features dialog would switch it on.
     """
     if not assets_ready(target_id):
         named = ROM_VERSIONS.get(target_id)
@@ -316,5 +322,6 @@ def start_project(
             f"first and the editor will extract them."
         )
     project = Project.create(name, base=base, base_id=base_id, target_id=target_id)
-    project.set_feature_state(NEW_PROJECT_FEATURES)
+    for feature_id in NEW_PROJECT_FEATURES:
+        project = features.enable(project, feature_id).project
     return project

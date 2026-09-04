@@ -43,7 +43,7 @@ bytes and returns numbers.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -55,6 +55,21 @@ ARAM_SIZE = 0x10000
 #: names are the disassembly's own (``!RAM_SMW_IO_SoundCh1`` and up).
 MUSIC_PORT = 0x7E1DFB
 SFX_PORTS = (0x7E1DF9, 0x7E1DFA, 0x7E1DFC)
+
+#: Which of the SPC700's four ports each mailbox reaches, from the copy
+#: ``SMW_VBlankRoutine`` makes every frame: the music mailbox goes to port 2 and
+#: the three effect mailboxes to ports 0, 1 and 3. The engine polls each port in
+#: turn, so this is what says where a value has to be put to be heard.
+APU_PORTS = {
+    SFX_PORTS[0]: 0,
+    SFX_PORTS[1]: 1,
+    MUSIC_PORT: 2,
+    SFX_PORTS[2]: 3,
+}
+
+#: Where the SPC700 reads the four ports, which is also where a saved state
+#: carries their last values.
+PORT_LATCHES = 0x00F4
 
 #: The blob labels ``SMW_HandleSPCUploads`` points its uploader at, by the
 #: namespaced name the build's symbol file carries. The order is the order a
@@ -218,6 +233,59 @@ def compose(rom: bytes, streams: Iterable[UploadStream]) -> bytes:
         for block in stream.blocks:
             aram[block.aram : block.end] = rom[block.rom : block.rom + block.size]
     return bytes(aram)
+
+
+# -- auditioning one value ----------------------------------------------------
+
+#: ``MOV A,#$F0`` then ``MOV $00F1,A``, the write ``SPC700_Engine`` makes near
+#: the end of its initialisation. Bits 4 and 5 of the control register clear the
+#: four port latches, so the engine wipes whatever the ports held before it ever
+#: polls one -- which on a cartridge is right, and for a saved state that was
+#: handed a value is the difference between a song and silence.
+PORT_CLEAR = bytes((0xE8, 0xF0, 0xC5, 0xF1, 0x00))
+
+#: The same write with those two bits taken out, which leaves the latches
+#: alone. Everything else the byte says -- the IPL ROM bit, the timers -- is
+#: unchanged, and four instructions later the engine writes the register again
+#: with the value it always does.
+PORT_KEEP = 0xC0
+
+#: Where the neutralised bits sit in :data:`PORT_CLEAR`.
+_CLEAR_OPERAND = 1
+
+
+def primed(aram: bytes, ports: Mapping[int, int]) -> bytes:
+    """``aram`` with ``ports`` in the latches and the engine made to keep them.
+
+    ``ports`` is keyed by SPC700 port, ``0`` to ``3`` -- :data:`APU_PORTS` maps
+    a mailbox to one. The result is an image that boots the engine from its own
+    entry point and finds the given value already asked for, which is what
+    turns a cartridge's ARAM into an audition of one song or one effect.
+
+    Two things have to be true of it and both are checked rather than assumed:
+    the engine's port-clearing write is in there exactly once, and no caller
+    named a port that does not exist. A modified engine that no longer makes
+    that write in that shape cannot be auditioned this way, and says so instead
+    of being handed back an image that plays nothing.
+    """
+    for port in ports:
+        if not 0 <= port <= 3:
+            raise AudioError(f"the SPC700 has ports 0 to 3, not {port}")
+    found = [
+        at
+        for at in range(len(aram) - len(PORT_CLEAR) + 1)
+        if aram[at : at + len(PORT_CLEAR)] == PORT_CLEAR
+    ]
+    if len(found) != 1:
+        raise AudioError(
+            f"the engine's port-clearing write appears {len(found)} times in "
+            f"ARAM, not once, so this engine cannot be auditioned"
+        )
+    out = bytearray(aram)
+    out[found[0] + _CLEAR_OPERAND] = PORT_KEEP
+    for port, value in ports.items():
+        out[PORT_LATCHES + port] = value & 0xFF
+    return bytes(out)
 
 
 # -- the sequences ------------------------------------------------------------

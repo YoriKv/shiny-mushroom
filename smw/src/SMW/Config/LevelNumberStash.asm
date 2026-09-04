@@ -9,9 +9,11 @@ includeonce
 ;# custom level palettes (Config/LevelCustomPalettes.asm) index their
 ;# pointer table with it while the level is prepared, and the level
 ;# graphics (Config/LevelGraphics.asm) index their rows with it while the
-;# level's files are uploaded. Both read the same word, so the stash is
-;# one piece here, wanted when either define is on, and the seam that
-;# plants it is hooked once.
+;# level's files are uploaded, and the Lunar Magic tables
+;# (Config/LunarMagicLevels.asm) index theirs with it later in the same
+;# load, and the Layer 3 settings (Config/Layer3Settings.asm) index theirs
+;# both at the load and once a frame after it. All read the same word, so the stash is one piece here, wanted
+;# when any define is on, and the seam that plants it is hooked once.
 ;#
 ;# The seam is SMW_SpecifySublevelToLoad (Banks/Bank05.asm,
 ;# LM000Hijack_StoreSublevelNumber): the one moment the number is whole --
@@ -41,6 +43,12 @@ if !Define_SMW_LevelGraphics == !TRUE
 	!SMW_LevelNumberStashWanted #= !TRUE
 endif
 if !Define_SMW_LevelCode == !TRUE
+	!SMW_LevelNumberStashWanted #= !TRUE
+endif
+if !Define_SMW_LunarMagicLevels == !TRUE
+	!SMW_LevelNumberStashWanted #= !TRUE
+endif
+if !Define_SMW_Layer3Settings == !TRUE
 	!SMW_LevelNumberStashWanted #= !TRUE
 endif
 

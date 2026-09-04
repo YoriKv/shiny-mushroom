@@ -17,9 +17,12 @@ from PySide6.QtWidgets import QComboBox, QLabel, QToolBar, QWidget
 from shiny_mushroom.hexnum import hexnum
 from smw_tools.map16 import TILESET_TABLES
 
-#: The Sheet box's rows past the tilesets: the 2x2 stamp sheet, then the
-#: 6x6 -- indexes :data:`SHEET_2X2` and :data:`SHEET_6X6`.
-SHEET_2X2 = len(TILESET_TABLES)
+#: The Sheet box's rows past the tilesets: the custom tiles, then the 2x2
+#: stamp sheet, then the 6x6 -- indexes :data:`SHEET_CUSTOM`,
+#: :data:`SHEET_2X2` and :data:`SHEET_6X6`.
+SHEET_CUSTOM = len(TILESET_TABLES)
+CUSTOM_SHEET_NAME = "Custom tiles"
+SHEET_2X2 = SHEET_CUSTOM + 1
 SHEET_6X6 = SHEET_2X2 + 1
 STAMP_SHEETS: tuple[tuple[int, str], ...] = (
     (SHEET_2X2, "Overworld 2x2 stamps"),
@@ -56,13 +59,14 @@ class Map16Bar(QToolBar):
         self._sheets = QComboBox()
         for tileset, table in enumerate(TILESET_TABLES):
             self._sheets.addItem(f"{hexnum(tileset)} - {table}")
+        self._sheets.addItem(CUSTOM_SHEET_NAME)
         for _index, name in STAMP_SHEETS:
             self._sheets.addItem(name)
         self._sheets.setToolTip(
             "Which sheet the canvas shows: one FG/BG tileset's view of the "
             "Map16 tables -- most tiles are shared by every tileset, the "
-            "tinted runs are each tileset's own -- or one of the world "
-            "map's event stamp sheets."
+            "tinted runs are each tileset's own -- the project's custom "
+            "tiles, or one of the world map's event stamp sheets."
         )
         # `activated`, not `currentIndexChanged`: the latter also fires when
         # the index is moved from code, and the window moves it to follow
@@ -94,6 +98,14 @@ class Map16Bar(QToolBar):
         if 0 <= index < self._sheets.count():
             self._sheets.setCurrentIndex(index)
 
+    def offer_custom_sheet(self, on: bool) -> None:
+        """Arm or grey the custom tiles row: it needs a cartridge built with
+        the feature."""
+        model = self._sheets.model()
+        item = model.item(SHEET_CUSTOM)  # type: ignore[attr-defined]
+        if item is not None:
+            item.setEnabled(on)
+
     def offer_stamp_sheets(self, on: bool) -> None:
         """Arm or grey the two stamp sheet rows: they need the world map to
         have been captured."""
@@ -120,9 +132,11 @@ class Map16Bar(QToolBar):
 
 
 __all__ = [
+    "CUSTOM_SHEET_NAME",
     "EDIT_ROWS",
     "SHEET_2X2",
     "SHEET_6X6",
+    "SHEET_CUSTOM",
     "STAMP_SHEETS",
     "Map16Bar",
     "edit_rows_for",

@@ -437,11 +437,28 @@ def import_file(
     return Imported((landed,), notes)
 
 
+#: The folders a project's code goes in, all five.
+FOLDERS = (LEVELS, GAMEMODES, GLOBAL, LIBRARY, MACROS)
+
+
+def make_folders(project: Project) -> tuple[Path, ...]:
+    """Make every code folder exist, empty if need be -- what switching the
+    feature on does, so the place a file goes is there to find before
+    anybody has written one. Says which were made, relative to the overlay."""
+    made = []
+    for folder in FOLDERS:
+        held = project.overlay / project.base.name / folder
+        if not held.is_dir():
+            held.mkdir(parents=True, exist_ok=True)
+            made.append(held.relative_to(project.overlay))
+    return tuple(made)
+
+
 def carried(project: Project) -> tuple[Path, ...]:
     """Every code file the project holds, across all five folders -- what
     keeps UberASM Support's switch down while there are any."""
     found: list[Path] = []
-    for folder in (LEVELS, GAMEMODES, GLOBAL, LIBRARY, MACROS):
+    for folder in FOLDERS:
         held = project.overlay / project.base.name / folder
         if not held.is_dir():
             continue

@@ -32,14 +32,16 @@
 	!RAM_SMW_LevelNumberStash_LoadedLevel #= !Define_SMW_LowRAMLocation+$010B
 	; Which graphics file is expanded into the animated tiles, and the same
 	; byte complemented. Only a cartridge assembled with
-	; !Define_SMW_LevelGraphics writes them, from the stub that gives a level
-	; the animated tiles its row asks for (Config/LevelGraphics.asm): the
-	; expansion costs two decompressions, so the stub does it only when this
-	; record disagrees with what the level wants. The complement is what
-	; makes the record answer for itself, since this page is the one thing
-	; the reset does not clear -- a cartridge that has just powered on holds
-	; whatever it holds here, and two bytes that are not each other's
-	; complement are a record to reload rather than believe.
+	; !Define_SMW_LevelGraphics writes them: the boot's hook plants $33 as
+	; soon as GFX33 is expanded, and the stub that gives a level the
+	; animated tiles its row asks for (Config/LevelGraphics.asm) rewrites
+	; them after reloading, which costs two decompressions and so is done
+	; only when this record disagrees with what the level wants. The
+	; complement is what makes the record answer for itself, since this
+	; page is the one thing the reset does not clear -- a cartridge that has
+	; just powered on holds whatever it holds here until the boot reaches
+	; the hook, and two bytes that are not each other's complement are a
+	; record to reload rather than believe.
 	!RAM_SMW_LevelGraphics_AnimatedFile #= !Define_SMW_LowRAMLocation+$010D
 	!RAM_SMW_LevelGraphics_AnimatedFileCheck #= !RAM_SMW_LevelGraphics_AnimatedFile+$01
 	; The game mode the last frame ran, complemented, so the cleared RAM the

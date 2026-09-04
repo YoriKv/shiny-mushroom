@@ -11,12 +11,16 @@ dialog a rebuild -- and :attr:`SourceFilesDialog.project`, which may not be
 the one that went in, because a feature switched on from a tab can raise the
 cartridge size and a project is frozen.
 
-**Three tabs over one reading.** *All Files* is the overlay as it is, every
+**Four tabs over one reading.** *All Files* is the overlay as it is, every
 row; *UberASM* and *PIXI* are the same rows filtered to the kinds each
 feature assembles (:data:`shiny_mushroom.source_files.UBERASM_KINDS`,
 :data:`~shiny_mushroom.source_files.PIXI_KINDS`), with the buttons that only
 make sense for those files: **Create** writes a file of the right shape from
 a template, **Import** brings one in from outside rewritten to assemble here.
+*AddmusicK* is the one list that is not the overlay's: the song packages in
+the project's ``music/`` folder (:func:`~shiny_mushroom.source_files.music_rows`),
+with **Import** copying a package in from elsewhere, samples and all -- what
+compiles them is the Audio window's own Import, which needs the tool.
 Each feature tab also says when its feature is off -- the files are then
 assembled into nothing -- and offers the switch, so a person is never left
 writing code no build reads.
@@ -76,20 +80,28 @@ from shiny_mushroom import features, project_code, project_sprites, source_files
 from shiny_mushroom.build import symbol_file
 from shiny_mushroom.project import Project, ProjectError
 from shiny_mushroom.project_code import CodeError
+from shiny_mushroom.project_music import MUSIC_DIR, MUSIC_SUFFIXES
 from shiny_mushroom.ui.dialogs import open_file, open_folder
 from shiny_mushroom.ui.sprite_properties_dialog import SpritePropertiesDialog
 from shiny_mushroom.ui.tables import PaddedCells, style_note, style_table
 from shiny_mushroom.ui.tips import wrap_tip
-from smw_tools.features import CUSTOM_SPRITES, FEATURES, UBERASM_SUPPORT, FeatureError
+from smw_tools.features import (
+    CUSTOM_MUSIC,
+    CUSTOM_SPRITES,
+    FEATURES,
+    UBERASM_SUPPORT,
+    FeatureError,
+)
 from smw_tools.sprite_code import KINDS
 from smw_tools.symbols import SymbolTable, load_symbols
 
 TITLE = "Source Files"
 
-#: The three tabs, by the name on each.
+#: The four tabs, by the name on each.
 ALL = "All Files"
 UBERASM = "UberASM"
 PIXI = "PIXI"
+MUSIC = "AddmusicK"
 
 #: What each list is, and the one idea a reader has to be handed: these files
 #: stand in for the disassembly's, and removing one puts the original back;
@@ -108,6 +120,11 @@ PIXI_HINT = (
     "The project's custom sprites, written the way PIXI writes them: a "
     "sprite's code and properties per number, the library they call and the "
     "shared routines."
+)
+MUSIC_HINT = (
+    "The song packages in the project's music folder, each an MML file with "
+    "its samples in a folder beside it, exactly as AddmusicK is handed them. "
+    "Import in the Audio window compiles them into the cartridge."
 )
 
 COLUMNS = ("File", "Kind", "Status")
@@ -153,13 +170,16 @@ class _Pane(QWidget):
         kinds: tuple[str, ...] | None,
         feature_id: str | None,
         parent: QWidget | None = None,
+        does: str = "assembled",
     ) -> None:
         super().__init__(parent)
         #: Which kinds this pane lists, ``None`` for every row.
         self.kinds = kinds
-        #: The feature whose files these are, for the notice and the switch.
+        #: The feature whose files these are, for the notice and the switch,
+        #: and what a build with it does to them, for the notice's sentence.
         self.feature_id = feature_id
-        self.rows: list[source_files.SourceFileRow] = []
+        self.does = does
+        self.rows: list[source_files.SourceFileRow | source_files.MusicRow] = []
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -214,7 +234,9 @@ class _Pane(QWidget):
         """Put one of the dialog's buttons on the left of the row."""
         self.buttons.insertWidget(self.buttons.count() - 4, button)
 
-    def fill(self, rows: Iterable[source_files.SourceFileRow]) -> None:
+    def fill(
+        self, rows: Iterable[source_files.SourceFileRow | source_files.MusicRow]
+    ) -> None:
         """Draw this pane's share of the rows, keeping the row somebody was
         on."""
         chosen = self.current_path()
@@ -242,8 +264,8 @@ class _Pane(QWidget):
         if off and self.feature_id is not None:
             name = FEATURES[self.feature_id].name
             self.notice.setText(
-                f"{name} is off, so none of these files is assembled until it "
-                f"is turned on."
+                f"{name} is off, so none of these files is {self.does} until "
+                f"it is turned on."
             )
             self.switch.setText(f"Turn On {name}")
         self.notice.setVisible(off)
@@ -253,7 +275,7 @@ class _Pane(QWidget):
         item = self.table.item(self.table.currentRow(), 0)
         return None if item is None else item.data(_PATH_ROLE)
 
-    def current(self) -> source_files.SourceFileRow | None:
+    def current(self) -> source_files.SourceFileRow | source_files.MusicRow | None:
         index = self.table.currentRow()
         return self.rows[index] if 0 <= index < len(self.rows) else None
 
@@ -282,6 +304,7 @@ class SourceFilesDialog(QDialog):
         #: and its fingerprint is what decides.
         self.overlay_changed = False
         self._rows: list[source_files.SourceFileRow] = []
+        self._songs: list[source_files.MusicRow] = []
         #: What the overlay's files looked like when the list was last read --
         #: see :meth:`_recheck`, which is what an outside edit is noticed
         #: against, there being nothing watching them.
@@ -305,6 +328,12 @@ class SourceFilesDialog(QDialog):
                 UBERASM_HINT, source_files.UBERASM_KINDS, UBERASM_SUPPORT.id
             ),
             PIXI: _Pane(PIXI_HINT, source_files.PIXI_KINDS, CUSTOM_SPRITES.id),
+            MUSIC: _Pane(
+                MUSIC_HINT,
+                (source_files.SONG,),
+                CUSTOM_MUSIC.id,
+                does="carried in the cartridge",
+            ),
         }
         for name, pane in self._panes.items():
             self._tabs.addTab(pane, name)
@@ -340,8 +369,7 @@ class SourceFilesDialog(QDialog):
         import_code.setToolTip(
             wrap_tip(
                 "Bring UberASM files in from elsewhere, rewritten to assemble "
-                "here: ROM addresses become this build's labels. You say which "
-                "level or mode each is for, as the tool's list file did."
+                "here. You say which level or mode each one is for."
             )
         )
         import_code.clicked.connect(self._import_code)
@@ -360,9 +388,7 @@ class SourceFilesDialog(QDialog):
         sprites.setToolTip(
             wrap_tip(
                 "Bring PIXI sprites into the project, rewritten to assemble "
-                "here: print declarations become labels, ROM addresses "
-                "become this build's labels, and a .json sibling comes "
-                "along unchanged."
+                "here. A sprite's .json sibling comes along with it."
             )
         )
         sprites.clicked.connect(self._import_sprites)
@@ -371,19 +397,30 @@ class SourceFilesDialog(QDialog):
         routines.setToolTip(
             wrap_tip(
                 "Bring PIXI's shared routines (%GetDrawInfo and its "
-                "siblings) in from your copy of that tool, their "
-                "macro-scoped labels made plain."
+                "siblings) in from your copy of that tool."
             )
         )
         routines.clicked.connect(self._import_routines)
         self._panes[PIXI].add_button(routines)
+
+        songs = QPushButton("&Import...")
+        songs.setToolTip(
+            wrap_tip(
+                "Copy song packages into the project's music folder from "
+                "wherever they are: each MML file and the sample folder it "
+                "names beside itself, untouched. Import in the Audio window "
+                "then compiles them."
+            )
+        )
+        songs.clicked.connect(self._import_songs)
+        self._panes[MUSIC].add_button(songs)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
         buttons.rejected.connect(self.reject)
         folder = buttons.addButton(
             "Open &Folder", QDialogButtonBox.ButtonRole.ActionRole
         )
-        folder.clicked.connect(lambda: open_folder(self.project.overlay))
+        folder.clicked.connect(self._open_folder)
         layout.addWidget(buttons)
 
         self._refill()
@@ -427,20 +464,42 @@ class SourceFilesDialog(QDialog):
         activation, rather than absorbed as though the list had always been
         showing it.
         """
-        self._stamps = (
-            source_files.overlay_stamps(self.project) if stamps is None else stamps
-        )
+        self._stamps = self._stamps_now() if stamps is None else stamps
         self._rows = source_files.rows(self.project)
+        self._songs = source_files.music_rows(self.project)
         for pane in self._panes.values():
-            pane.fill(self._rows)
+            pane.fill(self._songs if pane is self._panes[MUSIC] else self._rows)
             if pane.feature_id is not None:
                 pane.say_feature(
                     bool(source_files.feature_off(self.project, pane.feature_id))
                 )
         self._sync_buttons()
 
-    def _current(self) -> source_files.SourceFileRow | None:
+    def _current(self) -> source_files.SourceFileRow | source_files.MusicRow | None:
         return self._pane().current()
+
+    def _held(self, row: source_files.SourceFileRow | source_files.MusicRow) -> Path:
+        """Where one row's file is on disk: a package is under the project
+        folder, everything else under the overlay."""
+        if isinstance(row, source_files.MusicRow):
+            return self.project.root / row.relative
+        return self.project.overlay / row.relative
+
+    def _open_folder(self) -> None:
+        """The folder the tab in front lists: the music folder for the
+        songs, the overlay for everything else."""
+        if self._pane() is self._panes[MUSIC]:
+            open_folder(self.project.make_music_folder())
+        else:
+            open_folder(self.project.overlay)
+
+    def _stamps_now(self) -> dict[Path, tuple[int, int]]:
+        """Every file any tab lists, stamped -- the overlay's and the
+        packages' together, since either can move while somebody is away."""
+        return {
+            **source_files.overlay_stamps(self.project),
+            **source_files.music_stamps(self.project),
+        }
 
     def _sync_buttons(self) -> None:
         pane = self._pane()
@@ -496,7 +555,7 @@ class SourceFilesDialog(QDialog):
         row = self._current()
         if row is None or not row.editable:
             return
-        if not open_file(self.project.overlay / row.relative):
+        if not open_file(self._held(row)):
             QMessageBox.information(
                 self,
                 TITLE,
@@ -516,6 +575,12 @@ class SourceFilesDialog(QDialog):
         if asked != QMessageBox.StandardButton.Yes:
             return
         try:
+            if isinstance(row, source_files.MusicRow):
+                # A package is not in the build until the next compile reads
+                # the folder again, so taking one out owes no rebuild.
+                self.project.remove_music_package(row.relative.relative_to(MUSIC_DIR))
+                self._refill()
+                return
             self.project.revert_source(row.relative)
         except OSError as error:
             QMessageBox.warning(self, TITLE, str(error))
@@ -543,7 +608,7 @@ class SourceFilesDialog(QDialog):
         except ValueError:
             number = None
         dialog = SpritePropertiesDialog(
-            (self.project.overlay / row.relative).with_suffix(".json"),
+            self._held(row).with_suffix(".json"),
             self,
             project=self.project,
             number=number,
@@ -739,6 +804,40 @@ class SourceFilesDialog(QDialog):
         QMessageBox.information(self, "Import routines", "\n".join(imported.notes))
         self._offer_feature(CUSTOM_SPRITES.id)
 
+    # -- AddmusicK -------------------------------------------------------------
+
+    def _import_songs(self) -> None:
+        """Copy packages in from wherever they are. What is picked is the
+        MML; the sample folder it names comes along from beside it."""
+        chosen, _filter = QFileDialog.getOpenFileNames(
+            self,
+            "Import songs",
+            "",
+            f"AddmusicK songs ({' '.join(f'*{s}' for s in MUSIC_SUFFIXES)});;"
+            f"All files (*)",
+        )
+        if not chosen:
+            return
+        self._bring_songs([Path(path) for path in chosen])
+
+    def _bring_songs(self, paths: Iterable[Path]) -> None:
+        """A package is data the folder keeps rather than a file the build
+        reads, so bringing one in owes no rebuild: the Audio window's Import
+        is what compiles it, and that is what the row says."""
+        landed: list[Path] = []
+        for path in paths:
+            try:
+                landed += self.project.add_music_package(path)
+            except (ProjectError, OSError) as error:
+                QMessageBox.warning(self, "Import songs", str(error))
+                break
+        if not landed:
+            return
+        self._refill()
+        self.show_tab(MUSIC)
+        self._select(MUSIC_DIR / landed[0])
+        self._offer_feature(CUSTOM_MUSIC.id)
+
     def _symbols(self) -> SymbolTable | None:
         """The project build's own symbols, or ``None`` before a first build
         -- the import then leaves addresses as they are and says so."""
@@ -759,11 +858,13 @@ class SourceFilesDialog(QDialog):
         if not source_files.feature_off(self.project, feature_id):
             return
         name = FEATURES[feature_id].name
+        does = (
+            "carry the song" if feature_id == CUSTOM_MUSIC.id else "assemble the file"
+        )
         asked = QMessageBox.question(
             self,
             name,
-            f"{name} is off, so the build will not assemble the file.\n\n"
-            f"Turn it on now?",
+            f"{name} is off, so the build will not {does}.\n\nTurn it on now?",
         )
         if asked == QMessageBox.StandardButton.Yes:
             self._enable(feature_id)
@@ -825,7 +926,7 @@ class SourceFilesDialog(QDialog):
         an overlay nothing touched costs a stat apiece and stops there, and
         only a list that has actually moved is read and parsed again.
         """
-        found = source_files.overlay_stamps(self.project)
+        found = self._stamps_now()
         if found == self._stamps:
             return
         before = self._stamps
@@ -965,8 +1066,13 @@ class CreateSpriteDialog(QDialog):
         self.accept()
 
 
-def _consequence(row: source_files.SourceFileRow) -> str:
+def _consequence(row: source_files.SourceFileRow | source_files.MusicRow) -> str:
     """What removing one file costs, for the question that asks about it."""
+    if isinstance(row, source_files.MusicRow):
+        return (
+            "The package and the sample folder it names are deleted. What the "
+            "last Import compiled stays in the cartridge until the next one."
+        )
     if row.stray:
         return "It stands in for nothing, so the build already ignores it."
     if row.kind in (source_files.SOURCE, source_files.REGION):
@@ -987,9 +1093,9 @@ def _consequence(row: source_files.SourceFileRow) -> str:
             "work on it is lost."
         )
     # A file the editor writes for itself: what goes with it is not a hand
-    # edit but somebody's work in the level, palette or world map editor, and
-    # the question is the only place that gets said. Which of them it is, the
-    # row's Kind column is already saying beside it.
+    # edit but somebody's work in the level, palette, Map16 or world map
+    # editor, and the question is the only place that gets said. Which of
+    # them it is, the row's Kind column is already saying beside it.
     return (
         "The build reads the disassembly's own copy again; the editor's work "
         "in it is lost."

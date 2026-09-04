@@ -660,15 +660,10 @@ SPAWN_MARK_COLOR = QColor(0x30, 0xE0, 0x50)
 COMPLETED_MARK_COLOR = QColor(0xFF, 0xC8, 0x28)
 SECRET_MARK_COLOR = QColor(0xFF, 0x70, 0x20)
 
-# The connector lines' dash: a statement about the picture's geography --
-# where a transfer leads -- not a mark on the document, so it is longer than
-# the ants' and the two never read as one instrument.
-CONNECTOR_DASH = 4
-
 # The radius of the ring a transfer's connector ends in, in image pixels: a
 # quarter of a block, so the circle is half a cell across and sits inside the
 # landing cell rather than over its neighbours. The line's own endcap, not a
-# second mark beside it -- see `OverworldMode._transfer_marks`.
+# second mark beside it -- see `OverworldMode._connector`.
 LANDING_CAP = BLOCK / 4
 
 #: The wash over what a framed submap's border hides: the parts of the
@@ -1701,6 +1696,10 @@ class OverworldMode(QObject):
                 f"{entry + 1} of {total} -- later rows, the tile swap and "
                 f"the silent tiles still to come"
             )
+        # The window shows where the preview stands -- the reveal cap over
+        # the canvas -- so the two handles on it, that panel and the table's
+        # row selection, each move the other.
+        self._changed()
 
     def _refocus(self, document: WorldMap | None = None) -> None:
         """Recompute the tiles the focused event owns on the shown picture
@@ -6000,13 +5999,10 @@ class OverworldMode(QObject):
         colour is what says so. Both are the map key's own hues for those
         transfers, the ones the connectors and the tile marks already wear.
 
-        The connector ends in a **ring on the landing cell** -- the segment's
-        own endcap (:attr:`~shiny_mushroom.ui.canvas.Overlay.line_cap`), one
-        stroke of one pen, rather than an arrowhead drawn beside it: both
-        transfers are one-way, each direction of a two-way pipe being its own
-        entry, and a line that stops in a ring stops somewhere without a
-        second mark to read. Drawn under the marks, because a connector is an
-        aside about one record and the marks are every record there is.
+        The connector is :meth:`_connector`, the same one a selected Layer 1
+        tile draws, so "where does this go" is answered in one picture
+        whichever layer asked. Drawn under the marks, because a connector is
+        an aside about one record and the marks are every record there is.
         """
         marks: list[Overlay] = []
         leads: list[Overlay] = []
@@ -6020,13 +6016,9 @@ class OverworldMode(QObject):
                     label_right=True,
                 )
             )
-            span = marker.span
-            if self._transfer_held(marker) and span != (0, 0):
-                leads += self._two_stroke(
-                    marker.rect | marker.landing_rect,
-                    marker.table.mark,
-                    line=span,
-                    line_cap=LANDING_CAP,
+            if self._transfer_held(marker) and marker.span != (0, 0):
+                leads += self._connector(
+                    marker.rect, marker.landing_rect, marker.table.mark
                 )
         # The connectors under every mark, not among them: a landing cell is
         # very often a trigger of its own, and a line crossing a mark is an
@@ -6116,8 +6108,8 @@ class OverworldMode(QObject):
         ]
 
     def _connector_marks(self) -> list[Overlay]:
-        """Where each selected warp or exit cell leads: a dashed connector
-        to the destination cell, and a box around it.
+        """Where each selected Layer 1 cell's warp or exit leads:
+        :meth:`_connector` from the cell to the one it lands on.
 
         Selection-driven rather than always on -- forty connectors crossing
         the page seam at once would be spaghetti, and "where does this go"
@@ -6138,31 +6130,35 @@ class OverworldMode(QObject):
                     continue
                 x1, y1 = cell_at(index)
                 x2, y2 = destination
-                here = QRect(x1 * BLOCK, y1 * BLOCK, BLOCK, BLOCK)
-                there = QRect(x2 * BLOCK, y2 * BLOCK, BLOCK, BLOCK)
-                # The united box centres the segment on the two cells'
-                # midpoint, which is what the line primitive draws around.
-                span = ((x2 - x1) * BLOCK, (y2 - y1) * BLOCK)
-                marks.append(
-                    Overlay(
-                        here | there,
-                        SELECTION_LINE,
-                        width=MARK_LINE_WIDTH,
-                        line=span,
-                    )
+                marks += self._connector(
+                    QRect(x1 * BLOCK, y1 * BLOCK, BLOCK, BLOCK),
+                    QRect(x2 * BLOCK, y2 * BLOCK, BLOCK, BLOCK),
+                    color,
                 )
-                marks.append(
-                    Overlay(
-                        here | there,
-                        color,
-                        width=MARK_LINE_WIDTH,
-                        dash=CONNECTOR_DASH,
-                        line=span,
-                    )
-                )
-                marks.append(Overlay(there, SELECTION_LINE))
-                marks.append(Overlay(there, color, dash=DASH_LENGTH))
         return marks
+
+    @staticmethod
+    def _connector(here: QRect, there: QRect, color: QColor) -> list[Overlay]:
+        """Where one transfer leads: the two-line stroke from ``here``'s
+        centre to ``there``'s, ending in a ring on the landing cell.
+
+        One picture for both the layer that edits the transfers and the
+        layer that stands on their trigger tiles -- the question is the same
+        one, so the answer is drawn the same way, in the table's own hue.
+
+        The ring is the segment's own endcap
+        (:attr:`~shiny_mushroom.ui.canvas.Overlay.line_cap`), one stroke of
+        one pen, rather than an arrowhead or a box drawn beside it: both
+        transfers are one-way, each direction of a two-way pipe being its
+        own entry, and a line that stops in a ring stops somewhere without a
+        second mark to read.
+        """
+        # The united box centres the segment on the two cells' midpoint,
+        # which is what the line primitive draws around.
+        span = (there.x() - here.x(), there.y() - here.y())
+        return OverworldMode._two_stroke(
+            here | there, color, line=span, line_cap=LANDING_CAP
+        )
 
     @staticmethod
     def _two_stroke(

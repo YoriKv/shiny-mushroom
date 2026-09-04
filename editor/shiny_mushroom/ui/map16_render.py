@@ -67,20 +67,19 @@ class Viewed:
         self.layer2_definition = definition
 
 
-def sheet_image(viewed: Viewed) -> QImage:
-    """The whole tileset: :data:`TILE_COUNT` blocks,
-    :data:`SHEET_COLUMNS` to a row."""
+def sheet_image(viewed: Viewed, tiles: int = TILE_COUNT) -> QImage:
+    """The whole tileset: ``tiles`` blocks -- :data:`TILE_COUNT` for the
+    tables, the custom tiles' four pages for their sheet --
+    :data:`SHEET_COLUMNS` to a row, drawn from block 0 up."""
     blocks = Blocks(viewed)
     lines: list[bytes] = []
-    for row in range(TILE_COUNT // SHEET_COLUMNS):
+    for row in range(tiles // SHEET_COLUMNS):
         drawn = [
             blocks.rows(row * SHEET_COLUMNS + column) for column in range(SHEET_COLUMNS)
         ]
         lines.extend(b"".join(block[y] for block in drawn) for y in range(BLOCK))
     return raster_to_image(
-        Raster(
-            SHEET_COLUMNS * BLOCK, TILE_COUNT // SHEET_COLUMNS * BLOCK, b"".join(lines)
-        )
+        Raster(SHEET_COLUMNS * BLOCK, tiles // SHEET_COLUMNS * BLOCK, b"".join(lines))
     )
 
 

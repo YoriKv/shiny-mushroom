@@ -657,8 +657,7 @@ def _song_list(entries: Sequence[tuple[int, str]]) -> str:
         f"{value:02X} {name}" for value, name in rows if value > ORIGINAL_GLOBALS
     ]
     return (
-        "Globals:\n" + "\n".join(globals_)
-        + "\n\nLocals:\n" + "\n".join(locals_) + "\n"
+        "Globals:\n" + "\n".join(globals_) + "\n\nLocals:\n" + "\n".join(locals_) + "\n"
     )
 
 
@@ -750,20 +749,20 @@ def compile_songs(
     return read_run(work, dict(entries), log)
 
 
-def _sample_folders(mml: Path) -> list[Path]:
-    """The sample folders one MML file names, beside it.
-
-    ``#path "name"`` is how a package says where its own waveforms are, and the
-    folder is a sibling of the file. A song using only the shipped samples
-    names none.
-    """
+def sample_folders_named(mml: Path) -> list[Path]:
+    """The sample folders one MML file names beside itself, whether or not
+    they are there -- ``#path "name"`` is how a package says where its own
+    waveforms are, and the folder is a sibling of the file. A song using
+    only the shipped samples names none."""
     text = mml.read_text(encoding="utf-8", errors="replace")
-    found = []
-    for match in re.finditer(r'#path\s+"([^"]+)"', text):
-        folder = mml.parent / match.group(1)
-        if folder.is_dir():
-            found.append(folder)
-    return found
+    return [
+        mml.parent / match.group(1) for match in re.finditer(r'#path\s+"([^"]+)"', text)
+    ]
+
+
+def _sample_folders(mml: Path) -> list[Path]:
+    """The sample folders one MML file names that are actually beside it."""
+    return [folder for folder in sample_folders_named(mml) if folder.is_dir()]
 
 
 # -- writing it into the disassembly ------------------------------------------
@@ -823,7 +822,6 @@ def fragment_text(found: Soundtrack, tool: str = "") -> str:
             for name, value in zip(names, found.aram_returns, strict=True)
         )
     )
-
 
     out.append(
         "\n; The driver, and the terminator that closes its stream and names\n"
@@ -928,9 +926,7 @@ def tracks_text(found: Soundtrack) -> str:
     stated: dict[str, int] = {}
     for text in found.patch.values():
         stated.update(_defines(text))
-    rows = {song.value for song in found.songs} | set(
-        range(1, found.globals + 1)
-    )
+    rows = {song.value for song in found.songs} | set(range(1, found.globals + 1))
     out = [_TRACKS_HEADER]
     for stock, amk in TRACK_NAMES.items():
         value = stated.get(amk)

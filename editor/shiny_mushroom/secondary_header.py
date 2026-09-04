@@ -145,10 +145,11 @@ _LAYER3_SETTINGS = Choices(
 )
 
 #: The eight scroll pairs the nibble picks out of ``L2HorzScrollSettings``
-#: and ``L2VertScrollSettings``, horizontal first. The nibble has sixteen
-#: values and the upper eight scroll not at all in this ROM -- Lunar Magic
-#: 3.00+ hijack slots -- so they stay selectable as bare numbers.
-_LAYER2_SCROLLS = Choices(
+#: and ``L2VertScrollSettings``, horizontal first, as the stock game reads
+#: it. The nibble has sixteen values and the upper eight scroll not at all
+#: on a cartridge without the ``lunar-magic-levels`` feature -- its hijack
+#: slots, ``$00`` in both tables -- so they stay selectable as bare numbers.
+_STOCK_LAYER2_SCROLLS = Choices(
     (
         Choice(0, "H variable, V slow"),
         Choice(1, "H variable, V constant"),
@@ -158,6 +159,33 @@ _LAYER2_SCROLLS = Choices(
         Choice(5, "H variable, V variable"),
         Choice(6, "H constant, V variable"),
         Choice(7, "H none, V constant"),
+    )
+)
+
+#: The sixteen values of the nibble on a cartridge with the feature, named
+#: both ways it is read there. As a pair: the stock eight, then the four
+#: pairs Lunar Magic added to the tables' upper half and four that do not
+#: scroll. As the feature reads it for a level whose Lunar Magic settings
+#: separate the scroll: the horizontal setting whole, one of the first
+#: sixteen of :data:`smw_tools.lunar_magic_levels.SCROLL_SETTINGS`.
+_LUNAR_MAGIC_LAYER2_SCROLLS = Choices(
+    (
+        Choice(0, "H variable, V slow", "separate: H none"),
+        Choice(1, "H variable, V constant", "separate: H constant"),
+        Choice(2, "H constant, V constant", "separate: H medium (1:2)"),
+        Choice(3, "H none, V none", "separate: H slow (1:32)"),
+        Choice(4, "H constant, V none", "separate: H medium 2 (1:4)"),
+        Choice(5, "H variable, V variable", "separate: H medium 3 (1:8)"),
+        Choice(6, "H constant, V variable", "separate: H medium 4 (1:16)"),
+        Choice(7, "H none, V constant", "separate: H slow 2 (1:64)"),
+        Choice(8, "H variable, V medium 2 (LM)", "separate: H fast (6:5)"),
+        Choice(9, "H variable, V medium 3 (LM)", "separate: H none"),
+        Choice(10, "H variable, V medium 4 (LM)", "separate: H none"),
+        Choice(11, "H variable, V slow 2 (LM)", "separate: H none"),
+        Choice(12, "H none, V none (LM)", "separate: H none"),
+        Choice(13, "H none, V none (LM)", "separate: H none"),
+        Choice(14, "H none, V none (LM)", "separate: H none"),
+        Choice(15, "H none, V none (LM)", "separate: H none"),
     )
 )
 
@@ -184,13 +212,18 @@ BG_POSITIONS = Choices(
 )
 
 
-def fields() -> tuple[Field, ...]:
+def fields(lunar_magic: bool = False) -> tuple[Field, ...]:
     """The secondary header's rows, in the order the panel shows them:
     what shapes the entrance first, then where it lands, then the layers.
 
     Every bit of all four bytes is covered, the midway-entrance screen
     included: it is read only on the way into a level entered from the
     overworld, but a byte written back has to carry it either way.
+
+    ``lunar_magic`` is whether the cartridge has the ``lunar-magic-levels``
+    feature, whose tables give the scroll nibble's upper eight values a
+    meaning and whose settings can read the nibble as a horizontal setting
+    alone: the Layer 2 scroll field's choices say so only then.
     """
     return (
         Field(
@@ -266,8 +299,15 @@ def fields() -> tuple[Field, ...]:
             0,
             4,
             4,
-            "The level's Layer 2 scroll pair.",
-            choices=_LAYER2_SCROLLS,
+            (
+                "The level's Layer 2 scroll pair -- or, with the Lunar Magic "
+                "settings' separate scroll set, its horizontal setting alone."
+                if lunar_magic
+                else "The level's Layer 2 scroll pair."
+            ),
+            choices=_LUNAR_MAGIC_LAYER2_SCROLLS
+            if lunar_magic
+            else _STOCK_LAYER2_SCROLLS,
         ),
         _bit_field(
             "layer3",

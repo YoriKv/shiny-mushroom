@@ -69,6 +69,7 @@ from shiny_mushroom.fields import (
 from shiny_mushroom.hexnum import hexnum, hexspot
 from shiny_mushroom.level import ANY_SHAPE, SCREEN_COLUMNS, Geometry
 from shiny_mushroom.metadata import OBJECTS
+from smw_tools import custom_tiles, header_bypasses
 
 #: Bytes per record, and the one exception. The screen exit's fourth byte is the
 #: destination level's low byte.
@@ -147,11 +148,12 @@ class ObjectKind(Enum):
     STANDARD = "standard"  # a tileset object: number $01-$3F
     EXTENDED = "extended"  # number $00, settings $02 and up: one fixed tile
     COMMAND = "command"  # number $00, settings $00-$01: exit and screen jump
+    BYPASS = "bypass"  # number $26 or $28: the music and time limit settings
 
     @classmethod
     def of(cls, number: int, settings: int) -> ObjectKind:
         if number != EXTENDED_OBJECT:
-            return cls.STANDARD
+            return cls.BYPASS if header_bypasses.is_bypass(number) else cls.STANDARD
         return cls.COMMAND if settings in (SCREEN_EXIT, SCREEN_JUMP) else cls.EXTENDED
 
 
@@ -207,7 +209,15 @@ class LevelObject:
     @property
     def sized(self) -> bool:
         """Whether :attr:`width` and :attr:`height` were read or assumed."""
-        return self.number in SIZED_OBJECTS
+        return self.number in SIZED_OBJECTS or self.direct
+
+    @property
+    def direct(self) -> bool:
+        """Whether this is one of Lunar Magic's direct-tile objects -- ``22``,
+        ``23``, ``27`` or ``29`` -- whose record names the Map16 tile it
+        places and whose extent the format itself states
+        (:mod:`smw_tools.custom_tiles`)."""
+        return custom_tiles.is_direct(self.number)
 
     @property
     def width(self) -> int:
@@ -225,12 +235,12 @@ class LevelObject:
         fallback for when nothing was observed. What the byte turns out to mean
         per object is measured; see :meth:`fields`.
         """
-        return _footprint(self.number, self.settings)[0]
+        return _footprint(self.number, self.settings, self.data)[0]
 
     @property
     def height(self) -> int:
         """Blocks down, as far as the format alone says. See :attr:`width`."""
-        return _footprint(self.number, self.settings)[1]
+        return _footprint(self.number, self.settings, self.data)[1]
 
     @property
     def movable(self) -> bool:
@@ -238,9 +248,10 @@ class LevelObject:
 
         A command has none: the bits a position would sit in are the screen it
         acts on, so dragging one would silently retarget a screen exit rather
-        than move anything.
+        than move anything. Nor has a bypass: the same bits are its payload,
+        and dragging one would retune the level's music or reset its clock.
         """
-        return self.kind is not ObjectKind.COMMAND
+        return self.kind not in (ObjectKind.COMMAND, ObjectKind.BYPASS)
 
     def placed_at(self, column: int, row: int, shape: Geometry) -> LevelObject:
         """This object with its origin moved to ``(column, row)``.
@@ -324,10 +335,13 @@ class LevelObject:
           above. The record's own bytes are on the last row either way, so the
           byte is never out of sight.
         - **A command's own fields replace the position**, which it does not
-          have: a screen exit is a destination and a screen.
+          have: a screen exit is a destination and a screen. So do a bypass's,
+          for the same reason -- the bits are its track or its clock.
         """
         if self.kind is ObjectKind.COMMAND:
             return self._command_fields()
+        if self.kind is ObjectKind.BYPASS:
+            return self._bypass_fields(tileset)
         rows: list[Field] = [
             self._number_field(tileset),
             readout("Kind", lambda obj: obj.kind.value.capitalize()),
@@ -341,12 +355,96 @@ class LevelObject:
         # settings byte *is* the object's number and is already the picker
         # above. Two boxes over one byte is two ways to say the same thing, and
         # they disagree the moment one of them is typed into.
-        if self.kind is not ObjectKind.EXTENDED:
+        if self.direct:
+            rows += self._direct_fields()
+        elif self.kind is not ObjectKind.EXTENDED:
             size = OBJECTS.size_of(tileset, self.number)
             rows += self._size_fields(size)
             if not size.accounted_for:
                 rows += self._unmeasured_fields(size)
         rows += record_rows("Object")
+        return rows
+
+    def _direct_fields(self) -> list[Field]:
+        """A direct-tile object's own rows: the tile it places, its extent,
+        and -- for a ``27`` -- the form and the selection it repeats.
+
+        The extent is keyed ``width`` and ``height`` exactly as a measured
+        size is, so the resize keys drive it without knowing whether it sits
+        in the settings byte's nibbles or, for the multi-screen form, in a
+        seven-bit width and a byte of its own. What the format says of each
+        form is :data:`smw_tools.custom_tiles.FORMS`.
+        """
+        whole = whole_direct(self)
+        rows: list[Field] = [
+            Field(
+                key="tile",
+                label="Tile",
+                kind=Number(
+                    0,
+                    _DIRECT_TILE_MAX[whole.number],
+                    hexadecimal=True,
+                    digits=3 if whole.number in _PAGE01 else 4,
+                ),
+                read=direct_tile_of,
+                write=_write_direct_tile,
+                hint="The Map16 tile this object places: pages 0 and 1 are "
+                "the game's own, page 2 upward the project's custom tiles.",
+            )
+        ]
+        form = direct_form_of(whole)
+        if form is not None and form.wide:
+            reads = (
+                (metadata.WIDTH, lambda obj: obj.settings & 0x7F, _write_wide_width),
+                (
+                    metadata.HEIGHT,
+                    lambda obj: whole_direct(obj).data[6],
+                    _write_wide_height,
+                ),
+            )
+            maximum = custom_tiles.WIDE_MAX_WIDTH
+        else:
+            reads = (
+                (metadata.WIDTH, _low_nibble, _write_low),
+                (metadata.HEIGHT, _high_nibble, _write_high),
+            )
+            maximum = MAX_EXTENT
+        for role, read, write in reads:
+            rows.append(
+                _extent_field(
+                    role=role,
+                    read=read,
+                    write=write,
+                    maximum=maximum,
+                    runaway=False,
+                    held=read(whole),
+                    where=(
+                        "the settings byte and the record's sixth byte"
+                        if form is not None and form.wide
+                        else "the settings byte"
+                    ),
+                )
+            )
+        if form is not None:
+            rows.append(
+                readout(
+                    "Form",
+                    lambda obj: _FORM_NAMES[direct_form_of(whole_direct(obj)).code],
+                    hint="Which of object 27's shapes this record is: the "
+                    "tile alone over the rectangle, a selection of "
+                    "consecutive tiles placed as it is, or that selection "
+                    "repeated over the rectangle.",
+                )
+            )
+            if form.selection_byte or not form.sized:
+                rows.append(
+                    readout(
+                        "Selection",
+                        lambda obj: _selection_text(whole_direct(obj)),
+                        hint="The rectangle of consecutive tiles the object "
+                        "repeats, sixteen tiles to a row of the page.",
+                    )
+                )
         return rows
 
     def _size_fields(self, size: metadata.ObjectSize) -> list[Field]:
@@ -562,6 +660,74 @@ class LevelObject:
         rows += record_rows("Object")
         return rows
 
+    def _bypass_fields(self, tileset: int) -> list[Field]:
+        """A music or time limit bypass's fields, which are not a position.
+
+        Both records keep their payload in the bits a placed object spends on
+        one (:mod:`smw_tools.header_bypasses`), so what is offered here is the
+        setting the record *is*: the track, or the time limit and whether it is
+        forced. The object number is shown and not picked -- the two numbers
+        read the same three bytes as different things, so switching between
+        them would reinterpret a track as a pair of digits rather than convert
+        anything.
+        """
+        rows: list[Field] = [
+            readout(
+                "Object",
+                lambda obj: obj.name(tileset),
+                "Which bypass this is. The two spell their payloads "
+                "differently, so an edit cannot switch between them.",
+            ),
+            readout("Kind", lambda obj: obj.kind.value.capitalize()),
+            screen_row(
+                "Which screen the loader has reached when it reads this "
+                "record. A bypass acts on the level and not on a screen; it "
+                "is in the stream's order like anything else."
+            ),
+        ]
+        if self.number == header_bypasses.MUSIC:
+            rows.append(
+                Field(
+                    key="track",
+                    label="Track",
+                    kind=Number(
+                        0x00, header_bypasses.MAX_TRACK, hexadecimal=True, digits=2
+                    ),
+                    read=_bypass_track,
+                    write=_write_bypass_track,
+                    hint="The music value this level plays, in place of the "
+                    "eight its header can name. $00 is silence; the tracks "
+                    "the game ships are $01-$1D.",
+                )
+            )
+        else:
+            rows += [
+                Field(
+                    key="time-limit",
+                    label="Time limit",
+                    kind=Number(
+                        0x000, header_bypasses.MAX_TIME, hexadecimal=True, digits=3
+                    ),
+                    read=lambda obj: header_bypasses.time_limit(_bypass_record(obj)),
+                    write=_write_bypass_time,
+                    hint="What the clock starts at, three digits as the "
+                    "status bar shows them. Zero is no bypass at all unless "
+                    "the reset is forced, which is what leaves a level with "
+                    "no time limit reachable.",
+                ),
+                Field(
+                    key="force-reset",
+                    label="Reset on every entry",
+                    kind=Switch(),
+                    read=lambda obj: int(header_bypasses.forced(_bypass_record(obj))),
+                    write=_write_bypass_force,
+                    hint="Start the clock again whenever the level is "
+                    "entered, rather than only on the way in from the map.",
+                ),
+            ]
+        rows += record_rows("Object")
+        return rows
+
     @property
     def _number_text(self) -> str:
         if self.number == EXTENDED_OBJECT:
@@ -570,9 +736,10 @@ class LevelObject:
 
     @property
     def _position_text(self) -> str:
-        # A command has no position of its own -- the bits a position would sit
-        # in are the screen it acts on -- so the screen is the whole answer.
-        if self.kind is ObjectKind.COMMAND:
+        # Neither a command nor a bypass has a position of its own -- the bits
+        # one would sit in are the screen a command acts on and the payload a
+        # bypass carries -- so the screen is the whole answer.
+        if self.kind in (ObjectKind.COMMAND, ObjectKind.BYPASS):
             return f"screen {hexnum(self.screen)}"
         return hexspot(self.column, self.row)
 
@@ -721,6 +888,150 @@ def _write_settings(obj: LevelObject, value: int) -> LevelObject:
     return replace(obj, settings=value)
 
 
+#: The direct-tile objects that name a page-0 or page-1 tile in one byte.
+_PAGE01 = (custom_tiles.DIRECT_PAGE0, custom_tiles.DIRECT_PAGE1)
+
+#: The largest tile number each direct-tile object's record can name.
+_DIRECT_TILE_MAX = {
+    custom_tiles.DIRECT_PAGE0: 0x1FF,
+    custom_tiles.DIRECT_PAGE1: 0x1FF,
+    custom_tiles.DIRECT_LOW_PAGES: 0x7FFF,
+    custom_tiles.DIRECT_HIGH_PAGES: 0x7FFF,
+}
+
+_FORM_NAMES = ("Single tile", "Selection as it is", "Selection tiled", "Multi-screen")
+
+
+def _extra_bytes(obj: LevelObject) -> bytes:
+    """The bytes past the third a Lunar Magic object's record carries, made
+    whole: what the record holds, padded to the length its number and form
+    say. A fresh record holds none and gets a page-2 tile zero, form 0."""
+    number = obj.number
+    tail = bytes(obj.data[3:])
+    if number in _PAGE01:
+        return tail[:1].ljust(1, b"\x00")
+    if number == custom_tiles.USER_DEFINED:
+        return tail[:2].ljust(2, b"\x00")
+    if number in (custom_tiles.DIRECT_LOW_PAGES, custom_tiles.DIRECT_HIGH_PAGES):
+        if not tail:
+            tail = bytes((custom_tiles.FIRST_PAGE, 0))
+        size = custom_tiles.record_size(number, obj.settings, tail[0]) - RECORD_SIZE
+        return tail[:size].ljust(size, b"\x00")
+    return b""
+
+
+def whole_direct(obj: LevelObject) -> LevelObject:
+    """``obj`` with its record's bytes complete, so a byte past the third can
+    be read or written whatever the record arrived holding."""
+    extra = _extra_bytes(obj)
+    if len(obj.data) >= RECORD_SIZE + len(extra) and obj.data[RECORD_SIZE:] == extra:
+        return obj
+    head = bytes(obj.data[:RECORD_SIZE]).ljust(RECORD_SIZE, b"\x00")
+    return replace(obj, data=head + extra)
+
+
+def direct_form_of(obj: LevelObject) -> custom_tiles.Form | None:
+    """A ``27``/``29``'s form, or ``None`` for the one-byte objects."""
+    if obj.number in (custom_tiles.DIRECT_LOW_PAGES, custom_tiles.DIRECT_HIGH_PAGES):
+        return custom_tiles.form_of(whole_direct(obj).data[3])
+    return None
+
+
+def direct_tile_of(obj: LevelObject) -> int:
+    """The Map16 tile a direct-tile record names."""
+    whole = whole_direct(obj)
+    if whole.number in _PAGE01:
+        return ((whole.number & 0x01) << 8) | whole.data[3]
+    page = whole.data[3] & 0x3F
+    if whole.number == custom_tiles.DIRECT_HIGH_PAGES:
+        page |= custom_tiles.HIGH_PAGE_BIT
+    return (page << 8) | whole.data[4]
+
+
+def _write_direct_tile(obj: LevelObject, value: int) -> LevelObject:
+    """The record naming ``value``: a page-0/1 object picks ``22`` or ``23``
+    by the tile's page, a ``27``/``29`` by whether the page is past ``$3F``."""
+    whole = whole_direct(obj)
+    data = bytearray(whole.data)
+    if whole.number in _PAGE01:
+        value &= 0x1FF
+        data[3] = value & 0xFF
+        return replace(
+            whole, number=custom_tiles.DIRECT_PAGE0 | (value >> 8), data=bytes(data)
+        )
+    value &= 0x7FFF
+    page = value >> 8
+    data[3] = (data[3] & 0xC0) | (page & 0x3F)
+    data[4] = value & 0xFF
+    number = (
+        custom_tiles.DIRECT_HIGH_PAGES
+        if page & custom_tiles.HIGH_PAGE_BIT
+        else custom_tiles.DIRECT_LOW_PAGES
+    )
+    return replace(whole, number=number, data=bytes(data))
+
+
+def _write_wide_width(obj: LevelObject, value: int) -> LevelObject:
+    keep = obj.settings & custom_tiles.CONDITIONAL_BIT
+    return _write_settings(obj, keep | (value & custom_tiles.WIDE_WIDTH_MASK))
+
+
+def _write_wide_height(obj: LevelObject, value: int) -> LevelObject:
+    return _command_byte(whole_direct(obj), 6, value & 0xFF)
+
+
+def _selection_text(obj: LevelObject) -> str:
+    form = direct_form_of(obj)
+    if form is None:
+        return "1 x 1"
+    byte = obj.data[5] if form.selection_byte else obj.settings
+    return f"{(byte & 0x0F) + 1} x {(byte >> 4) + 1}"
+
+
+def _bypass_record(obj: LevelObject) -> bytes:
+    """A bypass's three bytes, made whole.
+
+    A record the catalog has just handed out carries none -- everything a
+    stream computes is left at zero there -- and its payload is the whole of
+    what the encoder writes for it, so a short one is filled in with the fresh
+    record for its number rather than with zeros, which would name no object
+    at all.
+    """
+    if len(obj.data) < RECORD_SIZE:
+        return header_bypasses.blank(obj.number)
+    return bytes(obj.data[:RECORD_SIZE])
+
+
+def _bypass_track(obj: LevelObject) -> int:
+    """The track a music bypass names. A record naming none -- which this
+    editor never writes, and an imported one may -- reads as ``$00``."""
+    return header_bypasses.track(_bypass_record(obj)) or 0
+
+
+def _write_bypass_track(obj: LevelObject, value: int) -> LevelObject:
+    return replace(obj, data=header_bypasses.with_track(_bypass_record(obj), value))
+
+
+def _write_bypass_time(obj: LevelObject, value: int) -> LevelObject:
+    record = _bypass_record(obj)
+    return replace(
+        obj,
+        data=header_bypasses.with_time_limit(
+            record, value, header_bypasses.forced(record)
+        ),
+    )
+
+
+def _write_bypass_force(obj: LevelObject, value: int) -> LevelObject:
+    record = _bypass_record(obj)
+    return replace(
+        obj,
+        data=header_bypasses.with_time_limit(
+            record, header_bypasses.time_limit(record), bool(value)
+        ),
+    )
+
+
 def _command_byte(obj: LevelObject, index: int, value: int) -> LevelObject:
     """The record with one of its raw bytes replaced.
 
@@ -778,11 +1089,13 @@ def parse_objects(stream: bytes, shape: Geometry) -> list[LevelObject]:
             break
 
         number = ((first & 0x60) >> 1) | (second >> 4)
-        size = (
-            SCREEN_EXIT_SIZE
-            if number == EXTENDED_OBJECT and settings == SCREEN_EXIT
-            else RECORD_SIZE
-        )
+        if number == EXTENDED_OBJECT:
+            size = SCREEN_EXIT_SIZE if settings == SCREEN_EXIT else RECORD_SIZE
+        else:
+            # Lunar Magic's direct-tile objects and its reserved one are
+            # longer, and a 27's length is in its fourth byte.
+            fourth = stream[cursor + 3] if cursor + 3 < len(stream) else None
+            size = custom_tiles.record_size(number, settings, fourth)
         record = stream[cursor : cursor + size]
         if len(record) < size:
             # A stream that ends inside its last record. Reading the missing
@@ -794,21 +1107,26 @@ def parse_objects(stream: bytes, shape: Geometry) -> list[LevelObject]:
         # one before.
         screen += first >> 7
         command = number == EXTENDED_OBJECT and settings in (SCREEN_EXIT, SCREEN_JUMP)
+        # A bypass spends the same low bits on its payload, and acts on the
+        # level rather than on a screen -- so it is placed where the cursor
+        # has got to and reads no position out of its record.
+        bypass = header_bypasses.is_bypass(number)
         # A command names its own screen in the same low bits a normal object
         # would use for a position, and it applies to that screen whatever the
         # cursor is.
         placed_on = (first & 0x1F) if command else screen
+        positioned = not (command or bypass)
 
         # Across the screen and along the level, whichever axes those are. Both
         # fields sit in the same bits either way: what a vertical level changes
         # is which axis each one names, which is what the loader's nibble swap
         # accomplishes.
-        along = placed_on * SCREEN_COLUMNS + (0 if command else second & 0x0F)
+        along = placed_on * SCREEN_COLUMNS + (second & 0x0F if positioned else 0)
         # Bit 4 adds $100 to the write pointer: sixteen rows down a horizontal
         # screen, the right half of a vertical one -- the same sixteen entries
         # either way.
         far_half = SCREEN_COLUMNS if first & 0x10 else 0
-        across = 0 if command else (first & 0x0F) + far_half
+        across = ((first & 0x0F) + far_half) if positioned else 0
         column, row = (across, along) if shape.vertical else (along, across)
 
         objects.append(
@@ -869,7 +1187,9 @@ def encode_objects(
     Commands keep their own bytes. A screen exit's destination and its secondary
     entrance flag are fields nothing above understands, and a command names its
     screen outright rather than counting to it, so re-deriving either would be
-    inventing data.
+    inventing data. A bypass keeps its own two payload bytes for the same
+    reason and takes the cursor's handling like any other record, since the
+    one bit of byte 0 it does not spend on payload is the new-screen flag.
     """
     stream = bytearray()
     uids: list[int] = []
@@ -915,10 +1235,20 @@ def _record_bytes(obj: LevelObject, shape: Geometry, new_screen: bool) -> bytes:
     the object number split across both bytes, the across axis in byte 0's low
     five bits -- the fifth being the ``+$100`` half-screen step -- and the along
     axis's position within its screen in byte 1's low nibble.
+
+    A bypass has no position in those bits: they are its track or its clock, so
+    its own two bytes come through and only the new-screen flag is written.
     """
+    if obj.kind is ObjectKind.BYPASS:
+        payload = _bypass_record(obj)
+        return bytes((_first_byte(obj, shape, new_screen), payload[1], payload[2]))
     along = obj.row if shape.vertical else obj.column
     second = ((obj.number & 0x0F) << 4) | (along % SCREEN_COLUMNS)
-    return bytes((_first_byte(obj, shape, new_screen), second, obj.settings))
+    head = bytes((_first_byte(obj, shape, new_screen), second, obj.settings))
+    # A Lunar Magic object carries what its number and form say past the
+    # three -- the tile it places, and a selection's size -- and a fresh one
+    # is made whole here rather than left short for the loader to misread.
+    return head + _extra_bytes(obj)
 
 
 def _first_byte(obj: LevelObject, shape: Geometry, new_screen: bool) -> int:
@@ -928,14 +1258,29 @@ def _first_byte(obj: LevelObject, shape: Geometry, new_screen: bool) -> int:
     Its own function because :func:`encode_objects` has to ask what the byte
     would be before it commits to the new-screen bit -- the one combination
     that reads as :data:`TERMINATOR` is refused there.
+
+    A bypass's low bits are payload rather than a position, so the byte is its
+    own with the flag laid over it.
     """
+    if obj.kind is ObjectKind.BYPASS:
+        payload = _bypass_record(obj)[0] & (header_bypasses.NEW_SCREEN - 1)
+        return (0x80 if new_screen else 0x00) | payload
     across = obj.column if shape.vertical else obj.row
     return (0x80 if new_screen else 0x00) | ((obj.number & 0x30) << 1) | (across & 0x1F)
 
 
-def _footprint(number: int, settings: int) -> tuple[int, int]:
-    """Blocks covered, where the format says. One block where it does not."""
-    if number in SIZED_OBJECTS:
+def _footprint(number: int, settings: int, data: bytes = b"") -> tuple[int, int]:
+    """Blocks covered, where the format says. One block where it does not.
+
+    A direct-tile object states its extent in the record: the settings byte's
+    nibbles in every form but the multi-screen one, whose width is seven bits
+    of the settings byte and whose height is the record's sixth byte."""
+    if number in SIZED_OBJECTS or number in _PAGE01:
+        return (settings & 0x0F) + 1, (settings >> 4) + 1
+    if number in (custom_tiles.DIRECT_LOW_PAGES, custom_tiles.DIRECT_HIGH_PAGES):
+        if len(data) > 3 and custom_tiles.form_of(data[3]).wide:
+            height = data[6] if len(data) > 6 else 0
+            return (settings & custom_tiles.WIDE_WIDTH_MASK) + 1, height + 1
         return (settings & 0x0F) + 1, (settings >> 4) + 1
     return 1, 1
 

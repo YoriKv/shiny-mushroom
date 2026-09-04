@@ -71,9 +71,8 @@ class Addresses:
     #:
     #: Kept rather than unpacked and dropped, because a reader that has these
     #: addresses is reading *that* cartridge, and some of what it needs is
-    #: not an address: how many runs the level packer has
-    #: (:func:`smw_tools.levels.has_level_bank`, off
-    #: :attr:`~smw_tools.bases.RomBase.built_at`), which capabilities it
+    #: not an address: how long it is
+    #: (:attr:`~smw_tools.bases.RomBase.built_at`), which capabilities it
     #: carries, what its RAM map is. Re-deriving it at the far end means
     #: re-deciding the base, the features *and* the size, which is three
     #: chances to answer differently from the addresses in hand.
@@ -157,6 +156,12 @@ class Addresses:
     #: The four pipe Map16 tables, as the cartridge's own pointers to them.
     #: See :data:`PIPE_TILES`.
     pipe_map16_pointers: int
+
+    #: The custom tiles' definitions and acts-like words -- the
+    #: ``custom-tiles`` feature's two tables, and ``None`` on a cartridge
+    #: without it (:mod:`shiny_mushroom.custom_tiles`).
+    custom_tiles_defs: int | None
+    custom_tiles_acts_like: int | None
 
     #: The overworld's per-translevel tables: which event a level's clear
     #: fires, and the walk the player takes afterwards.
@@ -381,6 +386,8 @@ class Addresses:
             vertical_table=roles["vertical_table"],
             map16_bg_defs=roles["map16_background_definitions"],
             pipe_map16_pointers=roles["pipe_map16_pointers"],
+            custom_tiles_defs=roles.get("custom_tiles_definitions"),
+            custom_tiles_acts_like=roles.get("custom_tiles_acts_like"),
             overworld_level_events=roles["overworld_level_events"],
             overworld_level_names=roles["overworld_level_names"],
             overworld_level_directions=roles["overworld_level_directions"],
@@ -463,12 +470,9 @@ class Addresses:
 
         ``rom_size`` is **how long that cartridge is**, as a
         :mod:`smw_tools.rom_sizes` id, and it travels with the features
-        because it is the same kind of fact: a feature that uses an expansion
-        bank where the cartridge has one is read at one address on a 1 MB
-        cartridge and another on a 512 KB one
-        (:attr:`smw_tools.features.Feature.bank_rom_size`). ``None`` is the
-        base's stock size, which is what a build assembles when nobody has
-        said. A caller holding the image can read the answer off it --
+        because it is the same kind of fact about the cartridge. ``None`` is
+        the base's stock size, which is what a build assembles when nobody
+        has said. A caller holding the image can read the answer off it --
         :func:`smw_tools.rom_sizes.size_for` over its length -- and one
         holding a project takes its build's record
         (:attr:`shiny_mushroom.project.Project.rom_size_built`).

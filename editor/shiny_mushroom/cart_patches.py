@@ -20,11 +20,13 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, fields, replace
 from typing import TYPE_CHECKING
 
-from shiny_mushroom import level_graphics, palettes
+from shiny_mushroom import custom_tiles, level_graphics, palettes
 from shiny_mushroom.addresses import LAYER2_IS_BACKGROUND
 from shiny_mushroom.header import HEADER_SIZE
 from shiny_mushroom.hexnum import hexnum
 from shiny_mushroom.layer2_table import Layer2Entry, Layer2TableError
+from shiny_mushroom.layer3 import REGION_IDS as LAYER3_REGIONS
+from shiny_mushroom.lunar_magic import REGION_IDS as LUNAR_MAGIC_REGIONS
 from shiny_mushroom.map16 import Map16Tables
 from shiny_mushroom.overworld import (
     destroy_sections,
@@ -45,10 +47,14 @@ from shiny_mushroom.rom_patches import (
     layer2_background_patch,
     layer2_entry_patch,
     layer2_level_patch,
+    layer3_patch,
+    layer3_tables,
     level_graphics_patch,
     level_graphics_rows,
     level_graphics_table_patch,
     level_patch,
+    lunar_magic_patch,
+    lunar_magic_tables,
     object_stream,
     overworld_patches,
     secondary_entrance_tables,
@@ -646,6 +652,56 @@ def saved_secondary_patch(
     )
 
 
+def saved_lunar_magic_patch(
+    project: Project | None,
+    rom: bytes | None,
+    where: Addresses,
+    status: Status,
+    held_level: int | None = None,
+) -> dict[int, bytes]:
+    """The project's saved Lunar Magic tables, over the image's own --
+    :func:`saved_secondary_patch`'s rule for the four tables the
+    ``lunar-magic-levels`` feature adds, and nothing on an image whose base
+    has no such tables."""
+    tables = lunar_magic_tables(where)
+    if tables is None:
+        return {}
+    return _saved_table_patch(
+        project,
+        rom,
+        LUNAR_MAGIC_REGIONS,
+        tables,
+        "Lunar Magic settings",
+        where,
+        status,
+        held_row=held_level,
+    )
+
+
+def saved_layer3_patch(
+    project: Project | None,
+    rom: bytes | None,
+    where: Addresses,
+    status: Status,
+    held_level: int | None = None,
+) -> dict[int, bytes]:
+    """The project's saved Layer 3 tables, over the image's own -- the Lunar
+    Magic tables' rule, for the four the ``layer3-settings`` feature adds."""
+    tables = layer3_tables(where)
+    if tables is None:
+        return {}
+    return _saved_table_patch(
+        project,
+        rom,
+        LAYER3_REGIONS,
+        tables,
+        "Layer 3 settings",
+        where,
+        status,
+        held_row=held_level,
+    )
+
+
 def saved_secondary_entrances_patch(
     project: Project | None,
     rom: bytes | None,
@@ -769,6 +825,37 @@ def map16_patch(
         return {}
 
 
+def custom_tiles_patch(
+    held: bytes | None,
+    project: Project | None,
+    rom: bytes | None,
+    where: Addresses,
+    symbols: SymbolTable | None,
+    status: Status,
+) -> dict[int, bytes]:
+    """The custom tiles' container the editor is working with, over the
+    image's own two tables -- :func:`map16_patch`'s rule for the same kind
+    of document: the held container wins where the Tilemap editor holds
+    one, the project's saved file answers otherwise, and nothing answers
+    where the project has none. Nothing on a cartridge without the feature,
+    since the tables it would write are not there
+    (:func:`shiny_mushroom.custom_tiles.patches`)."""
+    if rom is None or not addressable(rom, where):
+        return {}
+    if where.custom_tiles_defs is None:
+        return {}
+    try:
+        container = held
+        if container is None:
+            if project is None or not project.custom_tiles_edited:
+                return {}
+            container = project.custom_tiles()
+        return custom_tiles.patches(container, rom, where, symbols)
+    except (ProjectError, OSError, ValueError) as error:
+        status(f"The custom tiles could not be loaded: {error}", NOTE_MS)
+        return {}
+
+
 def saved_assets_patch(
     project: Project | None,
     rom: bytes | None,
@@ -777,6 +864,7 @@ def saved_assets_patch(
     status: Status,
     taken: Sequence[range] = (),
     map16: Map16Tables | None = None,
+    custom: bytes | None = None,
 ) -> dict[int, bytes]:
     """The parts that belong to no *level* document -- the Map16 tables, the
     levels' graphics rows and the graphics files -- over the image's own.
@@ -798,6 +886,9 @@ def saved_assets_patch(
     to keep its own relocations off (:func:`claimed`).
     """
     patches = map16_patch(map16, project, rom, where, symbols, status)
+    patches = layer(
+        patches, custom_tiles_patch(custom, project, rom, where, symbols, status)
+    )
     patches = layer(patches, saved_level_graphics_patch(project, rom, where, status))
     return layer(
         patches,
@@ -817,6 +908,7 @@ def all_patches(
     *,
     document: Document | None = None,
     map16: Map16Tables | None = None,
+    custom: bytes | None = None,
     held: Sequence[Mapping[int, bytes]] = (),
     note: Skipped = _unreported,
 ) -> dict[int, bytes]:
@@ -869,7 +961,16 @@ def all_patches(
         with scanning_once():
             return _merged_patches(
                 _project_patches(
-                    project, rom, level, where, symbols, status, map16, document, note
+                    project,
+                    rom,
+                    level,
+                    where,
+                    symbols,
+                    status,
+                    map16,
+                    document,
+                    note,
+                    custom,
                 ),
                 held,
             )
@@ -899,6 +1000,7 @@ def _project_patches(
     map16: Map16Tables | None = None,
     document: Document | None = None,
     note: Skipped = _unreported,
+    custom: bytes | None = None,
 ) -> dict[int, bytes]:
     """:func:`all_patches`' body, inside its one reading of the overlay."""
     # The pointer first: where the level's Layer 2 *points* decides what the
@@ -927,12 +1029,39 @@ def _project_patches(
     patches = layer(
         patches, saved_secondary_entrances_patch(project, rom, where, status)
     )
+    patches = layer(
+        patches,
+        saved_lunar_magic_patch(
+            project,
+            rom,
+            where,
+            status,
+            held_level=None if document is None else level,
+        ),
+    )
+    patches = layer(
+        patches,
+        saved_layer3_patch(
+            project,
+            rom,
+            where,
+            status,
+            held_level=None if document is None else level,
+        ),
+    )
     # The assets before the streams: both can relocate, and what the files
     # claim of the free space is handed on so the level is not placed over it.
     patches = layer(
         patches,
         saved_assets_patch(
-            project, rom, where, symbols, status, taken=claimed(patches), map16=map16
+            project,
+            rom,
+            where,
+            symbols,
+            status,
+            taken=claimed(patches),
+            map16=map16,
+            custom=custom,
         ),
     )
     if document is not None:
@@ -1073,6 +1202,15 @@ def level_document_patch(
         patches = layer(
             patches, secondary_header_patch(rom, level, doc.secondary, where=where)
         )
+    # The four Lunar Magic bytes the same way, where the document carries
+    # them and the image's base keeps the tables.
+    if doc.lunar_magic:
+        patches = layer(
+            patches, lunar_magic_patch(rom, level, doc.lunar_magic, where=where)
+        )
+    # And the four Layer 3 bytes, on the same terms.
+    if doc.layer3:
+        patches = layer(patches, layer3_patch(rom, level, doc.layer3, where=where))
     # The background's own arm of the same seam; the comparison against the
     # cartridge is layer2_background_patch's own, which answers `{}` when the
     # image already decodes to the document's pattern. In place only: the

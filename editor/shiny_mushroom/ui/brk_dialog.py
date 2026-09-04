@@ -49,8 +49,7 @@ TITLE_REPORT = "The cartridge hit a BRK"
 #: so what it *is* has to be said, or the report shows a number and no way in.
 SIGNATURE_HINT = (
     "BRK is two bytes: the opcode, and a second byte the processor fetches and "
-    "ignores. Code that raises one puts its own exception number there, so this "
-    "number means whatever the routine that raised it meant by it."
+    "ignores. The code that raised this one put its own exception number there."
 )
 
 #: The disclosure's mark, in the box it is drawn in. Small: it sits at the head

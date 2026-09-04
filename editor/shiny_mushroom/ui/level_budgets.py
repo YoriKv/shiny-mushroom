@@ -39,9 +39,9 @@ PACKED_NOTE = (
     "that grows takes room from the others."
 )
 STOCK_NOTE = (
-    "Each run is packed on its own, so a level that grows is paid for by "
-    "another in it. Growable levels (Project > Features) packs the banks end "
-    "to end."
+    "Each run is packed on its own, so a level that grows takes room from "
+    "the others in that run. Growable levels (Project > Features) packs the "
+    "banks end to end."
 )
 
 #: How tall one run's bar is. Shorter than the memory map's, because eight of

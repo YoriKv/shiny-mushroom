@@ -25,12 +25,17 @@ panel do about one.
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from PySide6.QtWidgets import QFileDialog
+
 from shiny_mushroom import cart_patches, level_palettes, palette_map, palettes
 from shiny_mushroom import features as switches
 from shiny_mushroom.build import features_wanted
 from shiny_mushroom.edit import History
 from shiny_mushroom.hexnum import hexnum
 from shiny_mushroom.level_palettes import LevelPalettes, PaletteDocument
+from shiny_mushroom.mwl import Container, MwlError
 from shiny_mushroom.palettes import Palette, PaletteError
 from shiny_mushroom.project import ProjectError
 from shiny_mushroom.ui.palette_dock import LEVEL_TITLE, MAP_TITLE
@@ -408,22 +413,6 @@ class Colours:
         if held.levels.get(level) is not None:
             self._show_palette()
             return
-        # The level bank's room with the level streams packed into it, or
-        # the format's ceiling for a cartridge with no project behind it.
-        capacity = (
-            self._project.level_palette_capacity()
-            if self._project is not None
-            else level_palettes.CAPACITY
-        )
-        if len(held.levels.levels) >= capacity:
-            self._show_palette()
-            self._alert(
-                f"All {capacity} custom level palette slots in the level "
-                f"bank are worn.",
-                detail="Untick a level that no longer needs its own colours, "
-                "or take level data back out of the bank.",
-            )
-            return
         # The scene is copied out before the feature is asked for: a yes
         # rebuilds and reopens the cartridge, which drops the snapshot until
         # the level reloads, and what the tick promises is the scene that was
@@ -431,15 +420,83 @@ class Colours:
         blob = level_palettes.from_scene(
             self._snapshot.cgram, self._snapshot.back_area_color
         )
-        if not self._want_feature(LEVEL_CUSTOM_PALETTES.id):
+        if not self._dress_level(level, blob):
             self._show_palette()
-            return
+
+    def _dress_level(self, level: int, blob: bytes) -> bool:
+        """Give ``level`` the palette ``blob``, as one undo step on the
+        panel's stack -- the tick's own act, and an import's -- and say
+        whether it happened.
+
+        Refused where the level bank has no slot left, and offered the
+        feature first where the project has not got it: a yes rebuilds and
+        reopens the cartridge, so the document is re-read after the ask
+        rather than carried over it -- committing the old one onto the fresh
+        one would resurrect whatever the reopen just discarded.
+        """
+        held = self._palette_history.level
+        if held.levels.get(level) is None:
+            capacity = (
+                self._project.level_palette_capacity()
+                if self._project is not None
+                else level_palettes.CAPACITY
+            )
+            if len(held.levels.levels) >= capacity:
+                self._alert(
+                    f"All {capacity} custom level palette slots in the level "
+                    f"bank are worn.",
+                    detail="Untick a level that no longer needs its own colours, "
+                    "or take level data back out of the bank.",
+                )
+                return False
+        if not self._want_feature(LEVEL_CUSTOM_PALETTES.id):
+            return False
         self._palette_active = True
-        # Re-read rather than the document from before the ask: the reopen a
-        # yes runs starts a fresh palette document, and committing the old one
-        # onto it would resurrect whatever the reopen just discarded.
         held = self._palette_history.level
         self._commit_palette(held.with_levels(held.levels.with_palette(level, blob)))
+        return True
+
+    def _import_level_palette(self) -> None:
+        """The panel's Import button: dress the level on the canvas in a
+        palette file from outside -- Lunar Magic's ``.pal``, a container's
+        own palette region, a ``.tpl`` or a CGRAM dump
+        (:func:`shiny_mushroom.level_palettes.read_pal`). A file with no
+        back area colour keeps the scene's, so the sky stays as it was."""
+        if (
+            self._project is None
+            or self._snapshot is None
+            or self._mode is EditorMode.WORLD
+        ):
+            return
+        level = self._snapshot.level
+        backdrop = self._snapshot.back_area_color
+        chosen, _filter = QFileDialog.getOpenFileName(
+            self,
+            "Import a Level Palette",
+            "",
+            "Palettes (*.pal *.mwl *.tpl);;All files (*)",
+        )
+        if not chosen:
+            return
+        path = Path(chosen)
+        try:
+            data = path.read_bytes()
+            if path.suffix.lower() == ".mwl":
+                carried = Container.read(data).carried_palette
+                if carried is None:
+                    raise PaletteError(f"{path.name} carries no palette region")
+                blob = level_palettes.from_container(carried)
+            else:
+                blob = level_palettes.read_pal(data, backdrop)
+        except (OSError, MwlError, PaletteError) as error:
+            self._alert(f"{path.name} could not be read.", detail=str(error))
+            return
+        if self._dress_level(level, blob):
+            self._status_message(
+                f"Level {hexnum(level, 3)} wears {path.name}; save the palettes "
+                f"to keep it.",
+                8000,
+            )
 
     def save_palettes(self) -> bool:
         """Write the game's colours into the project, reporting success."""

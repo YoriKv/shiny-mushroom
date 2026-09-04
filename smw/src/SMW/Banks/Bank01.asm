@@ -4306,7 +4306,11 @@ CODE_019523:
 	INC.b !RAM_SMW_Misc_ScratchRAM07	;>Switch bank into $7F for loading $7FC800 (the high byte map16 RAM in level)
 	LDA.b [!RAM_SMW_Misc_ScratchRAM05]	;>Load the $C800s
 #LM000Hijack_ProcessCustomNormalSpriteBlockCode:
+if !Define_SMW_CustomTiles == !TRUE
+	JSL.l SMW_CustomTiles_ActsLikeOf		;> A custom tile as the vanilla tile it acts like, then the stock routine (Config/CustomTiles.asm)
+else
 	JSL.l SMW_ModifyMap16IDForSpecialBlocks_Main
+endif
 	LDY.b !RAM_SMW_Misc_ScratchRAM0F
 	CMP.b #$00
 	RTS

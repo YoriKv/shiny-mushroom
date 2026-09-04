@@ -193,6 +193,21 @@ class Level:
     #: no operation here minds -- nothing reads a bit of it.
     secondary: bytes = b""
 
+    #: The four bytes Lunar Magic adds to the secondary header, in table
+    #: order (:mod:`shiny_mushroom.lunar_magic`), where the project's
+    #: cartridge keeps them -- the ``lunar-magic-levels`` feature's tables.
+    #: Part of the document for the reason the secondary header is, saved
+    #: through the ``levels.lunar_magic_*`` asm regions the same way, and
+    #: empty on a cartridge without the tables, which no operation minds.
+    lunar_magic: bytes = b""
+
+    #: The four bytes the ``layer3-settings`` feature keeps per level: how
+    #: this level's Layer 3 scrolls, where it starts and which screen it is
+    #: drawn on (:mod:`shiny_mushroom.layer3`). Part of the document for the
+    #: same reason, saved through the ``levels.layer3_*`` regions the same
+    #: way, and empty on a cartridge without the tables.
+    layer3: bytes = b""
+
     #: The level's own graphics: the eight-byte row the ``level-graphics``
     #: feature keeps per level number -- which file each of FG1, FG2, BG1,
     #: FG3, SP1-SP4 loads, ``$FF`` where the slot keeps the file the header's
@@ -256,6 +271,8 @@ class Level:
         custom_sprites: bool = False,
         extra_counts: Mapping[int, int] = {},
         custom_names: Mapping[int, str] = {},
+        lunar_magic: bytes = b"",
+        layer3: bytes = b"",
     ) -> Level:
         """Read both of a level's streams, stamping every record with an id.
 
@@ -308,6 +325,8 @@ class Level:
             layer2_objects=tuple(stamped_layer2),
             layer2_header=bytes(layer2_header),
             secondary=bytes(secondary),
+            lunar_magic=bytes(lunar_magic),
+            layer3=bytes(layer3),
             graphics=_checked_graphics(graphics),
             custom_sprites=custom_sprites,
             extra_counts=dict(extra_counts),
@@ -606,6 +625,22 @@ class Level:
         if secondary == self.secondary:
             return self
         return replace(self, secondary=secondary)
+
+    def with_lunar_magic(self, lunar_magic: bytes) -> Level:
+        """This level with different Lunar Magic settings bytes -- an
+        ordinary edit exactly as a secondary-header edit is."""
+        lunar_magic = bytes(lunar_magic)
+        if lunar_magic == self.lunar_magic:
+            return self
+        return replace(self, lunar_magic=lunar_magic)
+
+    def with_layer3(self, layer3: bytes) -> Level:
+        """This level with different Layer 3 settings bytes -- an ordinary
+        edit exactly as a secondary-header edit is."""
+        layer3 = bytes(layer3)
+        if layer3 == self.layer3:
+            return self
+        return replace(self, layer3=layer3)
 
     def with_graphics(self, graphics: bytes) -> Level:
         """This level with a different graphics row.

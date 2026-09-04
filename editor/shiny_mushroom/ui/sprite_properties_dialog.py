@@ -111,10 +111,9 @@ class SpritePropertiesDialog(QDialog):
         held = self._meta.get("Name")
         self._name = QLineEdit(held if isinstance(held, str) else "")
         self._name.setToolTip(
-            "The project's own name for the sprite: the create panel's row, "
-            "the status bar and the properties heading all say it. Empty, "
-            "the sprite goes by the imported collection name if it has one, "
-            'and "Custom sprite $NN" otherwise.'
+            "The project's own name for the sprite, said wherever the sprite "
+            "is named. Left empty, it falls back to the imported collection's "
+            'name, or "Custom sprite $NN".'
         )
         name_row.addWidget(QLabel("Name:"))
         name_row.addWidget(self._name, 1)

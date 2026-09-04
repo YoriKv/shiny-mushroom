@@ -164,6 +164,62 @@ def from_scene(cgram: bytes, back_area_color: int) -> bytes:
     return bytes(out)
 
 
+#: The sizes an outside palette file can be, and what each one is. Lunar
+#: Magic's own order is the 256 colours **then** the back area colour --
+#: every shipped container's palette region and that tool's ``.pal`` export
+#: are this shape -- where the blob keeps the backdrop in front; a bare
+#: 512-byte CGRAM dump and the disassembly's ``.tpl`` (a four-byte header
+#: over the same 512) carry no backdrop at all, and a 768-byte file is 256
+#: colours of 8-bit RGB, which is how a tile editor writes one.
+LM_SIZE = palette_map.CGRAM_COLORS * palettes.COLOR_SIZE + palettes.COLOR_SIZE
+CGRAM_SIZE = palette_map.CGRAM_COLORS * palettes.COLOR_SIZE
+TPL_MAGIC = b"TPL\x02"
+RGB_SIZE = palette_map.CGRAM_COLORS * 3
+
+
+def read_pal(data: bytes, backdrop: int = 0) -> bytes:
+    """A blob from a palette file somebody exported, recognised by its size.
+
+    ``backdrop`` is the back area colour to keep where the file carries none
+    -- the scene's own, so importing a bare palette recolours the tiles and
+    leaves the sky as it was. What cannot be read is refused by name,
+    with the shapes that can.
+    """
+    data = bytes(data)
+    if len(data) == LM_SIZE:
+        return check(data[CGRAM_SIZE:] + data[:CGRAM_SIZE])
+    if len(data) == CGRAM_SIZE:
+        return check(_backdrop_word(backdrop) + data)
+    if len(data) == len(TPL_MAGIC) + CGRAM_SIZE and data.startswith(TPL_MAGIC):
+        return check(_backdrop_word(backdrop) + data[len(TPL_MAGIC) :])
+    if len(data) == RGB_SIZE:
+        out = bytearray()
+        for at in range(0, RGB_SIZE, 3):
+            r, g, b = (component >> 3 for component in data[at : at + 3])
+            out += (r | (g << 5) | (b << 10)).to_bytes(2, "little")
+        return check(_backdrop_word(backdrop) + bytes(out))
+    raise PaletteError(
+        f"{len(data):,} bytes is not a palette file this can read: one is "
+        f"Lunar Magic's {LM_SIZE} (the colours then the back area colour), a "
+        f"{CGRAM_SIZE}-byte CGRAM dump, a .tpl, or {RGB_SIZE} bytes of RGB"
+    )
+
+
+def from_container(payload: bytes) -> bytes:
+    """A blob from the palette region a level container carries -- Lunar
+    Magic's order, which :func:`read_pal` reads."""
+    if len(payload) != LM_SIZE:
+        raise PaletteError(
+            f"the container's palette region holds {len(payload):,} bytes, "
+            f"not the {LM_SIZE} a level palette is"
+        )
+    return read_pal(payload)
+
+
+def _backdrop_word(color: int) -> bytes:
+    return (color & palettes.COLOR_MASK).to_bytes(2, "little")
+
+
 def byte_of(index: int) -> int:
     """Where CGRAM colour ``index`` sits inside a blob."""
     return COLORS_AT + index * palettes.COLOR_SIZE

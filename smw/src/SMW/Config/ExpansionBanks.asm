@@ -9,30 +9,8 @@
 ;# the whole of it, a label at each end for whatever packs inside, and the two
 ;# things a bank number has to be -- so it is written once here and each of the
 ;# three says only which bank, under what name, and what its own occupants
-;# need. %SMW_ExpansionBankExists is the other half of that: whether the bank
-;# is there at all, for an occupant that has somewhere else to go.
+;# need.
 ;#############################################################################################################
-
-; Whether <Bank> exists at the size this cartridge is assembled to, as
-; !SMW_ExpansionBankExists -- the same test %SMW_ReserveExpansionBank refuses
-; on, asked before it rather than after.
-;
-; For a feature that uses an expansion bank for room it can do without: it
-; reserves the bank where the cartridge has one and packs into whatever the
-; game's own banks leave where it has not, so the size is a choice rather
-; than a requirement (Config/ManagedLevelMemory.asm). A feature with nowhere
-; else to put its tables asks nothing and lets the reservation refuse.
-; A pass that assembles no cartridge -- the SPC700 engine's, say -- never
-; calls %GetROMSize and so has no !MaxROMSize to test. It reserves nothing
-; either, so "no bank" is the answer that costs nothing there.
-macro SMW_ExpansionBankExists(Bank)
-	!SMW_ExpansionBankExists = !FALSE
-	if defined("MaxROMSize")
-		if !MaxROMSize >= ((<Bank>)+$01)*$8000
-			!SMW_ExpansionBankExists = !TRUE
-		endif
-	endif
-endmacro
 
 ; Reserve the whole of one expansion bank.
 ;

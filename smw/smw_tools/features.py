@@ -24,17 +24,6 @@ and off for itself. Downstream none of the three is distinguishable from the
 others, which is the point: the editor asks what the cartridge is, not how it
 got that way.
 
-**A bank a feature needs and a bank it can do without are different
-declarations.** :attr:`Feature.min_rom_size` is a requirement -- the data has
-nowhere else to go, and the build refuses a cartridge the bank is not in.
-:attr:`Feature.bank_rom_size` is room: the feature is built at any size, uses
-the bank where the cartridge has one, and packs into what the game's own banks
-leave where it has not. Which of the two is true of a feature decides whether
-the cartridge size is a requirement or a choice, and
-:data:`MANAGED_LEVEL_MEMORY` is the one that makes it a choice -- at the price
-of keeping every address it must be able to name in a bank every cartridge
-has.
-
 **What a feature costs to build is declared here; what it costs a *project* is
 not.** The defines that switch one on and the cartridge it needs room in are
 facts about the assembly, so they sit beside the facts about the cartridge. The
@@ -362,26 +351,6 @@ class Feature:
     #: resize instead of failing the build.
     min_rom_size: str | None = None
 
-    #: The cartridge this feature's expansion bank appears at, where the
-    #: feature is built either way -- ``None`` for one that needs no bank, or
-    #: whose bank it cannot do without (:attr:`min_rom_size`, which refuses
-    #: below it instead).
-    #:
-    #: The two are alternatives, not a pair: a feature declares whichever
-    #: sentence is true of it. A bank it *needs* is a requirement and the size
-    #: is not a choice; a bank it can do **without** is room, and the size is
-    #: the project's -- the feature is assembled at any size, uses the bank
-    #: where the cartridge has one, and packs into what the game's own banks
-    #: leave where it has not. :data:`MANAGED_LEVEL_MEMORY` is the second
-    #: kind, and the disassembly asks the same question with
-    #: ``%SMW_ExpansionBankExists``.
-    #:
-    #: What such a feature may **not** do is keep anything it must be able to
-    #: name in that bank: an address that exists only on the larger cartridge
-    #: is no address at all on the smaller one. :data:`MANAGED_LEVEL_MEMORY`
-    #: keeps its one table at the top of bank ``$07`` for exactly that reason.
-    bank_rom_size: str | None = None
-
     #: Runs of ROM this feature's fragments share -- see
     #: :class:`~smw_tools.bases.TablePool`. Added to the base's rather than
     #: replacing them: two features that pool different fragments disagree
@@ -458,11 +427,6 @@ class Feature:
     def needs(self) -> RomSize | None:
         """:attr:`min_rom_size` as a size rather than a name."""
         return None if self.min_rom_size is None else ROM_SIZES[self.min_rom_size]
-
-    @property
-    def uses(self) -> RomSize | None:
-        """:attr:`bank_rom_size` as a size rather than a name."""
-        return None if self.bank_rom_size is None else ROM_SIZES[self.bank_rom_size]
 
     def shifts_by(self) -> int:
         """How far this feature's block moves the occupants its packed run
@@ -545,19 +509,11 @@ class Feature:
         """
         wanted = self.needs
         needs = "" if wanted is None else f"a {wanted.label} cartridge or larger"
-        room = self.uses
-        uses = (
-            ""
-            if room is None
-            else f"an expansion bank on a {room.label} cartridge or larger, "
-            f"and what the game's own banks leave on a smaller one"
-        )
         facts = [
             Detail(heading, body)
             for heading, body in (
                 ("Changes", self.changed_summary),
                 ("Needs", needs),
-                ("Uses", uses),
                 ("Built on", _named(self.requires)),
                 ("Conflicts with", _named(self.conflicts)),
             )
@@ -598,11 +554,6 @@ class Feature:
         if self.detail and not self.detail.endswith("."):
             raise FeatureError(
                 f"{self.id}'s detail is prose and wants a full stop on the end"
-            )
-        if self.bank_rom_size is not None and self.min_rom_size is not None:
-            raise FeatureError(
-                f"{self.id} both needs a {self.min_rom_size} cartridge and "
-                f"does without one; a bank is a requirement or it is room"
             )
 
 
@@ -880,6 +831,114 @@ LEVEL_GRAPHICS = Feature(
 )
 
 
+#: The four bytes Lunar Magic adds to a level's secondary header, and the
+#: Layer 2 scroll settings they carry.
+#:
+#: Lunar Magic keeps four ``$200``-byte tables beyond the stock secondary
+#: header and carries a copy in every container's level-information slot.
+#: Under this feature the cartridge holds the same four -- one fragment per
+#: byte under ``levels/properties/``, the editor's regions
+#: :data:`smw_tools.lunar_magic_levels.REGION_IDS` -- and reads the scroll
+#: byte: a level with its ``S`` bit set scrolls Layer 2 by a horizontal and
+#: a vertical setting of its own, each one of Lunar Magic's thirty-two,
+#: where the stock game knows eight fixed pairs of four
+#: (``Config/LunarMagicLevels.asm``). Four same-size hooks give the settings
+#: their meaning, at the seams Lunar Magic hooks for its own; the other
+#: three bytes are carried, read by nothing yet.
+#:
+#: The tables are the level bank's **third packed occupant**
+#: (:data:`LEVEL_BANK`, ``Config/LevelBank.asm``): the four tables, ``$800``
+#: bytes, then the stubs, one block of :attr:`Feature.block_bytes` behind
+#: the level graphics' and the per-level code's blocks when those are on and
+#: ahead of the custom palettes, which :func:`applied` works out. The level
+#: number the tables are indexed by is the shared stash
+#: (``Config/LevelNumberStash.asm``). The shipped fragments hold every
+#: level as Lunar Magic writes an untouched one, so the feature with nothing
+#: edited places and scrolls every stock level exactly as the stock cartridge
+#: does -- the load-time offset included, which Lunar Magic leaves the stock
+#: routine to compute.
+LUNAR_MAGIC_LEVELS = Feature(
+    id="lunar-magic-levels",
+    name="Lunar Magic level compatibility",
+    summary="A level keeps the four header bytes Lunar Magic adds, and its "
+    "Layer 2 scrolls by Lunar Magic's settings",
+    detail="Without it a level's Layer 2 scrolls by one of the stock game's "
+    "eight fixed pairs of settings. A level set here picks a horizontal and "
+    "a vertical setting apart, from Lunar Magic's thirty-two -- six more "
+    "ratios, a faster-than-camera one, and twelve that scroll by "
+    "themselves -- and the four bytes a Lunar Magic container carries for a "
+    "level are kept in the cartridge's own tables.",
+    defines=(("Define_SMW_LunarMagicLevels", "1"),),
+    bank_define="Define_SMW_LevelBank",
+    bank_offset=1,
+    min_rom_size="1mb",
+    block_bytes=block("LunarMagicLevels"),
+    tables={
+        role: RomTable(role=role, label=f"SMW_LunarMagicLevels_{label}", address=at)
+        for role, label, at in (
+            ("lunar_magic_entrance", "Entrance", 0x118011),
+            ("lunar_magic_scroll", "Scroll", 0x118211),
+            ("lunar_magic_entrance_y", "EntranceY", 0x118411),
+            ("lunar_magic_background", "Background", 0x118611),
+        )
+    },
+)
+
+
+#: How a level's Layer 3 scrolls, where it starts, and which screen it is
+#: drawn on.
+#:
+#: The stock game gives a level no say in any of it: which Layer 3 image
+#: loads is its tileset's and its secondary header's between them, and how
+#: the image behaves comes with the image -- a tide rises and falls, a
+#: tileset-specific background auto-scrolls at one fixed speed or tracks
+#: half of Layer 1, and everything else is nailed down with the scroll
+#: routine switched off. Under this feature every level carries four bytes
+#: of its own (``Config/Layer3Settings.asm``): a horizontal and a vertical
+#: scroll setting out of the same thirty-two the Layer 2 scroll byte names
+#: (:data:`LUNAR_MAGIC_LEVELS`), a signed offset per axis in 16x16 tiles,
+#: whether Layer 3 is drawn through the colour maths, and whether it is on
+#: the subscreen.
+#:
+#: **A tide level is left alone.** The rising and falling tides are Layer 3
+#: with interaction underneath, driven by their own frame code and their own
+#: state; a level whose Layer 3 is one ignores these tables outright.
+#:
+#: Four ``$200``-byte tables in the **level bank**, behind the Lunar Magic
+#: tables and ahead of the custom palettes (:data:`LEVEL_BANK`), declared as
+#: though they led the bank -- :func:`applied` moves them past whichever
+#: occupants ahead the cartridge has. The shipped rows are all zero, so the
+#: feature with an unedited table places exactly what the stock cartridge
+#: places.
+LAYER3_SETTINGS = Feature(
+    id="layer3-settings",
+    name="Per-level Layer 3",
+    summary="A level says how its Layer 3 scrolls, where it starts and which "
+    "screen it is drawn on",
+    detail="Without it a level's Layer 3 behaves however the image its "
+    "tileset loads behaves: fixed, auto-scrolling at one speed, or tracking "
+    "half of Layer 1 -- and two levels sharing a tileset share all of it. "
+    "Here a level scrolls Layer 3 by a setting of its own on each axis, out "
+    "of the same thirty-two Layer 2 has, from an offset of its own, and can "
+    "put it on the subscreen or draw it translucent. A level whose Layer 3 "
+    "is a tide keeps the tide.",
+    defines=(("Define_SMW_Layer3Settings", "1"),),
+    bank_define="Define_SMW_LevelBank",
+    bank_offset=1,
+    min_rom_size="1mb",
+    block_bytes=block("Layer3Settings"),
+    tables={
+        role: RomTable(role=role, label=f"SMW_Layer3Settings_{label}", address=at)
+        for role, label, at in (
+            ("layer3_horizontal", "Horizontal", 0x118011),
+            ("layer3_vertical", "Vertical", 0x118211),
+            ("layer3_offset_x", "OffsetX", 0x118411),
+            ("layer3_offset_y", "OffsetY", 0x118611),
+        )
+    },
+)
+
+
 #: A palette a level wears whole, instead of the shared tables.
 #:
 #: The stock game assembles every level's colours out of the global tables by
@@ -957,14 +1016,135 @@ def _moved_text(role: str, address: int) -> RomTable:
     )
 
 
+#: Map16 pages past the stock two, and the objects that place their tiles.
+#:
+#: The stock game defines 512 Map16 tiles, resolved per tileset at level
+#: load, and every object routine writes one of them. Under this feature the
+#: cartridge holds four more pages, ``$02``-``$05``, as one flat table -- a
+#: tile there is the same block in every level -- with a two-byte acts-like
+#: word per tile naming the vanilla tile it borrows its interaction from,
+#: and the four standard objects Lunar Magic places such tiles with: ``22``
+#: and ``23`` one page-0 or page-1 tile over a rectangle, ``27`` and ``29``
+#: a tile or a rectangle of consecutive tiles off any page
+#: (``Config/CustomTiles.asm``; :mod:`smw_tools.custom_tiles` is the shared
+#: vocabulary).
+#:
+#: **The tables are one Lunar Magic container, sliced.** The definitions and
+#: the acts-like words are ``incbin``'d by offset out of
+#: ``GFX/Map16/CustomTiles.map16``, so a project overlays one file and
+#: Lunar Magic's own Map16 editor can read and write it. The tree's copy
+#: holds the custom pages empty and every acts-like word Lunar Magic's
+#: default, so the feature with nothing edited draws nothing a stock level
+#: did not.
+#:
+#: The block -- the two tables, the undefined tile, the stubs -- is the
+#: reserved run's third occupant, behind the relocated overworld tables and
+#: ahead of the text; the two addresses are declared as though it led the
+#: run, and :func:`applied` reads them past whichever of the two ahead the
+#: cartridge has. It is nobody's editable fragment, so the whole block is
+#: the pool's reservation.
+CUSTOM_TILES = Feature(
+    id="custom-tiles",
+    name="Custom tiles",
+    summary="Four Map16 pages of the project's own tiles, placed by Lunar "
+    "Magic's direct-tile objects",
+    detail="Without it a level is built from the 512 tiles the game "
+    "defines, and every block in it is one of those. Here a project draws "
+    "1024 tiles of its own in the Tilemap editor, each acting like a stock "
+    "tile of its choosing, and places them on Layer 1 one at a time or as "
+    "a rectangle -- the objects a Lunar Magic level places them with.",
+    defines=(("Define_SMW_CustomTiles", "1"),),
+    bank_define="Define_SMW_ReservedBank",
+    min_rom_size="1mb",
+    # The four pages, the acts-like words, the undefined tile and the stubs.
+    block_bytes=block("CustomTiles"),
+    tables={
+        "custom_tiles_definitions": RomTable(
+            role="custom_tiles_definitions",
+            label="SMW_CustomTiles_Definitions",
+            address=0x108008,
+        ),
+        "custom_tiles_acts_like": RomTable(
+            role="custom_tiles_acts_like",
+            label="SMW_CustomTiles_ActsLike",
+            address=0x10A008,
+        ),
+    },
+    pools=(
+        TablePool(
+            start_label="SMW_ReservedBankStart",
+            end_label="SMW_ReservedBankEnd",
+            # Every byte of the block: the container is incbin'd, not a
+            # fragment the editor emits rows into.
+            reserved=block("CustomTiles"),
+            regions=(),
+        ),
+    ),
+)
+
+
+
+#: The music and time limit a level's own object stream can name, past the
+#: eight tracks and four times its header offers.
+#:
+#: The header's music field is three bits into a table of eight tracks and
+#: its time field two bits into a table of four, both read once at the top
+#: of the level load. Lunar Magic adds two standard objects that say the
+#: same things without the tables -- ``26`` names any track the music
+#: register takes and ``28`` any three-digit time limit, with a flag that
+#: resets the timer on every entry rather than only on the way in from the
+#: map -- and this feature is those two objects
+#: (``Config/HeaderBypasses.asm``; :mod:`smw_tools.header_bypasses` is the
+#: shared record grammar).
+#:
+#: **They win because of where they run.** The object pass is behind the
+#: header parse and ahead of the music register reaching the sound chip, so
+#: an object that writes either one overwrites what the header put there
+#: and nothing is played or counted twice.
+#:
+#: It declares no table: everything the feature reads is in the level's own
+#: stream. The block is the two routines and their return stub, the
+#: reserved run's fourth occupant, behind the custom tiles and ahead of the
+#: text; nothing of it is an editable fragment, so the whole block is the
+#: pool's reservation.
+HEADER_BYPASSES = Feature(
+    id="header-bypasses",
+    name="Music and time bypasses",
+    summary="A level names any music track and any time limit, out of its "
+    "own object stream",
+    detail="Without it a level plays one of the eight tracks its header's "
+    "three bits can name and counts down from one of four times. Here two "
+    "objects in the level's own data say either outright -- any track the "
+    "sound driver has, any time limit up to 999, and a switch that starts "
+    "the clock again every time the level is entered rather than only from "
+    "the map. A level carrying neither object plays and counts exactly "
+    "what its header says.",
+    defines=(("Define_SMW_HeaderBypasses", "1"),),
+    bank_define="Define_SMW_ReservedBank",
+    min_rom_size="1mb",
+    # The two object routines and the return stub they share.
+    block_bytes=block("HeaderBypasses"),
+    pools=(
+        TablePool(
+            start_label="SMW_ReservedBankStart",
+            end_label="SMW_ReservedBankEnd",
+            # Every byte of the block: it is code, not a fragment the editor
+            # emits rows into.
+            reserved=block("HeaderBypasses"),
+            regions=(),
+        ),
+    ),
+)
+
+
 #: Where the relocated text lands with nothing in front of it: the stubs at
 #: the head of the shared reserved run, then the level-name tables out of
 #: bank $04 and the message tables out of bank $05, packed --
 #: ``Config/StringTableRelocation.asm``.
 #:
 #: The text is the run's **last** occupant, so on a cartridge that also has
-#: the translevel remap or the relocated overworld tables every address below
-#: is that much further on, which :func:`applied` works out from
+#: the translevel remap, the relocated overworld tables or the custom tiles
+#: every address below is that much further on, which :func:`applied` works out from
 #: :data:`RESERVED_RUN`. Last is the place for it: the block's length is the
 #: one in that run a release decides, and behind it there is nothing for that
 #: to move.
@@ -1026,16 +1206,14 @@ STRING_TABLES_RELOCATED = Feature(
 #: byte against the padding after it, so a level's room is its macro's and
 #: the 8,991 bytes of padding the two banks hold are room for nothing.
 #: Under this feature the streams are emitted back to back in ROM-map order
-#: into three runs -- bank ``$06`` whole, bank ``$07`` up to its sprite
-#: routines, and that bank's tail -- with a stream that reaches the end of a
-#: run placed at the start of the next, and every pointer-table row recomputed
-#: from the labels (``Config/ManagedLevelMemory.asm``). A cartridge of
-#: :attr:`~Feature.bank_rom_size` or larger adds a fourth: the *level bank*
-#: behind the custom level palettes' blobs (:data:`LEVEL_BANK`,
-#: ``Config/LevelBank.asm``), which nothing reaches until the two stock banks
-#: are full. **The bank is room rather than a requirement** -- on a 512 KB
-#: cartridge the feature is built all the same, and what it buys there is the
-#: padding those two banks hold, made fungible across every level.
+#: into four runs -- bank ``$06`` whole, bank ``$07`` up to its sprite
+#: routines, that bank's tail, and the *level bank* behind the custom level
+#: palettes' blobs (:data:`LEVEL_BANK`, ``Config/LevelBank.asm``) -- with a
+#: stream that reaches the end of a run placed at the start of the next, and
+#: every pointer-table row recomputed from the labels
+#: (``Config/ManagedLevelMemory.asm``). Nothing reaches the level bank until
+#: the two stock banks are full. A bank the feature reserves is why it needs
+#: a 1 MB cartridge, like the bank's other occupants.
 #:
 #: Two same-size hooks in the loader supply what the packing takes away: each
 #: sprite list's bank, read off a table of one byte per level in place of the
@@ -1056,27 +1234,25 @@ STRING_TABLES_RELOCATED = Feature(
 #: priced -- :func:`smw_tools.levels.pack` is the packer's own arithmetic --
 #: and the editor reads that off the feature's presence. The one table
 #: declared is the sprite-bank table at the **fixed tail**, the ``$200``
-#: bytes below the end of bank ``$07``: the same slot on every cartridge and
-#: every base, which is what lets the sprite-memory rewrite
-#: (``Config/SpriteMemoryIndex.asm``, on the finalize pass) read the bank of
-#: every sprite list off it by address. In one of the game's own banks
-#: rather than in the expansion bank, because that bank is room this feature
-#: may not have and an address only the larger cartridge has is no address at
-#: all -- it is the one thing :attr:`~Feature.bank_rom_size` forbids.
+#: bytes below the end of bank ``$07``: the same slot on every base, which
+#: is what lets the sprite-memory rewrite (``Config/SpriteMemoryIndex.asm``,
+#: on the finalize pass) read the bank of every sprite list off it by
+#: address. In one of the game's own banks rather than in the level bank,
+#: because the level bank moves with the base's reservation and a table read
+#: by a literal wants one address everywhere.
 MANAGED_LEVEL_MEMORY = Feature(
     id="managed-level-memory",
     name="Growable levels",
     summary="Room for levels to grow, and for levels the project adds",
     detail="Without it the levels are packed to the byte in fixed groups, so "
     "an object added to one is paid for by another in the same group. Here "
-    "the levels are one sequence packed into whatever the two level banks "
-    "leave, and added levels pack after the game's own. A 1 MB cartridge "
-    "gives that sequence an expansion bank to overflow into as well. Nothing "
-    "moves until a level grows.",
+    "the levels are one sequence that overflows into an expansion bank, and "
+    "added levels pack after the game's own. Nothing moves until a level "
+    "grows.",
     defines=(("Define_SMW_ManagedLevelMemory", "1"),),
     bank_define="Define_SMW_LevelBank",
     bank_offset=1,
-    bank_rom_size="1mb",
+    min_rom_size="1mb",
     tables={
         "level_sprite_banks": RomTable(
             role="level_sprite_banks",
@@ -1345,7 +1521,7 @@ CUSTOM_SPRITES = Feature(
 #: the managed level banks' fixed tail. All four share one bank define and
 #: one offset from the reservation bank.
 #:
-#: The first three pack from the head and are :data:`LEVEL_BANK_HEAD`: each
+#: The first four pack from the head and are :data:`LEVEL_BANK_HEAD`: each
 #: declares its length and the next is read that much further on when both
 #: are on, exactly as :data:`RESERVED_RUN`'s occupants shift one another.
 #: The streams are the bank's last occupant and declare nothing but the
@@ -1354,13 +1530,15 @@ CUSTOM_SPRITES = Feature(
 LEVEL_BANK: tuple[str, ...] = (
     LEVEL_GRAPHICS.id,
     UBERASM_SUPPORT.id,
+    LUNAR_MAGIC_LEVELS.id,
+    LAYER3_SETTINGS.id,
     LEVEL_CUSTOM_PALETTES.id,
     MANAGED_LEVEL_MEMORY.id,
 )
 
 #: The level bank's occupants whose declared addresses shift by what is in
 #: front of them -- see :data:`LEVEL_BANK`.
-LEVEL_BANK_HEAD: tuple[str, ...] = LEVEL_BANK[:3]
+LEVEL_BANK_HEAD: tuple[str, ...] = LEVEL_BANK[:5]
 
 
 #: The occupants of the shared reserved run, in the order the ROM map emits
@@ -1382,6 +1560,8 @@ LEVEL_BANK_HEAD: tuple[str, ...] = LEVEL_BANK[:3]
 RESERVED_RUN: tuple[str, ...] = (
     TRANSLEVEL_REMAP.id,
     OVERWORLD_TABLES_RELOCATED.id,
+    CUSTOM_TILES.id,
+    HEADER_BYPASSES.id,
     STRING_TABLES_RELOCATED.id,
 )
 
@@ -1454,6 +1634,10 @@ FEATURES: dict[str, Feature] = {
     TRANSLEVEL_REMAP.id: TRANSLEVEL_REMAP,
     LEVEL_GRAPHICS.id: LEVEL_GRAPHICS,
     LEVEL_CUSTOM_PALETTES.id: LEVEL_CUSTOM_PALETTES,
+    LUNAR_MAGIC_LEVELS.id: LUNAR_MAGIC_LEVELS,
+    LAYER3_SETTINGS.id: LAYER3_SETTINGS,
+    CUSTOM_TILES.id: CUSTOM_TILES,
+    HEADER_BYPASSES.id: HEADER_BYPASSES,
     UBERASM_SUPPORT.id: UBERASM_SUPPORT,
     CUSTOM_SPRITES.id: CUSTOM_SPRITES,
     CUSTOM_MUSIC.id: CUSTOM_MUSIC,
@@ -1551,10 +1735,9 @@ def applied(
     ``rom_size`` is which of the base's sizes the cartridge **is**, as an id
     into :data:`~smw_tools.rom_sizes.ROM_SIZES` -- what the project building it
     chose. It reaches the result as
-    :attr:`~smw_tools.bases.RomBase.built_at`, and it decides where a feature
-    that uses an expansion bank *where the cartridge has one* is read
-    (:attr:`Feature.bank_rom_size`). ``None`` is the base's stock size, which
-    is what a build assembles when nobody has said -- and so is naming that
+    :attr:`~smw_tools.bases.RomBase.built_at`, so a reader holding the base
+    holds the whole cartridge. ``None`` is the base's stock size, which is
+    what a build assembles when nobody has said -- and so is naming that
     size, which leaves the base as it was.
     """
     wanted = tuple(dict.fromkeys(ids))
@@ -1704,11 +1887,10 @@ def _in_bank(found: Feature, base: RomBase, held: set[str]) -> dict[str, RomTabl
     a build test holds the two equal.
 
     **Neither shift touches a table below** :data:`RESERVATION_BANK`. A
-    feature that uses an expansion bank it can do *without*
-    (:attr:`Feature.bank_rom_size`) has to keep anything it must be able to
-    name at an address every cartridge has, which means one of the game's own
-    banks -- and those are exactly the banks a reservation can never be, so a
-    table there is where it is declared on every base.
+    table declared in one of the game's own banks -- the managed level
+    banks' sprite-bank tail, at the top of bank ``$07`` -- is where it is
+    declared on every base, since those are exactly the banks a reservation
+    can never be.
     """
     tables = dict(found.tables)
     shift = sum(feature(one).shifts_by() for one in _run_ahead(found.id) if one in held)

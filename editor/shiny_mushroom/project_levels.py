@@ -26,6 +26,8 @@ from shiny_mushroom.header import HEADER_SIZE, field_value, needs_layer2_data
 from shiny_mushroom.hexnum import hexnum
 from shiny_mushroom.layer2_table import Layer2Entry, Layer2Table
 from shiny_mushroom.layer2_table import choices as layer2_table_choices
+from shiny_mushroom.layer3 import REGION_IDS as LAYER3_REGIONS
+from shiny_mushroom.layer3 import SIZE as LAYER3_SIZE
 from shiny_mushroom.level_pointers import (
     ADDED_LAYER1_PREFIX,
     ADDED_NAME,
@@ -41,6 +43,8 @@ from shiny_mushroom.level_pointers import (
     sprite_banks_fragment,
     streams_fragment,
 )
+from shiny_mushroom.lunar_magic import REGION_IDS as LUNAR_MAGIC_REGIONS
+from shiny_mushroom.lunar_magic import SIZE as LUNAR_MAGIC_SIZE
 from shiny_mushroom.mwl import MwlError, layer2_payload, read_level, write_level
 from shiny_mushroom.project_files import (
     RAW_NAME,
@@ -89,7 +93,6 @@ from smw_tools.levels import (
     undecorated,
 )
 from smw_tools.rle import CorruptStream, Variant, decompress
-from smw_tools.rom_sizes import ROM_SIZES
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -360,6 +363,8 @@ class LevelFiles:
         secondary: bytes | None = None,
         asm_runs: dict[str, asm_room.Run] | None = None,
         graphics: bytes | None = None,
+        lunar_magic: bytes | None = None,
+        layer3: bytes | None = None,
     ) -> list[Path]:
         """Write level ``level`` into the overlay, and say which files moved.
 
@@ -418,6 +423,19 @@ class LevelFiles:
         tileset's into every word, and ``None`` leaves the words alone. The
         row is the *container's*, so a level sharing its container with
         others shares the row with them, as :meth:`also_changes` says.
+
+        ``layer3`` is the level's four Layer 3 settings bytes, saved through
+        the ``levels.layer3_*`` regions the same way.
+
+        ``lunar_magic`` is the level's four Lunar Magic settings bytes,
+        saved through the ``levels.lunar_magic_*`` asm regions exactly as
+        ``secondary`` is through its four -- the same tables, four more of
+        them -- and only on a project whose cartridge has them: passed on
+        one without the ``lunar-magic-levels`` feature it is refused, since
+        the regions are not that cartridge's. A Layer 1 container that
+        keeps the four bytes itself, a Lunar Magic 3 file, has them written
+        into its level-information slot as well, so the file agrees with
+        the tables.
         """
         if graphics is not None:
             graphics = (
@@ -428,6 +446,10 @@ class LevelFiles:
         emitted: list[tuple[asm_codec.AsmRegion, dict[Path, str] | None]] = []
         if secondary is not None:
             emitted = self._emit_secondary(level, secondary, asm_runs or {})
+        if lunar_magic is not None:
+            emitted += self._emit_lunar_magic(level, lunar_magic, asm_runs or {})
+        if layer3 is not None:
+            emitted += self._emit_layer3(level, layer3, asm_runs or {})
         where = self.level_file(level)
         if where is None:
             raise ProjectError(
@@ -464,6 +486,7 @@ class LevelFiles:
                 sprites if path == where.sprites else held_sprites,
                 None if path != layer2_path else layer2[0] + layer2[1],
                 graphics if path == where.layer1 else None,
+                lunar_magic if path == where.layer1 else None,
             )
             destination = self.overlaid(path)
             destination.parent.mkdir(parents=True, exist_ok=True)
@@ -513,6 +536,138 @@ class LevelFiles:
         overlay's rows where this project has saved them."""
         return bytes(
             self.asm_rows(region_id)[0][level] for region_id in SECONDARY_REGIONS
+        )
+
+    def lunar_magic_settings(self, level: int) -> bytes:
+        """``level``'s four Lunar Magic settings bytes, as the build would
+        read them: one from each ``levels.lunar_magic_*`` region, the
+        overlay's rows where this project has saved them -- and empty on a
+        cartridge without the ``lunar-magic-levels`` feature, whose build
+        assembles no such tables."""
+        if not self.has_lunar_magic_settings:
+            return b""
+        return bytes(
+            self.asm_rows(region_id)[0][level] for region_id in LUNAR_MAGIC_REGIONS
+        )
+
+    @property
+    def has_lunar_magic_settings(self) -> bool:
+        """Whether this project's cartridge keeps the four tables."""
+        from smw_tools.lunar_magic_levels import is_enabled
+
+        return is_enabled(self.cartridge_base)
+
+    def layer3_settings(self, level: int) -> bytes:
+        """``level``'s four Layer 3 bytes, as the build would read them: one
+        from each ``levels.layer3_*`` region, the overlay's rows where this
+        project has saved them -- and empty on a cartridge without the
+        ``layer3-settings`` feature, whose build assembles no such tables."""
+        if not self.has_layer3_settings:
+            return b""
+        return bytes(self.asm_rows(region_id)[0][level] for region_id in LAYER3_REGIONS)
+
+    @property
+    def has_layer3_settings(self) -> bool:
+        """Whether this project's cartridge keeps the four Layer 3 tables."""
+        from smw_tools.layer3_settings import is_enabled
+
+        return is_enabled(self.cartridge_base)
+
+    def save_layer3_settings(
+        self,
+        level: int,
+        settings: bytes,
+        asm_runs: dict[str, asm_room.Run] | None = None,
+    ) -> list[Path]:
+        """Write ``level``'s four Layer 3 bytes into the regions on their
+        own, with no level save to ride on. Priced and refused exactly as a
+        save's are."""
+        emitted = self._emit_layer3(level, settings, asm_runs or {})
+        if not emitted:
+            return []
+        written = self._write_asm_regions(emitted)
+        self._write_metadata({"modified": _now()})
+        return written
+
+    def _emit_layer3(
+        self,
+        level: int,
+        settings: bytes,
+        runs: dict[str, asm_room.Run],
+    ) -> list[tuple[asm_codec.AsmRegion, dict[Path, str] | None]]:
+        """Price ``level``'s four Layer 3 bytes as region fragments, the
+        same rule the other per-level tables keep: only the tables whose row
+        changes are emitted, and one put back to the disassembly's own is a
+        revert. Pure."""
+        if len(settings) != LAYER3_SIZE:
+            raise ProjectError(
+                f"the Layer 3 settings are {LAYER3_SIZE} bytes, not {len(settings)}"
+            )
+        if not self.has_layer3_settings:
+            raise ProjectError(
+                "this project's cartridge has no Layer 3 tables: turn on "
+                "Per-level Layer 3 first"
+            )
+        models: dict[str, object] = {}
+        for region_id, value in zip(LAYER3_REGIONS, settings, strict=True):
+            rows = list(self.asm_rows(region_id)[0])
+            if rows[level] == value:
+                continue
+            rows[level] = value
+            models[region_id] = (tuple(rows),)
+        if not models:
+            return []
+        return self._emit_asm_regions(
+            models, {found: runs[found] for found in models if found in runs}
+        )
+
+    def save_lunar_magic_settings(
+        self,
+        level: int,
+        settings: bytes,
+        asm_runs: dict[str, asm_room.Run] | None = None,
+    ) -> list[Path]:
+        """Write ``level``'s four bytes into the regions on their own --
+        what an imported container's settings land through, with no level
+        save to ride on. Priced and refused exactly as a save's are."""
+        emitted = self._emit_lunar_magic(level, settings, asm_runs or {})
+        if not emitted:
+            return []
+        written = self._write_asm_regions(emitted)
+        self._write_metadata({"modified": _now()})
+        return written
+
+    def _emit_lunar_magic(
+        self,
+        level: int,
+        settings: bytes,
+        runs: dict[str, asm_room.Run],
+    ) -> list[tuple[asm_codec.AsmRegion, dict[Path, str] | None]]:
+        """Price ``level``'s four Lunar Magic bytes as region fragments, the
+        secondary header's rule for the same shape of table: only the tables
+        whose row changes are emitted, and one put back to the disassembly's
+        own is a revert. Pure."""
+        if len(settings) != LUNAR_MAGIC_SIZE:
+            raise ProjectError(
+                f"the Lunar Magic settings are {LUNAR_MAGIC_SIZE} bytes, "
+                f"not {len(settings)}"
+            )
+        if not self.has_lunar_magic_settings:
+            raise ProjectError(
+                "this project's cartridge has no Lunar Magic tables: turn on "
+                "Lunar Magic level compatibility first"
+            )
+        models: dict[str, object] = {}
+        for region_id, value in zip(LUNAR_MAGIC_REGIONS, settings, strict=True):
+            rows = list(self.asm_rows(region_id)[0])
+            if rows[level] == value:
+                continue
+            rows[level] = value
+            models[region_id] = (tuple(rows),)
+        if not models:
+            return []
+        return self._emit_asm_regions(
+            models, {found: runs[found] for found in models if found in runs}
         )
 
     def _emit_secondary(
@@ -605,42 +760,8 @@ class LevelFiles:
         """The cartridge this project's **next build** makes: the base with
         every feature :attr:`feature_state` asks for applied, at the size the
         project builds. What a save is priced against, for the reason
-        :attr:`level_memory_managed` gives -- and the size is part of it,
-        because the packing overflows into an expansion bank only where the
-        cartridge has one (:func:`smw_tools.levels.has_level_bank`)."""
+        :attr:`level_memory_managed` gives."""
         return applied(rom_base(self.base_id), self.feature_state, self.rom_size_id)
-
-    def levels_refuse_size(self, rom_size_id: str) -> str:
-        """Why this project's saved levels could not be built into a cartridge
-        of ``rom_size_id``, or ``""`` where they could.
-
-        The one resize that takes room away. Growable levels overflow into an
-        expansion bank where the cartridge has one
-        (:func:`smw_tools.levels.has_level_bank`), so shrinking past it hands
-        the packer fewer runs than the streams need -- which the build would
-        refuse at a placement guard, too late to do anything about. Priced here
-        against the cartridge being *asked for*, exactly as a feature switch
-        is priced against the cartridge it would make.
-
-        Nothing to say on a project whose level banks are stock: the seven
-        macros are placed at literal addresses and hold what they held at
-        every size.
-        """
-        if rom_size_id == self.rom_size_id or not self.level_memory_managed:
-            return ""
-        base = applied(rom_base(self.base_id), self.feature_state, rom_size_id)
-        try:
-            packing = self.level_packing(base)
-        except (ProjectError, OSError, ValueError):
-            return ""
-        if packing.fits:
-            return ""
-        return (
-            f"The saved levels need {packing.over:,} bytes more than a "
-            f"{ROM_SIZES[rom_size_id].label} cartridge holds: growable levels "
-            f"overflow into an expansion bank this one has not got. Take that "
-            f"much back out of the levels first."
-        )
 
     def level_palette_bytes(self, count: int | None = None) -> int:
         """How many bytes of the level bank the custom level palettes take

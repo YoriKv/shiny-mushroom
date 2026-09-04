@@ -4470,8 +4470,16 @@ CODE_00B8C4:							;|
 
 CODE_00B8D7:
 #LM000Hijack_MoveGFX32And33_3:
+if !Define_SMW_LevelGraphics == !TRUE
+	; The same five bytes as the pair below. The stub repeats them and
+	; then records that the animated tiles hold GFX33, which the
+	; expansion above has just put there. See Config/LevelGraphics.asm.
+	JSL.l SMW_LevelGraphics_Boot
+	NOP				;> The byte the displaced pair leaves, never anything else
+else
 	LDA.w #SMW_GFX32
 	STA.b !RAM_SMW_Misc_ScratchRAM8A
+endif
 	SEP.b #$20			; A->8
 BeginDecompression:
 	REP.b #$10			; XY->16
@@ -8345,7 +8353,11 @@ CODE_00F4CD:
 	PLX				;>Get x back
 	LDA.b [!RAM_SMW_Misc_ScratchRAM00]	;>Load map16 numbers
 #LM000Hijack_ProcessCustomPlayerBlockCode:
+if !Define_SMW_CustomTiles == !TRUE
+	JSL.l SMW_CustomTiles_ActsLikeOf		;> A custom tile as the vanilla tile it acts like, then the stock routine (Config/CustomTiles.asm)
+else
 	JSL.l SMW_ModifyMap16IDForSpecialBlocks_Main	;>Mario block offset
+endif
 	LDY.w !RAM_SMW_Blocks_CurrentlyProcessedMap16TileLo	;\Handle act as/map16 number.
 	CMP.b #$00			;/
 	RTS
@@ -9161,7 +9173,11 @@ Main:
 	SEP.b #$20			; A->8
 	LDA.b [!RAM_SMW_Pointer_HiMap16BlockDataLo],y	; \ Reset #$01 bit
 #LM000Hijack_MoreLevelMap16_1:
+if !Define_SMW_CustomTiles == !TRUE
+	AND.b #$00						;> Page 0 outright: the tile here may be on a custom page (Config/CustomTiles.asm)
+else
 	AND.b #$FE						; LM: Changes this to AND.b #$00 to prevent issues with map16 IDs above 01FF.
+endif
 	STA.b [!RAM_SMW_Pointer_HiMap16BlockDataLo],y
 	LDA.l Map16Page00TileLo,x	; \ Store tile
 	STA.b [!RAM_SMW_Pointer_LoMap16BlockDataLo],y
@@ -9227,7 +9243,11 @@ Main:
 	SEP.b #$20			; A->8
 	LDA.b [!RAM_SMW_Pointer_HiMap16BlockDataLo],y	; \ Set #$01 bit
 #LM000Hijack_MoreLevelMap16_2:
+if !Define_SMW_CustomTiles == !TRUE
+	LDA.b #$01						;> Page 1 outright: the tile here may be on a custom page (Config/CustomTiles.asm)
+else
 	ORA.b #$01						; LM: Changes this to LDA.b #$01 to prevent issues with map16 IDs above 01FF.
+endif
 	STA.b [!RAM_SMW_Pointer_HiMap16BlockDataLo],y
 	LDA.l Map16Page01TileLo,x	; \ Store tile
 	STA.b [!RAM_SMW_Pointer_LoMap16BlockDataLo],y
@@ -10709,8 +10729,14 @@ CODE_00A01B:
 	TRB.b !RAM_SMW_Mirror_ColorMathSelectAndEnable
 CODE_00A01F:
 #LM230Hijack_CustomLayer3:
+if !Define_SMW_Layer3Settings == !TRUE
+	JML.l SMW_Layer3Settings_Init	;\ The level's own Layer 3 settings, then
+	NOP				;/ this image (Config/Layer3Settings.asm)
+else
 	LDA.w !RAM_SMW_Misc_LevelLayer3Settings
 	BEQ.b Return00A044
+endif
+UploadImage:
 	DEC
 	CLC
 	ADC.b !RAM_SMW_Misc_ScratchRAM00
@@ -14761,8 +14787,13 @@ CODE_00F79B:
 ; Code that handles the Layer 2 horizontal scroll settings (LM's "Layer 2
 ; (BG) Scrolling Rate").
 CODE_00F79D:
+if !Define_SMW_LunarMagicLevels == !TRUE
+	JML.l SMW_LunarMagicLevels_ScrollLayer2	;\ Both axes, for every setting Lunar Magic
+	NOP					;/ knows (Config/LunarMagicLevels.asm)
+else
 	LDY.w !RAM_SMW_Flag_Layer2HorizontalScrollLevelSetting	;\if horizontal scrolling layer 2 is clear (none), make it scroll with the screen
 	BEQ.b CODE_00F7AA		;/
+endif
 	LDA.b !RAM_SMW_Mirror_CurrentLayer1XPosLo	;>A = screen x position
 	DEY				;\>Lower $1413 index for type of scrolling (1-1=0)
 	BEQ.b CODE_00F7A8		;/>if its zero, skip (constant) (Layer2Xpos = ScreenXPos)
@@ -15102,8 +15133,13 @@ namespace SMW_GameMode11_LoadSublevel
 %InsertMacroAtXPosition(<Address>)
 
 CODE_00A796:
+if !Define_SMW_LunarMagicLevels == !TRUE
+	JML.l SMW_LunarMagicLevels_InitialOffset	;\ The whole routine, for every setting Lunar
+	NOP						;/ Magic knows (Config/LunarMagicLevels.asm)
+else
 	REP.b #$20			; A->16
 	LDY.w !RAM_SMW_Flag_Layer2VerticalScrollLevelSetting
+endif
 	BEQ.b CODE_00A7B9
 	DEY
 	BNE.b CODE_00A7A7
@@ -15935,7 +15971,11 @@ CODE_00D2AA:
 	STZ.b !RAM_SMW_Flag_SpritesLocked	; Set sprites not locked
 CODE_00D2B2:
 #LM300Hijack_ShootingDirectionOnLevelLoad:
+if !Define_SMW_LunarMagicLevels == !TRUE
+	LDA.b !RAM_SMW_LM_Misc_PipeShootDirection	;> #$40, or #$C0 for an entrance facing left (Config/LunarMagicLevels.asm)
+else
 	LDA.b #$40			; \ X speed = #$40
+endif
 	STA.b !RAM_SMW_Player_XSpeed
 	LDA.b #$C0			; \ Y speed = #$C0
 	STA.b !RAM_SMW_Player_YSpeed
@@ -16247,8 +16287,12 @@ CODE_00A6C7:
 
 CODE_00A6CC:
 #LM000Hijack_JSLTo05DD00:
+if !Define_SMW_LunarMagicLevels == !TRUE
+	JSL.l SMW_LunarMagicLevels_EntranceFlags		;> The level's slippery and water flags (Config/LunarMagicLevels.asm)
+else
 	LDA.b !RAM_SMW_Mirror_CurrentLayer1YPosLo			;\ LM: Inserts a JSL.l SMW_$05DD00 here.
 	CMP.b #$C0							;/
+endif
 	BEQ.b CODE_00A6D5
 	INC.w !RAM_SMW_Flag_EnableVerticalScroll
 CODE_00A6D5:
